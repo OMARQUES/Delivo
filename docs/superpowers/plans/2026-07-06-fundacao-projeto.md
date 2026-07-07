@@ -96,12 +96,16 @@ Delivery/
 **Files:**
 - Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `.gitignore`, `.prettierrc.json`, `eslint.config.js`
 
-- [ ] **Step 1: Inicializar git**
+- [ ] **Step 1: Garantir git inicializado**
+
+Repo já foi inicializado quando os docs foram commitados. Apenas confirmar:
 
 ```bash
 cd /home/omarques/Desktop/Projetos/Delivery
-git init -b main
+git status
 ```
+
+Expected: `On branch main`, working tree com docs commitados
 
 - [ ] **Step 2: Criar `pnpm-workspace.yaml`**
 
@@ -277,6 +281,12 @@ import { describe, expect, it } from 'vitest'
 import { canTransition, ORDER_STATUSES, isTerminal } from './order-status'
 
 describe('order status state machine', () => {
+  it('online payment: order starts awaiting payment', () => {
+    expect(canTransition('AWAITING_PAYMENT', 'PENDING')).toBe(true)
+    expect(canTransition('AWAITING_PAYMENT', 'CANCELLED')).toBe(true) // PIX expirou
+    expect(canTransition('AWAITING_PAYMENT', 'ACCEPTED')).toBe(false)
+  })
+
   it('follows the happy path with external driver', () => {
     expect(canTransition('PENDING', 'ACCEPTED')).toBe(true)
     expect(canTransition('ACCEPTED', 'PREPARING')).toBe(true)
@@ -286,8 +296,19 @@ describe('order status state machine', () => {
     expect(canTransition('OUT_FOR_DELIVERY', 'DELIVERED')).toBe(true)
   })
 
-  it('allows store with own driver to skip AWAITING_DRIVER', () => {
+  it('allows store with own driver (or early-assigned driver) to skip AWAITING_DRIVER', () => {
     expect(canTransition('READY', 'OUT_FOR_DELIVERY')).toBe(true)
+  })
+
+  it('pickup: customer collects at counter from READY', () => {
+    expect(canTransition('READY', 'DELIVERED')).toBe(true)
+  })
+
+  it('failed delivery: only from OUT_FOR_DELIVERY, and is terminal', () => {
+    expect(canTransition('OUT_FOR_DELIVERY', 'DELIVERY_FAILED')).toBe(true)
+    expect(canTransition('READY', 'DELIVERY_FAILED')).toBe(false)
+    expect(canTransition('AWAITING_DRIVER', 'DELIVERY_FAILED')).toBe(false)
+    expect(isTerminal('DELIVERY_FAILED')).toBe(true)
   })
 
   it('rejects skipping states', () => {
@@ -299,9 +320,11 @@ describe('order status state machine', () => {
   it('rejects moving backwards', () => {
     expect(canTransition('READY', 'PREPARING')).toBe(false)
     expect(canTransition('DELIVERED', 'PENDING')).toBe(false)
+    expect(canTransition('PENDING', 'AWAITING_PAYMENT')).toBe(false)
   })
 
   it('allows cancellation until food leaves, not after', () => {
+    expect(canTransition('AWAITING_PAYMENT', 'CANCELLED')).toBe(true)
     expect(canTransition('PENDING', 'CANCELLED')).toBe(true)
     expect(canTransition('ACCEPTED', 'CANCELLED')).toBe(true)
     expect(canTransition('PREPARING', 'CANCELLED')).toBe(true)
@@ -313,10 +336,12 @@ describe('order status state machine', () => {
   it('terminal states have no exits', () => {
     expect(isTerminal('DELIVERED')).toBe(true)
     expect(isTerminal('CANCELLED')).toBe(true)
+    expect(isTerminal('DELIVERY_FAILED')).toBe(true)
     expect(isTerminal('PENDING')).toBe(false)
     for (const to of ORDER_STATUSES) {
       expect(canTransition('DELIVERED', to)).toBe(false)
       expect(canTransition('CANCELLED', to)).toBe(false)
+      expect(canTransition('DELIVERY_FAILED', to)).toBe(false)
     }
   })
 })
@@ -331,6 +356,7 @@ Expected: FAIL — `Cannot find module './order-status'`
 
 ```ts
 export const ORDER_STATUSES = [
+  'AWAITING_PAYMENT',
   'PENDING',
   'ACCEPTED',
   'PREPARING',
@@ -338,20 +364,25 @@ export const ORDER_STATUSES = [
   'AWAITING_DRIVER',
   'OUT_FOR_DELIVERY',
   'DELIVERED',
+  'DELIVERY_FAILED',
   'CANCELLED',
 ] as const
 
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 
 const TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
+  // pagamento online: nasce aqui; PIX expirado/cartão desistido -> CANCELLED
+  AWAITING_PAYMENT: ['PENDING', 'CANCELLED'],
   PENDING: ['ACCEPTED', 'CANCELLED'],
   ACCEPTED: ['PREPARING', 'CANCELLED'],
   PREPARING: ['READY', 'CANCELLED'],
-  // READY -> OUT_FOR_DELIVERY direto quando a loja tem entregador próprio
-  READY: ['AWAITING_DRIVER', 'OUT_FOR_DELIVERY', 'CANCELLED'],
+  // READY -> OUT_FOR_DELIVERY: entregador próprio ou dispatch antecipado já atribuído
+  // READY -> DELIVERED: retirada no balcão (fulfillment PICKUP)
+  READY: ['AWAITING_DRIVER', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'],
   AWAITING_DRIVER: ['OUT_FOR_DELIVERY', 'CANCELLED'],
-  OUT_FOR_DELIVERY: ['DELIVERED'],
+  OUT_FOR_DELIVERY: ['DELIVERED', 'DELIVERY_FAILED'],
   DELIVERED: [],
+  DELIVERY_FAILED: [],
   CANCELLED: [],
 }
 
@@ -365,6 +396,7 @@ export function isTerminal(status: OrderStatus): boolean {
 
 /** Labels PT-BR para exibição nos frontends */
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  AWAITING_PAYMENT: 'Aguardando pagamento',
   PENDING: 'Aguardando confirmação',
   ACCEPTED: 'Confirmado',
   PREPARING: 'Em preparo',
@@ -372,6 +404,7 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   AWAITING_DRIVER: 'Aguardando entregador',
   OUT_FOR_DELIVERY: 'Saiu para entrega',
   DELIVERED: 'Entregue',
+  DELIVERY_FAILED: 'Entrega não realizada',
   CANCELLED: 'Cancelado',
 }
 ```
@@ -385,7 +418,7 @@ export * from './order-status'
 - [ ] **Step 9: Rodar e ver passar**
 
 Run: `pnpm --filter @delivery/shared test`
-Expected: PASS — 6 testes verdes
+Expected: PASS — 9 testes verdes
 
 - [ ] **Step 10: Typecheck**
 
