@@ -1,0 +1,27 @@
+{
+  "name": "@delivery/driver",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "vue-tsc -b && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "deploy": "pnpm build && wrangler deploy"
+  },
+  "dependencies": {
+    "@delivery/shared": "workspace:*",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.39",
+    "vue-router": "^5.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.2",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "tailwindcss": "^4.3.2",
+    "typescript": "~6.0.3",
+    "vite": "^8.1.3",
+    "vue-tsc": "^3.3.6",
+    "wrangler": "^4.107.0"
+  }
+}
