@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ORDER_STATUS_LABELS, ORDER_STATUSES } from '@delivery/shared'
+import { ORDER_STATUS_LABELS, ORDER_STATUSES } from '@delivery/shared/constants'
 </script>
 
 <template>

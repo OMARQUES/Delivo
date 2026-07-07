@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./constants": "./src/order-status.ts",
+    "./schemas": "./src/order-status.schema.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { canTransition, ORDER_STATUSES, OrderStatusSchema, isTerminal } from './order-status'
+import { canTransition, ORDER_STATUSES, isTerminal } from './order-status'
+import { OrderStatusSchema } from './order-status.schema'
 import type { OrderStatus } from './order-status'
 
 describe('order status state machine', () => {
