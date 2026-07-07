@@ -14,7 +14,7 @@ const loading = ref(false)
 
 function destinationFor(role: string | null): string {
   const redirect = route.query.redirect
-  if (typeof redirect === 'string' && redirect.startsWith('/')) return redirect
+  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') && !redirect.startsWith('/\\')) return redirect
   if (role === 'STORE') return '/loja'
   if (role === 'ADMIN') return '/admin'
   return '/'

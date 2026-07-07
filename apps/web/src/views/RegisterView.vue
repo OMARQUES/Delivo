@@ -25,7 +25,8 @@ async function submit() {
       password: password.value,
       acceptedTerms: acceptedTerms.value,
     })
-    await router.replace('/')
+    if (auth.isAuthenticated) await router.replace('/')
+    else error.value = 'Conta criada, mas requer aprovação. Aguarde liberação.'
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro ao cadastrar'
   } finally {
