@@ -86,7 +86,13 @@ CANCELLED alcançável de: AWAITING_PAYMENT, PENDING, ACCEPTED, PREPARING, READY
 - Checkout tem `fulfillment: DELIVERY | PICKUP`.
 - `PICKUP`: frete zero, sem endereço, pula dispatch; loja marca `READY→DELIVERED` quando cliente busca.
 
-### 5.6 Entrega falha
+### 5.6 Área do cliente
+
+- **Meus pedidos**: lista (em andamento primeiro) + detalhe com status atual, itens, valores e histórico de eventos; botões WhatsApp/ligar pra loja.
+- Endereços salvos (múltiplos, com pin), perfil mínimo editável.
+- Repetir pedido em 1 clique: pós-MVP.
+
+### 5.7 Entrega falha
 
 - Entregador marca **"não consegui entregar"** com motivo (não atende / endereço errado / recusou pagar / outro) → `OUT_FOR_DELIVERY→DELIVERY_FAILED`; produto **retorna à loja**.
 - **Frete do entregador é mantido** no ledger — a viagem foi feita.
@@ -106,13 +112,15 @@ CANCELLED alcançável de: AWAITING_PAYMENT, PENDING, ACCEPTED, PREPARING, READY
 
 ### 7.1 Alerta e aceite
 
-- Loja sem entregador próprio (ou com ele ocupado) solicita entregador: pedido entra em `AWAITING_DRIVER` e dispara **broadcast FCM para todos os entregadores disponíveis** da cidade.
+- Loja sem entregador próprio (ou com ele ocupado) solicita entregador, disparando **broadcast FCM para todos os entregadores disponíveis** da cidade.
+- **Dispatch antecipado:** a solicitação pode ser feita a partir de `ACCEPTED` (durante o preparo) — o entregador aceita e se desloca enquanto a comida fica pronta; o pedido **não muda de estado** ao ganhar entregador. `AWAITING_DRIVER` só ocorre quando o pedido fica `READY` ainda sem entregador. Coleta (`→OUT_FOR_DELIVERY`) só é permitida com o pedido `READY`.
 - **Primeiro que aceita leva.** Aceite com lock atômico:
 
 ```sql
 UPDATE orders SET driver_id = :driver, driver_assigned_at = now()
-WHERE id = :order AND driver_id IS NULL AND status = 'AWAITING_DRIVER';
--- 0 linhas afetadas → "pedido já foi pego"
+WHERE id = :order AND driver_id IS NULL
+  AND status IN ('ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER');
+-- 0 linhas afetadas → "pedido já foi pego" (ou cancelado nesse meio-tempo)
 ```
 
 - Entregador marca **disponível/indisponível**; só disponível recebe broadcast. Continua recebendo alertas mesmo com entregas ativas.
@@ -188,6 +196,7 @@ WHERE id = :order AND driver_id IS NULL AND status = 'AWAITING_DRIVER';
 ## 11. Admin da plataforma
 
 - CRUD de lojas (cria conta, define % comissão), aprovação de entregadores.
+- **Import de catálogo via CSV** (categoria; produto; descrição; preço) — onboarding de lojas com centenas de produtos sem digitação manual. Admin-only, sem UI sofisticada; variações/sabores ajustados depois na mão.
 - Faturas de comissão (gerar, acompanhar, marcar paga), payouts semanais (gerar lote, marcar pago).
 - Bloqueio/desbloqueio de **loja, entregador e cliente** (trote). Loja bloqueada: pedidos em andamento terminam, novos são impedidos.
 - Visão geral: pedidos do dia, GMV, comissões, entregas falhas.
@@ -198,6 +207,10 @@ WHERE id = :order AND driver_id IS NULL AND status = 'AWAITING_DRIVER';
 - **Nota fiscal de venda é responsabilidade da loja** — a plataforma não emite documento fiscal da venda, apenas da própria comissão.
 - Rate limiting básico na API (por IP/usuário) nas rotas de escrita.
 - **LGPD**: política de privacidade + aceite no cadastro; dados pessoais mínimos; exclusão de conta anonimiza cliente mantendo pedidos (base fiscal/financeira).
+- **PWA básico** no web: manifest + ícone instalável na home do celular. Web push: pós-MVP.
+- **`city` no modelo** (loja, endereço) desde o dia 1 — cidade única no MVP, expansão sem migração.
+- **Uma forma de pagamento por pedido** (sem "metade PIX, metade dinheiro").
+- Botão **suporte da plataforma via WhatsApp** nas três superfícies.
 
 ## 13. Fora do MVP (explícito)
 
