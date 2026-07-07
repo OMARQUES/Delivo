@@ -40,6 +40,7 @@ Plataforma de delivery enxuta para cidades pequenas (~12k habitantes). Três sup
 
 - Home: lojas agrupadas/filtráveis por categoria de loja, indicador aberto/fechado (abertas primeiro), busca por nome de loja.
 - **Busca global de produto**: "brigadeiro" retorna produtos de todas as lojas (agrupados por loja). Implementação: Postgres full-text + `pg_trgm`, sem serviço externo.
+- **Filtro dentro do cardápio da loja**: campo de busca client-side sobre o catálogo carregado (essencial pra mercado/farmácia com centenas de itens).
 
 ## 5. Pedido — ciclo de vida
 
@@ -59,6 +60,7 @@ CANCELLED alcançável de: AWAITING_PAYMENT, PENDING, ACCEPTED, PREPARING, READY
 - Todo evento de status é registrado com timestamp e autor (histórico do pedido).
 - **Itens do pedido são snapshot**: nome, preço, variação, sabores e adicionais congelados no momento do checkout. Cada item aceita **observação em texto livre** ("sem cebola"); pedido tem observação geral.
 - **Checkout revalida tudo server-side** (preço, disponibilidade, loja aberta/pausada, pedido mínimo, raio de entrega) e usa **idempotency key** — duplo clique não cria dois pedidos.
+- **CPF/CNPJ na nota (opcional)** no checkout — armazenado no pedido, exibido pra loja emitir NFC-e. Plataforma não emite nota da venda (§12).
 
 ### 5.2 Timeouts e falhas (Cron Trigger + re-notificação)
 
@@ -214,7 +216,7 @@ WHERE id = :order AND driver_id IS NULL
 
 ## 13. Fora do MVP (explícito)
 
-Agendamento de pedido · avaliações/notas · cupons/promoções · chat in-app · otimização de rota · GPS em tempo real · contagem de estoque · self-service de loja · OTP SMS/WhatsApp · notificação WhatsApp automática · código de retirada · app iOS · impressora térmica · repetir pedido (1 clique) · reentrega pós-falha · multiusuário por loja · auto-accept de pedidos · preço promocional/riscado.
+Agendamento de pedido · avaliações/notas · cupons/promoções (**inclusive frete grátis acima de R$ X** — decisão explícita) · chat in-app · otimização de rota · GPS em tempo real · contagem de estoque · self-service de loja · OTP SMS/WhatsApp · notificação WhatsApp automática · código de retirada · app iOS · impressora térmica · repetir pedido (1 clique) · reentrega pós-falha · multiusuário por loja · auto-accept de pedidos · preço promocional/riscado · gorjeta · cartão salvo/1-clique · web push cliente.
 
 ## 14. Impactos técnicos já mapeados
 
