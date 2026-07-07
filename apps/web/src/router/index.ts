@@ -27,5 +27,10 @@ export const router = createRouter({
       name: 'store-catalog',
       component: () => import('../views/StoreCatalogView.vue'),
     },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('../views/NotFoundView.vue'),
+    },
   ],
 })

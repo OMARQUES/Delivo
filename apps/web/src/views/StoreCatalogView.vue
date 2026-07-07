@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
-const storeSlug = route.params.storeSlug as string
+const storeSlug = computed(() => route.params.storeSlug as string)
 </script>
 
 <template>
