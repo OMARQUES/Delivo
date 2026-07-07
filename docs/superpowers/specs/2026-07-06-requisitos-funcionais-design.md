@@ -197,6 +197,7 @@ WHERE id = :order AND driver_id IS NULL AND status = 'AWAITING_DRIVER';
 - **Timezone fixa** `America/Sao_Paulo` (cidade única).
 - **Nota fiscal de venda é responsabilidade da loja** — a plataforma não emite documento fiscal da venda, apenas da própria comissão.
 - Rate limiting básico na API (por IP/usuário) nas rotas de escrita.
+- **LGPD**: política de privacidade + aceite no cadastro; dados pessoais mínimos; exclusão de conta anonimiza cliente mantendo pedidos (base fiscal/financeira).
 
 ## 13. Fora do MVP (explícito)
 
