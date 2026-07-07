@@ -1,12 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
+    { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
+    { path: '/cadastro', name: 'register', component: () => import('../views/RegisterView.vue') },
     {
       path: '/loja',
       component: () => import('../views/store/StoreLayout.vue'),
+      meta: { requiresRole: ['STORE'] },
       children: [
         { path: '', redirect: '/loja/pedidos' },
         {
@@ -20,6 +24,7 @@ export const router = createRouter({
       path: '/admin',
       name: 'admin',
       component: () => import('../views/admin/AdminLayout.vue'),
+      meta: { requiresRole: ['ADMIN'] },
     },
     // deep-link da loja: exemplo.com.br/NomeDaLoja — SEMPRE por último
     {
@@ -33,4 +38,13 @@ export const router = createRouter({
       component: () => import('../views/NotFoundView.vue'),
     },
   ],
+})
+
+router.beforeEach((to) => {
+  const required = to.matched.flatMap((r) => (r.meta.requiresRole as string[] | undefined) ?? [])
+  if (required.length === 0) return true
+  const auth = useAuthStore()
+  if (!auth.isAuthenticated) return { name: 'login', query: { redirect: to.fullPath } }
+  if (!required.includes(auth.role!)) return { name: 'home' }
+  return true
 })
