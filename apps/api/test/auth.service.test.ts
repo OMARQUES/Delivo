@@ -43,6 +43,20 @@ describe('registerUser', () => {
     ).rejects.toThrow(AuthError)
     await expect(registerUser(testDb, { ...ana }, SECRET)).rejects.toThrow(AuthError)
   })
+
+  it('maps concurrent duplicate (TOCTOU race) to AuthError 409, not a raw pg error', async () => {
+    // Duas corridas paralelas: ambas passam o pre-check antes de qualquer INSERT.
+    // O 2o INSERT bate no unique index (23505) -> catch mapeia p/ AuthError 409.
+    const results = await Promise.allSettled([
+      registerUser(testDb, { ...ana }, SECRET),
+      registerUser(testDb, { ...ana }, SECRET),
+    ])
+    const rejected = results.filter((r) => r.status === 'rejected')
+    expect(rejected).toHaveLength(1)
+    const err = (rejected[0] as PromiseRejectedResult).reason
+    expect(err).toBeInstanceOf(AuthError)
+    expect(err.status).toBe(409)
+  })
 })
 
 describe('loginUser', () => {

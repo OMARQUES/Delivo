@@ -21,6 +21,17 @@ export class AuthError extends Error {
   }
 }
 
+/**
+ * Detecta unique_violation (SQLSTATE 23505) do postgres.js.
+ * Drizzle embrulha o erro em DrizzleQueryError, então o código do driver
+ * fica em `e.cause.code` (o topo não tem `.code`).
+ */
+function isUniqueViolation(e: unknown): boolean {
+  const code = (e as { code?: string; cause?: { code?: string } })?.code
+  const causeCode = (e as { cause?: { code?: string } })?.cause?.code
+  return code === '23505' || causeCode === '23505'
+}
+
 export type PublicUser = {
   id: string
   name: string
@@ -61,17 +72,25 @@ export async function registerUser(db: Db, input: RegisterInput, secret: string)
   if (existing.length > 0) throw new AuthError('Telefone ou email já cadastrado', 409)
 
   const status = input.role === 'DRIVER' ? ('PENDING' as const) : ('ACTIVE' as const)
-  const [user] = await db
-    .insert(users)
-    .values({
-      name: input.name,
-      phone: input.phone,
-      email,
-      role: input.role,
-      status,
-      termsAcceptedAt: new Date(),
-    })
-    .returning()
+  let user: typeof users.$inferSelect | undefined
+  try {
+    const rows = await db
+      .insert(users)
+      .values({
+        name: input.name,
+        phone: input.phone,
+        email,
+        role: input.role,
+        status,
+        termsAcceptedAt: new Date(),
+      })
+      .returning()
+    user = rows[0]
+  } catch (e) {
+    // Rede de segurança p/ corrida (TOCTOU): pre-check + INSERT não é atômico.
+    if (isUniqueViolation(e)) throw new AuthError('Telefone ou email já cadastrado', 409)
+    throw e
+  }
   if (!user) throw new AuthError('Falha ao criar usuário', 400)
 
   await db.insert(authProviders).values({
