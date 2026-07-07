@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 export const ORDER_STATUSES = [
   'AWAITING_PAYMENT',
   'PENDING',
@@ -10,6 +12,9 @@ export const ORDER_STATUSES = [
   'DELIVERY_FAILED',
   'CANCELLED',
 ] as const
+
+/** Runtime validation for HTTP-inbound status strings */
+export const OrderStatusSchema = z.enum(ORDER_STATUSES)
 
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 
@@ -30,7 +35,7 @@ const TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
 }
 
 export function canTransition(from: OrderStatus, to: OrderStatus): boolean {
-  return TRANSITIONS[from].includes(to)
+  return TRANSITIONS[from]?.includes(to) ?? false
 }
 
 export function isTerminal(status: OrderStatus): boolean {

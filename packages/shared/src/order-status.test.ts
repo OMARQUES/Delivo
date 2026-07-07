@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { canTransition, ORDER_STATUSES, isTerminal } from './order-status'
+import { canTransition, ORDER_STATUSES, OrderStatusSchema, isTerminal } from './order-status'
+import type { OrderStatus } from './order-status'
 
 describe('order status state machine', () => {
   it('online payment: order starts awaiting payment', () => {
@@ -52,6 +53,15 @@ describe('order status state machine', () => {
     expect(canTransition('READY', 'CANCELLED')).toBe(true)
     expect(canTransition('AWAITING_DRIVER', 'CANCELLED')).toBe(true)
     expect(canTransition('OUT_FOR_DELIVERY', 'CANCELLED')).toBe(false)
+  })
+
+  it('validates status strings at runtime', () => {
+    expect(OrderStatusSchema.parse('PENDING')).toBe('PENDING')
+    expect(() => OrderStatusSchema.parse('NOPE')).toThrow()
+  })
+
+  it('rejects unknown states without crashing', () => {
+    expect(canTransition('NOPE' as OrderStatus, 'PENDING')).toBe(false)
   })
 
   it('terminal states have no exits', () => {
