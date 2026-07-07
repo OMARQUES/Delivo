@@ -4,6 +4,7 @@ import { logger } from 'hono/logger'
 import { createRouter } from './app-factory'
 import { dbMiddleware } from './middleware/db'
 import { errorHandler } from './middleware/error-handler'
+import { authRoutes } from './routes/auth'
 import { healthRoutes } from './routes/health'
 
 export const app = createRouter()
@@ -25,6 +26,7 @@ app.onError(errorHandler)
 app.notFound((c) => c.json({ error: 'Not Found' }, 404))
 
 app.route('/', healthRoutes)
+app.route('/', authRoutes)
 
 app.doc('/openapi.json', {
   openapi: '3.1.0',
