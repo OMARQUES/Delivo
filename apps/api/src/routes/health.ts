@@ -1,7 +1,7 @@
-import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
-import type { AppContext } from '../env'
+import { createRoute, z } from '@hono/zod-openapi'
+import { createRouter } from '../app-factory'
 
-export const healthRoutes = new OpenAPIHono<AppContext>()
+export const healthRoutes = createRouter()
 
 const healthRoute = createRoute({
   method: 'get',
