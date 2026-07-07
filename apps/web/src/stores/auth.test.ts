@@ -48,4 +48,18 @@ describe('auth store', () => {
     expect(store.isAuthenticated).toBe(false)
     expect(localStorage.getItem('delivery.auth')).toBeNull()
   })
+
+  it('coalesces concurrent refreshes into a single call', async () => {
+    localStorage.setItem('delivery.auth', JSON.stringify({ ...tokens, user }))
+    const store = useAuthStore()
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ user, accessToken: 'acc-2', refreshToken: 'ref-2' }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const results = await Promise.all([store.tryRefresh(), store.tryRefresh(), store.tryRefresh()])
+    expect(results).toEqual([true, true, true])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(store.accessToken).toBe('acc-2')
+  })
 })

@@ -15,6 +15,9 @@ type AuthResponse = { user: SessionUser; accessToken: string | null; refreshToke
 const STORAGE_KEY = 'delivery.auth'
 type Persisted = { user: SessionUser; accessToken: string; refreshToken: string }
 
+/** Single-flight: só um refresh em voo; 401s paralelos aguardam a mesma promise. */
+let refreshInFlight: Promise<boolean> | null = null
+
 function load(): Persisted | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -71,14 +74,23 @@ export const useAuthStore = defineStore('auth', {
     },
     async tryRefresh(): Promise<boolean> {
       if (!this.refreshToken) return false
-      try {
-        const r = await api<AuthResponse>('/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken: this.refreshToken }) })
-        this.setSession(r)
-        return true
-      } catch {
-        this.clear()
-        return false
-      }
+      if (refreshInFlight) return refreshInFlight
+      refreshInFlight = (async () => {
+        try {
+          const r = await api<AuthResponse>('/auth/refresh', {
+            method: 'POST',
+            body: JSON.stringify({ refreshToken: this.refreshToken }),
+          })
+          this.setSession(r)
+          return true
+        } catch {
+          this.clear()
+          return false
+        } finally {
+          refreshInFlight = null
+        }
+      })()
+      return refreshInFlight
     },
     async logout() {
       const rt = this.refreshToken
