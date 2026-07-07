@@ -1,12 +1,16 @@
 import type { Db } from './db/client'
+import type { AccessTokenPayload } from './lib/tokens'
 
 export type Env = {
   HYPERDRIVE: Hyperdrive
+  JWT_SECRET: string
+  ALLOWED_ORIGINS: string
 }
 
 export type AppContext = {
   Bindings: Env
   Variables: {
     db: Db
+    auth?: AccessTokenPayload
   }
 }
