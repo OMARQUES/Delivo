@@ -1,0 +1,51 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from './auth'
+
+const tokens = { accessToken: 'acc-1', refreshToken: 'ref-1' }
+const user = { id: 'u1', name: 'Ana', role: 'CUSTOMER', status: 'ACTIVE', phone: '44', email: null }
+
+function mockFetchOnce(status: number, body: unknown) {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })))
+}
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  localStorage.clear()
+  vi.restoreAllMocks()
+})
+
+describe('auth store', () => {
+  it('login stores user + tokens and persists to localStorage', async () => {
+    mockFetchOnce(200, { user, ...tokens })
+    const store = useAuthStore()
+    await store.login('ana@email.com', 'senha123')
+    expect(store.user?.name).toBe('Ana')
+    expect(store.isAuthenticated).toBe(true)
+    expect(JSON.parse(localStorage.getItem('delivery.auth')!)).toMatchObject(tokens)
+  })
+
+  it('login failure surfaces error message and stays logged out', async () => {
+    mockFetchOnce(401, { error: 'Credenciais inválidas' })
+    const store = useAuthStore()
+    await expect(store.login('x@y.com', 'errada123')).rejects.toThrow('Credenciais inválidas')
+    expect(store.isAuthenticated).toBe(false)
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
+  })
+
+  it('hydrates from localStorage on init', () => {
+    localStorage.setItem('delivery.auth', JSON.stringify({ ...tokens, user }))
+    const store = useAuthStore()
+    expect(store.isAuthenticated).toBe(true)
+    expect(store.user?.role).toBe('CUSTOMER')
+  })
+
+  it('logout clears state + storage and calls API', async () => {
+    localStorage.setItem('delivery.auth', JSON.stringify({ ...tokens, user }))
+    mockFetchOnce(204, null)
+    const store = useAuthStore()
+    await store.logout()
+    expect(store.isAuthenticated).toBe(false)
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
+  })
+})

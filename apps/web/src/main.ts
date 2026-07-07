@@ -2,6 +2,9 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import { router } from './router'
+import { wireAuthToApi } from './stores/auth'
 import './style.css'
 
-createApp(App).use(createPinia()).use(router).mount('#app')
+const app = createApp(App).use(createPinia()).use(router)
+wireAuthToApi()
+app.mount('#app')
