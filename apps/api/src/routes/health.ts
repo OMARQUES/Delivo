@@ -1,7 +1,6 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import { sql } from 'drizzle-orm'
 import { createRouter } from '../app-factory'
-import { createDb } from '../db/client'
 
 export const healthRoutes = createRouter()
 
@@ -30,11 +29,21 @@ const dbHealthRoute = createRoute({
         'application/json': { schema: z.object({ status: z.literal('ok') }) },
       },
     },
+    503: {
+      description: 'Database unreachable',
+      content: {
+        'application/json': { schema: z.object({ status: z.literal('degraded') }) },
+      },
+    },
   },
 })
 
 healthRoutes.openapi(dbHealthRoute, async (c) => {
-  const db = createDb(c.env)
-  await db.execute(sql`select 1`)
-  return c.json({ status: 'ok' as const }, 200)
+  try {
+    await c.get('db').execute(sql`select 1`)
+    return c.json({ status: 'ok' as const }, 200)
+  } catch (err) {
+    console.error('db health check failed:', err)
+    return c.json({ status: 'degraded' as const }, 503)
+  }
 })

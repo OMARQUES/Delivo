@@ -5,11 +5,54 @@ import { app } from '../src/app'
 import { createRouter } from '../src/app-factory'
 import { errorHandler } from '../src/middleware/error-handler'
 
+// dbMiddleware runs on '*', so the db client module is mocked for the whole
+// file: no test here should ever open a real socket to Postgres.
+const { executeMock, endMock } = vi.hoisted(() => ({
+  executeMock: vi.fn(),
+  endMock: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../src/db/client', () => ({
+  createDb: vi.fn(() => ({
+    db: { execute: executeMock },
+    client: { end: endMock },
+  })),
+}))
+
 describe('GET /health', () => {
   it('returns ok', async () => {
     const res = await app.request('/health')
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ status: 'ok' })
+  })
+})
+
+describe('GET /health/db', () => {
+  it('returns 200 ok when the database responds', async () => {
+    executeMock.mockResolvedValueOnce([{ '?column?': 1 }])
+    const res = await app.request('/health/db')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: 'ok' })
+    expect(executeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns 503 degraded when the database is unreachable', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      executeMock.mockRejectedValueOnce(new Error('connection refused'))
+      const res = await app.request('/health/db')
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual({ status: 'degraded' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('closes the db client after the request', async () => {
+    executeMock.mockResolvedValueOnce([{ '?column?': 1 }])
+    endMock.mockClear()
+    await app.request('/health/db')
+    expect(endMock).toHaveBeenCalledTimes(1)
   })
 })
 

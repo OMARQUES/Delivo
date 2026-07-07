@@ -2,6 +2,7 @@ import { swaggerUI } from '@hono/swagger-ui'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { createRouter } from './app-factory'
+import { dbMiddleware } from './middleware/db'
 import { errorHandler } from './middleware/error-handler'
 import { healthRoutes } from './routes/health'
 
@@ -10,6 +11,7 @@ export const app = createRouter()
 app.use('*', logger())
 // TODO(auth plan): restrict origin allowlist + credentials before shipping auth
 app.use('*', cors())
+app.use('*', dbMiddleware)
 app.onError(errorHandler)
 app.notFound((c) => c.json({ error: 'Not Found' }, 404))
 

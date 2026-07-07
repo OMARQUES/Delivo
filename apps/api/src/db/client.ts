@@ -5,11 +5,11 @@ import * as schema from './schema'
 
 export function createDb(env: Env) {
   const client = postgres(env.HYPERDRIVE.connectionString, {
-    max: 5,
+    max: 2,
     fetch_types: false,
     prepare: false,
   })
-  return drizzle(client, { schema })
+  return { db: drizzle(client, { schema }), client }
 }
 
-export type Db = ReturnType<typeof createDb>
+export type Db = ReturnType<typeof createDb>['db']
