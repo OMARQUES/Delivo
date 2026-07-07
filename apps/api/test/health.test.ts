@@ -19,9 +19,17 @@ vi.mock('../src/db/client', () => ({
   })),
 }))
 
+// cors middleware runs on '*' and reads c.env.ALLOWED_ORIGINS, so every
+// app.request call needs a bindings object, not just the cors-focused tests.
+const env = {
+  ALLOWED_ORIGINS: 'http://localhost:5173,http://localhost:5174',
+  JWT_SECRET: 'test',
+  HYPERDRIVE: {} as Hyperdrive,
+}
+
 describe('GET /health', () => {
   it('returns ok', async () => {
-    const res = await app.request('/health')
+    const res = await app.request('/health', {}, env)
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ status: 'ok' })
   })
@@ -30,7 +38,7 @@ describe('GET /health', () => {
 describe('GET /health/db', () => {
   it('returns 200 ok when the database responds', async () => {
     executeMock.mockResolvedValueOnce([{ '?column?': 1 }])
-    const res = await app.request('/health/db')
+    const res = await app.request('/health/db', {}, env)
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ status: 'ok' })
     expect(executeMock).toHaveBeenCalledTimes(1)
@@ -40,7 +48,7 @@ describe('GET /health/db', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       executeMock.mockRejectedValueOnce(new Error('connection refused'))
-      const res = await app.request('/health/db')
+      const res = await app.request('/health/db', {}, env)
       expect(res.status).toBe(503)
       expect(await res.json()).toEqual({ status: 'degraded' })
     } finally {
@@ -51,16 +59,28 @@ describe('GET /health/db', () => {
   it('closes the db client after the request', async () => {
     executeMock.mockResolvedValueOnce([{ '?column?': 1 }])
     endMock.mockClear()
-    await app.request('/health/db')
+    await app.request('/health/db', {}, env)
     expect(endMock).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('unknown route', () => {
   it('returns structured 404', async () => {
-    const res = await app.request('/nope')
+    const res = await app.request('/nope', {}, env)
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: 'Not Found' })
+  })
+})
+
+describe('cors allowlist', () => {
+  it('allows configured origin', async () => {
+    const res = await app.request('/health', { headers: { Origin: 'http://localhost:5173' } }, env)
+    expect(res.headers.get('access-control-allow-origin')).toBe('http://localhost:5173')
+  })
+
+  it('does not echo unknown origins', async () => {
+    const res = await app.request('/health', { headers: { Origin: 'https://evil.example' } }, env)
+    expect(res.headers.get('access-control-allow-origin')).toBeNull()
   })
 })
 

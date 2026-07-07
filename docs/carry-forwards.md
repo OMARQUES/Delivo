@@ -4,7 +4,6 @@
 |---|---|---|
 | `updatedAt` via `$onUpdate` é ORM-level; raw SQL bypassa. Avaliar trigger `moddatetime` | Review Task 4 | Plano Financeiro (ledger) |
 | Normalizar email (`toLowerCase().trim()`) na escrita; índice `lower(email)` já garante unicidade | Review Task 4 | Plano Auth |
-| `cors()` aberto (`*`); restringir allowlist + credentials | Review Task 3 | Plano Auth |
 | `/docs` + `/openapi.json` expostos sem gate | Review Task 3 | Task 9 (deploy prod) |
 | Slugs reservados (`loja`, `admin`, etc.) — validar na criação de loja | Review Task 5 | Plano Catálogo |
 | `@delivery/shared/constants` aponta pra `order-status.ts`; renomear/barril quando 2º módulo chegar | Review Task 7 | Próximo módulo shared |

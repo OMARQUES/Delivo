@@ -9,8 +9,17 @@ import { healthRoutes } from './routes/health'
 export const app = createRouter()
 
 app.use('*', logger())
-// TODO(auth plan): restrict origin allowlist + credentials before shipping auth
-app.use('*', cors())
+app.use('*', async (c, next) => {
+  const allowed = (c.env.ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean)
+  return cors({
+    origin: (origin) => (allowed.includes(origin) ? origin : null),
+    allowHeaders: ['Content-Type', 'Authorization'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  })(c, next)
+})
 app.use('*', dbMiddleware)
 app.onError(errorHandler)
 app.notFound((c) => c.json({ error: 'Not Found' }, 404))
