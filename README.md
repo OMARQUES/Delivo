@@ -13,12 +13,16 @@ Plataforma de delivery para cidades pequenas. 100% Cloudflare.
 
 ```bash
 corepack enable && pnpm install
+cp apps/api/.dev.vars.example apps/api/.dev.vars  # contém JWT_SECRET local
 docker compose up -d postgres
 pnpm --filter @delivery/api db:migrate
+pnpm --filter @delivery/api db:seed  # cria admin — precisa ADMIN_EMAIL/ADMIN_PASSWORD no apps/api/.env
 pnpm dev:api     # http://localhost:8787 (docs em /docs)
 pnpm dev:web     # http://localhost:5173
 pnpm dev:driver  # http://localhost:5174
 ```
+
+Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`.
 
 ## Verificação
 
@@ -29,6 +33,10 @@ pnpm typecheck && pnpm test && pnpm lint && pnpm build
 ## Deploy (pendente — runbook)
 
 Deploy prod ainda não executado. Quando houver conta Neon + token Cloudflare, seguir Tasks 9-10 de `docs/superpowers/plans/2026-07-06-fundacao-projeto.md` (Hyperdrive id real, secrets no GitHub, deploy.yml).
+
+## Auth
+
+Email+senha (PBKDF2) ou telefone; JWT de acesso (15min) + refresh token rotativo (30d). Google OAuth pendente — ver `docs/carry-forwards.md`.
 
 ## Specs e planos
 
