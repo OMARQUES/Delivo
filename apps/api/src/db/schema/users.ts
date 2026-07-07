@@ -2,12 +2,16 @@ import { sql } from 'drizzle-orm'
 import { pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 
 export const userRole = pgEnum('user_role', ['CUSTOMER', 'STORE', 'DRIVER', 'ADMIN'])
+export const userStatus = pgEnum('user_status', ['ACTIVE', 'PENDING', 'BLOCKED'])
 
 export const users = pgTable(
   'users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     role: userRole('role').notNull().default('CUSTOMER'),
+    status: userStatus('status').notNull().default('ACTIVE'),
+    /** LGPD: momento do aceite da política (null = conta criada por admin/seed) */
+    termsAcceptedAt: timestamp('terms_accepted_at', { withTimezone: true }),
     name: text('name').notNull(),
     phone: text('phone'),
     email: text('email'),
