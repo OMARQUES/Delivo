@@ -20,3 +20,4 @@
 | Usuário BLOCKED com access token válido tem janela de até 15min (TTL do access) antes do bloqueio surtir efeito | Plano Auth | Aceito — revisar se virar problema |
 | Aprovação de entregador: login já bloqueia PENDING com mensagem; falta ação admin de aprovar (PATCH status→ACTIVE) | Plano Auth | Plano Admin |
 | api.ts força Content-Type application/json quando há body — quebraria upload FormData/multipart se reusado; hoje só JSON | Review Auth T10 | Quando houver upload (plano Catálogo) |
+| `/auth/me` devolve claims do token `{sub,role,name}` em vez do user canônico `{id,...,status,phone,email}` + OpenAPI usa `role: z.string()` não o enum — web não consome hoje; ajustar quando um cliente protegido usar /auth/me | Review final Auth | Plano que consumir /auth/me |
