@@ -8,6 +8,7 @@ import { adminStoreRoutes } from './routes/admin-stores'
 import { authRoutes } from './routes/auth'
 import { healthRoutes } from './routes/health'
 import { mediaRoutes } from './routes/media'
+import { storeMeRoutes } from './routes/store-me'
 
 export const app = createRouter()
 
@@ -31,6 +32,7 @@ app.route('/', healthRoutes)
 app.route('/', authRoutes)
 app.route('/', mediaRoutes)
 app.route('/', adminStoreRoutes)
+app.route('/', storeMeRoutes)
 
 app.doc('/openapi.json', {
   openapi: '3.1.0',
