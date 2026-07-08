@@ -23,6 +23,16 @@ export const router = createRouter({
           name: 'store-profile',
           component: () => import('../views/store/StoreProfileView.vue'),
         },
+        {
+          path: 'cardapio',
+          name: 'store-menu',
+          component: () => import('../views/store/StoreMenuView.vue'),
+        },
+        {
+          path: 'cardapio/produto/:productId?',
+          name: 'store-product-form',
+          component: () => import('../views/store/ProductFormView.vue'),
+        },
       ],
     },
     {

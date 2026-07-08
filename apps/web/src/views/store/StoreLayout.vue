@@ -5,6 +5,7 @@
       <nav class="flex gap-3 text-sm">
         <RouterLink to="/loja/pedidos" class="underline">Pedidos</RouterLink>
         <RouterLink to="/loja/perfil" class="underline">Perfil</RouterLink>
+        <RouterLink to="/loja/cardapio" class="underline">Cardápio</RouterLink>
       </nav>
     </header>
     <RouterView />
