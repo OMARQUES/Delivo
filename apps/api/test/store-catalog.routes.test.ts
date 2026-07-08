@@ -1,0 +1,114 @@
+import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
+import type { StoreCreateInput } from '@delivery/shared/schemas'
+import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+
+vi.mock('../src/db/client', async () => {
+  const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
+  return { ...actual, createDb: () => ({ db: testDb, client: { end: async () => {} } }) }
+})
+
+import { app } from '../src/app'
+import { signAccessToken } from '../src/lib/tokens'
+import { createStoreWithOwner } from '../src/services/store.service'
+
+const put = vi.fn(async () => ({}))
+const env = {
+  JWT_SECRET: 'test-secret', ALLOWED_ORIGINS: 'http://localhost:5173',
+  HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
+  BUCKET: { put } as unknown as R2Bucket,
+}
+
+const storeInput: StoreCreateInput = {
+  name: 'Pizzaria', slug: 'pizzaria', category: 'PIZZARIA', phone: '4433334444',
+  city: 'C', addressText: 'Rua A, 1', lat: -23.5, lng: -51.9,
+  owner: { name: 'João', email: 'joao@email.com', password: 'senha123' },
+}
+
+let token: string
+let storeId: string
+
+beforeAll(migrateTestDb)
+beforeEach(async () => {
+  await truncateAll()
+  put.mockClear()
+  const store = await createStoreWithOwner(testDb, storeInput)
+  storeId = store.id
+  void storeId
+  token = await signAccessToken({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
+})
+afterAll(closeTestDb)
+
+function req(path: string, init: RequestInit = {}) {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json', Authorization: `Bearer ${token}`,
+    ...(init.headers as Record<string, string>),
+  }
+  return app.request(path, { ...init, headers }, env)
+}
+
+async function makeCategory(name = 'Pizzas') {
+  const res = await req('/store/me/categories', { method: 'POST', body: JSON.stringify({ name }) })
+  return (await res.json()) as { id: string }
+}
+async function makeProduct(categoryId: string) {
+  const res = await req('/store/me/products', {
+    method: 'POST',
+    body: JSON.stringify({ categoryId, name: 'Pizza', basePriceCents: 3000 }),
+  })
+  return (await res.json()) as { id: string }
+}
+
+describe('categories routes', () => {
+  it('POST 201, PATCH 200, DELETE 204; DELETE with products 409', async () => {
+    const cat = await makeCategory()
+    expect((await req(`/store/me/categories/${cat.id}`, { method: 'PATCH', body: JSON.stringify({ name: 'Pizzas Top', sortIndex: 2 }) })).status).toBe(200)
+    await makeProduct(cat.id)
+    expect((await req(`/store/me/categories/${cat.id}`, { method: 'DELETE' })).status).toBe(409)
+    const empty = await makeCategory('Vazia')
+    expect((await req(`/store/me/categories/${empty.id}`, { method: 'DELETE' })).status).toBe(204)
+  })
+})
+
+describe('products routes', () => {
+  it('POST/PATCH/DELETE product + options replace + photo', async () => {
+    const cat = await makeCategory()
+    const prod = await makeProduct(cat.id)
+    expect((await req(`/store/me/products/${prod.id}`, { method: 'PATCH', body: JSON.stringify({ isAvailable: false }) })).status).toBe(200)
+
+    const treeRes = await req(`/store/me/products/${prod.id}/options`, {
+      method: 'PUT',
+      body: JSON.stringify([
+        { name: 'Tamanho', type: 'VARIATION', minSelect: 1, maxSelect: 1,
+          options: [{ name: 'P', priceCents: 3000 }, { name: 'G', priceCents: 5000 }] },
+      ]),
+    })
+    expect(treeRes.status).toBe(200)
+
+    const photo = await req(`/store/me/products/${prod.id}/photo`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/png' },
+      body: new Uint8Array([1, 2, 3]) as unknown as BodyInit,
+    })
+    expect(photo.status).toBe(200)
+    expect(((await photo.json()) as { photoKey: string }).photoKey).toMatch(/^products\//)
+
+    expect((await req(`/store/me/products/${prod.id}`, { method: 'DELETE' })).status).toBe(204)
+  })
+
+  it('GET /store/me/catalog returns nested tree', async () => {
+    const cat = await makeCategory()
+    await makeProduct(cat.id)
+    const res = await req('/store/me/catalog')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { name: string; products: { name: string }[] }[]
+    expect(body[0]!.products[0]!.name).toBe('Pizza')
+  })
+
+  it('401 anon, 403 CUSTOMER', async () => {
+    expect((await app.request('/store/me/catalog', {}, env)).status).toBe(401)
+    const cust = await signAccessToken({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
+    expect(
+      (await app.request('/store/me/catalog', { headers: { Authorization: `Bearer ${cust}` } }, env)).status,
+    ).toBe(403)
+  })
+})
