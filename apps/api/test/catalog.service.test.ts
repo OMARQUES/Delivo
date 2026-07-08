@@ -74,6 +74,29 @@ describe('products + options tree', () => {
     expect(after[0]!.products[0]!.groups).toHaveLength(0)
   })
 
+  it('concurrent replaceProductOptions never merges trees', async () => {
+    const p = await makeProduct()
+    const treeA = [
+      { name: 'Tamanho', type: 'VARIATION' as const, minSelect: 1, maxSelect: 1,
+        options: [{ name: 'P', priceCents: 3000, isAvailable: true }] },
+    ]
+    const treeB = [
+      { name: 'Extras', type: 'ADDON' as const, minSelect: 0, maxSelect: 3,
+        options: [{ name: 'Borda', priceCents: 800, isAvailable: true }] },
+    ]
+    for (let i = 0; i < 5; i++) {
+      await Promise.all([
+        replaceProductOptions(testDb, storeId, p.id, treeA),
+        replaceProductOptions(testDb, storeId, p.id, treeB),
+      ])
+      const catalog = await getStoreCatalog(testDb, storeId)
+      const groups = catalog[0]!.products[0]!.groups
+      // exatamente UMA árvore vence — nunca a soma das duas
+      expect(groups).toHaveLength(1)
+      expect(['Tamanho', 'Extras']).toContain(groups[0]!.name)
+    }
+  })
+
   it('rejects matrix pointing at nonexistent variation index', async () => {
     const p = await makeProduct()
     await expect(
@@ -114,6 +137,13 @@ describe('searchProducts', () => {
     expect(r[0]!.store.slug).toBe('pizzaria-do-joao')
     expect(r[0]!.products[0]!.name).toBe('Brigadeiro Gourmet')
     expect(await searchProducts(testDb, 'zzzzz')).toHaveLength(0)
+  })
+  it('is accent-insensitive: "calabrésa" finds "Pizza Calabresa"', async () => {
+    const cat = await createCategory(testDb, storeId, { name: 'Pizzas' })
+    await createProduct(testDb, storeId, { categoryId: cat.id, name: 'Pizza Calabresa', basePriceCents: 3500, isAvailable: true })
+    const r = await searchProducts(testDb, 'calabrésa')
+    expect(r).toHaveLength(1)
+    expect(r[0]!.products[0]!.name).toBe('Pizza Calabresa')
   })
 })
 

@@ -119,6 +119,8 @@ export async function replaceProductOptions(db: Db, storeId: string, productId: 
   }
 
   await db.transaction(async (tx) => {
+    // Lock da linha do produto: serializa replaces concorrentes (evita merge de árvores)
+    await tx.execute(sql`select id from products where id = ${productId} for update`)
     await tx.delete(optionGroups).where(eq(optionGroups.productId, productId)) // cascade limpa options+matriz
     const variationIds: string[] = []
     // 1º passo: VARIATION primeiro pra ter ids
@@ -262,7 +264,7 @@ export async function searchProducts(db: Db, q: string) {
       sql`${stores.isActive} = true and ${products.isAvailable} = true and (
         to_tsvector('portuguese', ${products.name} || ' ' || coalesce(${products.description}, ''))
           @@ websearch_to_tsquery('portuguese', ${query})
-        or ${products.name} ilike ${'%' + query + '%'}
+        or unaccent(${products.name}) ilike unaccent(${'%' + query + '%'})
       )`,
     )
     .limit(30)
@@ -285,24 +287,28 @@ export async function importCsvCatalog(db: Db, storeId: string, csvText: string)
   let createdCategories = 0
   let createdProducts = 0
   const catIds = new Map<string, string>()
-  const existing = await db
-    .select()
-    .from(productCategories)
-    .where(eq(productCategories.storeId, storeId))
-  for (const c of existing) catIds.set(c.name.toLowerCase(), c.id)
 
-  for (const row of rows) {
-    let catId = catIds.get(row.category.toLowerCase())
-    if (!catId) {
-      const [cat] = await db.insert(productCategories).values({ storeId, name: row.category }).returning()
-      catId = cat!.id
-      catIds.set(row.category.toLowerCase(), catId)
-      createdCategories++
+  // Import atômico: falhou no meio → nada persiste
+  await db.transaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(productCategories)
+      .where(eq(productCategories.storeId, storeId))
+    for (const c of existing) catIds.set(c.name.toLowerCase(), c.id)
+
+    for (const row of rows) {
+      let catId = catIds.get(row.category.toLowerCase())
+      if (!catId) {
+        const [cat] = await tx.insert(productCategories).values({ storeId, name: row.category }).returning()
+        catId = cat!.id
+        catIds.set(row.category.toLowerCase(), catId)
+        createdCategories++
+      }
+      await tx.insert(products).values({
+        storeId, categoryId: catId, name: row.name, description: row.description, basePriceCents: row.priceCents,
+      })
+      createdProducts++
     }
-    await db.insert(products).values({
-      storeId, categoryId: catId, name: row.name, description: row.description, basePriceCents: row.priceCents,
-    })
-    createdProducts++
-  }
+  })
   return { createdCategories, createdProducts, errors }
 }
