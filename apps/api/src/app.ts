@@ -6,6 +6,7 @@ import { dbMiddleware } from './middleware/db'
 import { errorHandler } from './middleware/error-handler'
 import { authRoutes } from './routes/auth'
 import { healthRoutes } from './routes/health'
+import { mediaRoutes } from './routes/media'
 
 export const app = createRouter()
 
@@ -27,6 +28,7 @@ app.notFound((c) => c.json({ error: 'Not Found' }, 404))
 
 app.route('/', healthRoutes)
 app.route('/', authRoutes)
+app.route('/', mediaRoutes)
 
 app.doc('/openapi.json', {
   openapi: '3.1.0',

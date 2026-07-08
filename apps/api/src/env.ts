@@ -3,6 +3,7 @@ import type { AccessTokenPayload } from './lib/tokens'
 
 export type Env = {
   HYPERDRIVE: Hyperdrive
+  BUCKET: R2Bucket
   JWT_SECRET: string
   ALLOWED_ORIGINS: string
 }

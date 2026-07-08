@@ -8,6 +8,13 @@
   "vars": {
     "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:5174"
   },
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      // bucket real criado no deploy prod; wrangler dev usa armazenamento local
+      "bucket_name": "delivo-media"
+    }
+  ],
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
