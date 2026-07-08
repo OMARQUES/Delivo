@@ -17,6 +17,7 @@ export const ProductSchema = z.object({
 export type ProductInput = z.infer<typeof ProductSchema>
 
 export const ProductUpdateSchema = ProductSchema.partial().extend({
+  isAvailable: z.boolean().optional(),
   sortIndex: z.number().int().min(0).optional(),
 })
 export type ProductUpdateInput = z.infer<typeof ProductUpdateSchema>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CategorySchema, ProductSchema, OptionsTreeSchema } from './catalog.schema'
+import { CategorySchema, ProductSchema, ProductUpdateSchema, OptionsTreeSchema } from './catalog.schema'
 
 describe('CategorySchema', () => {
   it('accepts name, rejects empty/long', () => {
@@ -55,5 +55,14 @@ describe('OptionsTreeSchema', () => {
       { ...flavor, options: [{ name: 'Calabresa', priceCents: null, variationPrices: { [vid]: 4000 } }] },
     ])
     expect(t[0]!.options[0]!.variationPrices).toEqual({ [vid]: 4000 })
+  })
+})
+
+describe('ProductUpdateSchema', () => {
+  it('empty object stays empty (no phantom isAvailable default)', () => {
+    expect(ProductUpdateSchema.parse({})).toEqual({})
+  })
+  it('explicit isAvailable passes through', () => {
+    expect(ProductUpdateSchema.parse({ isAvailable: false })).toEqual({ isAvailable: false })
   })
 })

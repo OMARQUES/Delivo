@@ -95,6 +95,15 @@ describe('products routes', () => {
     expect((await req(`/store/me/products/${prod.id}`, { method: 'DELETE' })).status).toBe(204)
   })
 
+  it('PATCH {} → 400 and does not reactivate paused product', async () => {
+    const cat = await makeCategory()
+    const prod = await makeProduct(cat.id)
+    await req(`/store/me/products/${prod.id}`, { method: 'PATCH', body: JSON.stringify({ isAvailable: false }) })
+    expect((await req(`/store/me/products/${prod.id}`, { method: 'PATCH', body: JSON.stringify({}) })).status).toBe(400)
+    const catalog = (await (await req('/store/me/catalog')).json()) as { products: { id: string; isAvailable: boolean }[] }[]
+    expect(catalog[0]!.products[0]!.isAvailable).toBe(false)
+  })
+
   it('GET /store/me/catalog returns nested tree', async () => {
     const cat = await makeCategory()
     await makeProduct(cat.id)
