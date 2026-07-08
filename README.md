@@ -56,3 +56,6 @@ Email+senha (PBKDF2) ou telefone; JWT de acesso (15min) + refresh token rotativo
 8. Financeiro — ledger, fatura de comissão, payout semanal
 9. Capacitor — build Android driver, FCM nativo
 10. Admin & Relatórios — gestão, import CSV, faturamento, mini-ERP
+11. Design & Identidade Visual — marca/nome definitivo, design system, refatoração UI/UX das telas existentes
+
+> Estratégia de UI: até o plano 10, telas são utilitárias (Tailwind cru) — foco em domínio/fluxo/API. Estética entra de uma vez no plano 11, sobre fluxos já validados.
