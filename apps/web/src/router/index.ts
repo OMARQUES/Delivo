@@ -48,6 +48,7 @@ export const router = createRouter({
         },
       ],
     },
+    { path: '/busca', name: 'search', component: () => import('../views/SearchView.vue') },
     // deep-link da loja: exemplo.com.br/NomeDaLoja — SEMPRE por último
     {
       path: '/:storeSlug',

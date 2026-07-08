@@ -44,6 +44,10 @@ function money(cents: number | null) {
       <span v-else class="text-sm text-gray-600">Olá, {{ auth.user?.name }}</span>
     </header>
 
+    <RouterLink to="/busca" class="mt-3 block rounded border p-2 text-center text-sm text-gray-600">
+      🔍 Buscar produto em todas as lojas
+    </RouterLink>
+
     <input v-model="search" placeholder="Buscar loja…" class="mt-3 w-full rounded border p-2" />
     <div class="mt-2 flex flex-wrap gap-1">
       <button class="rounded-full border px-3 py-1 text-xs" :class="!category && 'bg-black text-white'" @click="category = ''">Todas</button>
