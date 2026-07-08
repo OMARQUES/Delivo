@@ -22,9 +22,16 @@ export const router = createRouter({
     },
     {
       path: '/admin',
-      name: 'admin',
       component: () => import('../views/admin/AdminLayout.vue'),
       meta: { requiresRole: ['ADMIN'] },
+      children: [
+        { path: '', name: 'admin', redirect: '/admin/lojas' },
+        {
+          path: 'lojas',
+          name: 'admin-stores',
+          component: () => import('../views/admin/AdminStoresView.vue'),
+        },
+      ],
     },
     // deep-link da loja: exemplo.com.br/NomeDaLoja — SEMPRE por último
     {
