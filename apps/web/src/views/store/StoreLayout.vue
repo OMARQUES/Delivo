@@ -1,6 +1,12 @@
 <template>
   <div class="min-h-screen">
-    <header class="border-b p-4 font-semibold">Painel da Loja</header>
+    <header class="flex items-center gap-4 border-b p-4">
+      <span class="font-semibold">Painel da Loja</span>
+      <nav class="flex gap-3 text-sm">
+        <RouterLink to="/loja/pedidos" class="underline">Pedidos</RouterLink>
+        <RouterLink to="/loja/perfil" class="underline">Perfil</RouterLink>
+      </nav>
+    </header>
     <RouterView />
   </div>
 </template>
