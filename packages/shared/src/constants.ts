@@ -1,2 +1,4 @@
 export * from './order-status'
 export * from './store'
+export * from './opening-hours'
+export * from './geo'

@@ -61,6 +61,7 @@ describe('StoreUpdateSchema', () => {
     expect(() => StoreUpdateSchema.parse({ openingHours: [{ dow: 7, open: '18:00', close: '23:00' }] })).toThrow()
     expect(() => StoreUpdateSchema.parse({ openingHours: [{ dow: 1, open: '25:00', close: '23:00' }] })).toThrow()
     expect(() => StoreUpdateSchema.parse({ minOrderCents: -1 })).toThrow()
+    expect(() => StoreUpdateSchema.parse({ deliveryEtaMinutes: [60, 40] })).toThrow()
   })
 })
 

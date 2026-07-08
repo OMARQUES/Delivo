@@ -21,7 +21,9 @@ export const OpeningHoursSchema = z
   .max(21)
 
 const Cents = z.number().int().min(0).max(1_000_000)
-const EtaRange = z.tuple([z.number().int().min(1).max(600), z.number().int().min(1).max(600)])
+const EtaRange = z
+  .tuple([z.number().int().min(1).max(600), z.number().int().min(1).max(600)])
+  .refine(([a, b]) => a <= b, 'min deve ser <= max')
 
 type StoreCategoryKey = keyof typeof STORE_CATEGORIES
 
