@@ -8,6 +8,7 @@ import { adminStoreRoutes } from './routes/admin-stores'
 import { authRoutes } from './routes/auth'
 import { healthRoutes } from './routes/health'
 import { mediaRoutes } from './routes/media'
+import { menuPublicRoutes } from './routes/menu-public'
 import { storeCatalogRoutes } from './routes/store-catalog'
 import { storeMeRoutes } from './routes/store-me'
 import { publicStoreRoutes } from './routes/stores-public'
@@ -36,6 +37,7 @@ app.route('/', mediaRoutes)
 app.route('/', adminStoreRoutes)
 app.route('/', storeMeRoutes)
 app.route('/', storeCatalogRoutes)
+app.route('/', menuPublicRoutes)
 app.route('/', publicStoreRoutes)
 
 app.doc('/openapi.json', {
