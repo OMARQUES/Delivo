@@ -4,7 +4,6 @@
 |---|---|---|
 | `updatedAt` via `$onUpdate` é ORM-level; raw SQL bypassa. Avaliar trigger `moddatetime` | Review Task 4 | Plano Financeiro (ledger) |
 | `/docs` + `/openapi.json` expostos sem gate | Review Task 3 | Task 9 (deploy prod) |
-| Slugs reservados (`loja`, `admin`, etc.) — validar na criação de loja | Review Task 5 | Plano Catálogo |
 | `viewport-fit=cover` no index.html do driver (notch Android) | Review Task 6 | Plano Capacitor |
 | vitest node pool: rotas que usam `c.env` dependem de mock; avaliar `@cloudflare/vitest-pool-workers` | Reviews Tasks 3/4 | Quando integração real precisar |
 | Enforcement do factory `createRouter()` via lint rule (`no-restricted-syntax`) | Review Task 3 | Oportunista |
@@ -21,3 +20,8 @@
 | Aprovação de entregador: login já bloqueia PENDING com mensagem; falta ação admin de aprovar (PATCH status→ACTIVE) | Plano Auth | Plano Admin |
 | api.ts força Content-Type application/json quando há body — quebraria upload FormData/multipart se reusado; hoje só JSON | Review Auth T10 | Quando houver upload (plano Catálogo) |
 | `/auth/me` devolve claims do token `{sub,role,name}` em vez do user canônico `{id,...,status,phone,email}` + OpenAPI usa `role: z.string()` não o enum — web não consome hoje; ajustar quando um cliente protegido usar /auth/me | Review final Auth | Plano que consumir /auth/me |
+| Bucket R2 `delivo-media` real não criado — dev usa storage local do wrangler; criar via `wrangler r2 bucket create delivo-media` no deploy prod | Plano Lojas T4 | Deploy prod (Task 9 fundação) |
+| Logo upload passa pelo Worker (limite 2MB ok p/ logo); fotos de produto em volume podem justificar presigned URL direto ao R2 | Plano Lojas T7 | Plano Produtos se necessário |
+| Home ordena abertas-primeiro no client; com muitas lojas mover ordenação/paginação pro SQL | Plano Lojas T11 | Quando lista crescer |
+| Re-upload de logo deixa objeto R2 órfão (chave antiga nunca deletada) — leak lento de storage | Review Lojas T7 | Limpeza futura (cron ou delete no upload) |
+| Admin UI: toggleActive sem try/catch (falha silenciosa em erro de API) | Review Lojas T9 | Plano Admin & Relatórios |
