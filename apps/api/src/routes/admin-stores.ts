@@ -58,12 +58,18 @@ adminStoreRoutes.openapi(
   },
 )
 
+const MAX_CSV_LINES = 2000
+
 adminStoreRoutes.post('/admin/stores/:id/catalog/import', async (c) => {
   const id = c.req.param('id')
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+    throw new HTTPException(400, { message: 'ID inválido' })
   const [store] = await c.get('db').select({ id: stores.id }).from(stores).where(eq(stores.id, id))
   if (!store) throw new HTTPException(404, { message: 'Loja não encontrada' })
   const csv = await c.req.text()
   if (!csv.trim()) throw new HTTPException(400, { message: 'CSV vazio' })
+  if (csv.split(/\r?\n/).length > MAX_CSV_LINES)
+    throw new HTTPException(400, { message: `CSV acima de ${MAX_CSV_LINES} linhas — divida o arquivo` })
   const result = await importCsvCatalog(c.get('db'), id, csv)
   return c.json(result, 200)
 })

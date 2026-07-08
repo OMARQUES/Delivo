@@ -90,6 +90,19 @@ describe('POST /admin/stores/:id/catalog/import', () => {
     expect(body.errors).toHaveLength(1)
   })
 
+  it('400 non-uuid id', async () => {
+    const res = await req('/admin/stores/abc/catalog/import', { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: 'X;Y;;1,00' }, await adminToken())
+    expect(res.status).toBe(400)
+  })
+
+  it('400 csv over line cap', async () => {
+    const create = await req('/admin/stores', { method: 'POST', body: JSON.stringify(storeInput) }, await adminToken())
+    const { id } = (await create.json()) as { id: string }
+    const csv = Array.from({ length: 2001 }, (_, i) => `Cat;Prod${i};;1,00`).join('\n')
+    const res = await req(`/admin/stores/${id}/catalog/import`, { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: csv }, await adminToken())
+    expect(res.status).toBe(400)
+  })
+
   it('403 non-admin, 404 unknown store', async () => {
     expect((await req(`/admin/stores/${crypto.randomUUID()}/catalog/import`, { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: 'X;Y;;1,00' }, await customerToken())).status).toBe(403)
     expect((await req(`/admin/stores/${crypto.randomUUID()}/catalog/import`, { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: 'X;Y;;1,00' }, await adminToken())).status).toBe(404)
