@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../lib/api'
+import ProductModal from '../components/ProductModal.vue'
+import { minMenuPrice, type MenuProduct } from '@delivery/shared/constants'
 
 type PublicStore = {
   name: string; slug: string; category: string; phone: string; addressText: string
@@ -15,15 +17,38 @@ const route = useRoute()
 const store = ref<PublicStore | null>(null)
 const notFound = ref(false)
 
+type MenuCategory = { id: string; name: string; products: (MenuProduct & { description: string | null; photoKey: string | null })[] }
+
+const menu = ref<MenuCategory[]>([])
+const filter = ref('')
+const selected = ref<(MenuProduct & { photoKey: string | null }) | null>(null)
+
 async function load(slug: string) {
   notFound.value = false
   store.value = null
+  menu.value = []
+  filter.value = ''
+  selected.value = null
   try {
     store.value = await api<PublicStore>(`/stores/${slug}`)
+    const m = await api<{ categories: MenuCategory[] }>(`/stores/${slug}/menu`)
+    menu.value = m.categories
   } catch {
     notFound.value = true
   }
 }
+
+const filteredMenu = computed(() =>
+  menu.value
+    .map((c) => ({
+      ...c,
+      products: c.products.filter(
+        (p) => !filter.value || p.name.toLowerCase().includes(filter.value.toLowerCase()),
+      ),
+    }))
+    .filter((c) => c.products.length > 0),
+)
+const money = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
 onMounted(() => load(route.params.storeSlug as string))
 watch(
@@ -51,7 +76,33 @@ watch(
           </p>
         </div>
       </header>
-      <p class="mt-6 text-gray-600">Cardápio entra no plano de produtos.</p>
+      <input v-model="filter" placeholder="Buscar no cardápio…" class="mt-4 w-full rounded border p-2" />
+      <section v-for="c in filteredMenu" :key="c.id" class="mt-4">
+        <h2 class="font-semibold">{{ c.name }}</h2>
+        <ul class="mt-1 space-y-1">
+          <li
+            v-for="p in c.products"
+            :key="p.id"
+            class="flex cursor-pointer items-center gap-3 rounded border p-2"
+            :class="!p.isAvailable && 'opacity-50'"
+            @click="selected = p"
+          >
+            <img v-if="p.photoKey" :src="`${API_URL}/media/${p.photoKey}`" class="h-12 w-12 rounded object-cover" alt="" />
+            <div class="flex-1">
+              <p>{{ p.name }}</p>
+              <p v-if="p.description" class="text-xs text-gray-500">{{ p.description }}</p>
+            </div>
+            <span class="text-sm">{{ p.groups.length ? 'a partir de ' : '' }}{{ money(minMenuPrice(p)) }}</span>
+          </li>
+        </ul>
+      </section>
+      <p v-if="filteredMenu.length === 0" class="mt-6 text-gray-500">Nada no cardápio.</p>
+      <ProductModal
+        v-if="selected"
+        :product="selected"
+        :photo-url="selected.photoKey ? `${API_URL}/media/${selected.photoKey}` : null"
+        @close="selected = null"
+      />
     </template>
     <p v-else class="text-gray-500">Carregando…</p>
   </main>
