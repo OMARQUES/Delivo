@@ -36,6 +36,13 @@
       "when": 1783533259104,
       "tag": "0004_real_fantastic_four",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783533494556,
+      "tag": "0005_search_indexes",
+      "breakpoints": true
     }
   ]
 }
