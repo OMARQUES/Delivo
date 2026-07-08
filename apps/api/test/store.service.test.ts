@@ -85,4 +85,10 @@ describe('updateStore', () => {
     expect(upd.isPaused).toBe(true)
     expect(upd.openingHours).toHaveLength(1)
   })
+
+  it('rejects empty update with StoreError 400', async () => {
+    const s = await createStoreWithOwner(testDb, input)
+    await expect(updateStore(testDb, s.id, {})).rejects.toThrow(StoreError)
+    await expect(updateStore(testDb, s.id, {})).rejects.toMatchObject({ status: 400 })
+  })
 })

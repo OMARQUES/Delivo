@@ -109,6 +109,7 @@ export async function getStoreByOwner(db: Db, ownerUserId: string) {
 }
 
 export async function updateStore(db: Db, storeId: string, input: StoreUpdateInput) {
+  if (Object.keys(input).length === 0) throw new StoreError('Nada para atualizar', 400)
   const [row] = await db.update(stores).set(input).where(eq(stores.id, storeId)).returning()
   if (!row) throw new StoreError('Loja não encontrada', 404)
   return row
