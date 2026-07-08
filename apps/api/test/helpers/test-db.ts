@@ -23,7 +23,7 @@ export async function migrateTestDb() {
 
 /** Limpa dados entre testes preservando schema. */
 export async function truncateAll() {
-  await testDb.execute(sql`TRUNCATE TABLE refresh_tokens, auth_providers, users CASCADE`)
+  await testDb.execute(sql`TRUNCATE TABLE refresh_tokens, auth_providers, stores, users CASCADE`)
 }
 
 /** Fecha a conexão. Chamar em afterAll do último suite. */
