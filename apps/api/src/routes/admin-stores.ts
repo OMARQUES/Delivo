@@ -1,8 +1,11 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
+import { eq } from 'drizzle-orm'
 import { StoreCreateSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
+import { stores } from '../db/schema'
 import { authMiddleware, requireRole } from '../middleware/auth'
+import { importCsvCatalog } from '../services/catalog.service'
 import {
   createStoreWithOwner, listAllStores, setStoreActive, StoreError,
 } from '../services/store.service'
@@ -54,3 +57,13 @@ adminStoreRoutes.openapi(
     return c.json(store, 200)
   },
 )
+
+adminStoreRoutes.post('/admin/stores/:id/catalog/import', async (c) => {
+  const id = c.req.param('id')
+  const [store] = await c.get('db').select({ id: stores.id }).from(stores).where(eq(stores.id, id))
+  if (!store) throw new HTTPException(404, { message: 'Loja não encontrada' })
+  const csv = await c.req.text()
+  if (!csv.trim()) throw new HTTPException(400, { message: 'CSV vazio' })
+  const result = await importCsvCatalog(c.get('db'), id, csv)
+  return c.json(result, 200)
+})
