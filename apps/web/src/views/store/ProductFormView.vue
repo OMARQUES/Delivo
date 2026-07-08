@@ -67,9 +67,39 @@ function addGroup(type: Group['type']) {
     options: [{ name: '', priceCents: null, isAvailable: true }],
   })
 }
-const removeGroup = (gi: number) => groups.value.splice(gi, 1)
+function remapMatrixAfterVariationRemoval(removedIndex: number) {
+  for (const g of groups.value) {
+    if (g.type !== 'FLAVOR') continue
+    for (const o of g.options) {
+      if (!o.variationPrices) continue
+      const next: Record<string, number> = {}
+      for (const [k, v] of Object.entries(o.variationPrices)) {
+        const i = Number(k)
+        if (i === removedIndex) continue // preço da variação removida morre
+        next[String(i > removedIndex ? i - 1 : i)] = v
+      }
+      o.variationPrices = Object.keys(next).length ? next : undefined
+    }
+  }
+}
+
+function clearAllMatrices() {
+  for (const g of groups.value) {
+    if (g.type !== 'FLAVOR') continue
+    for (const o of g.options) o.variationPrices = undefined
+  }
+}
+
+function removeGroup(gi: number) {
+  const wasVariation = groups.value[gi]?.type === 'VARIATION'
+  groups.value.splice(gi, 1)
+  if (wasVariation) clearAllMatrices()
+}
 const addOption = (g: Group) => g.options.push({ name: '', priceCents: null, isAvailable: true })
-const removeOption = (g: Group, oi: number) => g.options.splice(oi, 1)
+function removeOption(g: Group, oi: number) {
+  g.options.splice(oi, 1)
+  if (g.type === 'VARIATION') remapMatrixAfterVariationRemoval(oi)
+}
 
 function setPrice(o: Opt, ev: Event) {
   const v = (ev.target as HTMLInputElement).value
@@ -91,7 +121,7 @@ async function save() {
     let id = productId.value
     const payload = {
       categoryId: form.categoryId, name: form.name,
-      description: form.description || undefined,
+      description: form.description.trim(),
       basePriceCents: form.basePriceCents, isAvailable: form.isAvailable,
     }
     if (id) await api(`/store/me/products/${id}`, { method: 'PATCH', body: JSON.stringify(payload) })
