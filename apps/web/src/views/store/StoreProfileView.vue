@@ -55,12 +55,17 @@ async function save() {
 async function uploadLogo(ev: Event) {
   const file = (ev.target as HTMLInputElement).files?.[0]
   if (!file) return
-  const { logoKey } = await api<{ logoKey: string }>('/store/me/logo', {
-    method: 'PUT',
-    headers: { 'Content-Type': file.type },
-    body: file,
-  })
-  if (store.value) store.value.logoKey = logoKey
+  try {
+    const { logoKey } = await api<{ logoKey: string }>('/store/me/logo', {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file,
+    })
+    if (store.value) store.value.logoKey = logoKey
+    msg.value = 'Logo atualizada!'
+  } catch (e) {
+    msg.value = e instanceof Error ? e.message : 'Erro no upload'
+  }
 }
 </script>
 
@@ -122,7 +127,7 @@ async function uploadLogo(ev: Event) {
       <button type="button" class="rounded border px-2 py-1 text-sm" @click="addHour">+ horário</button>
     </section>
 
-    <p v-if="msg" class="text-sm" :class="msg === 'Salvo!' ? 'text-green-700' : 'text-red-600'">{{ msg }}</p>
+    <p v-if="msg" class="text-sm" :class="['Salvo!', 'Logo atualizada!'].includes(msg) ? 'text-green-700' : 'text-red-600'">{{ msg }}</p>
     <button :disabled="saving" class="w-full rounded bg-black p-2 text-white disabled:opacity-50" @click="save">
       {{ saving ? 'Salvando…' : 'Salvar' }}
     </button>
