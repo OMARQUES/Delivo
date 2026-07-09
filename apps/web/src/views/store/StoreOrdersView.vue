@@ -7,6 +7,8 @@ type OrderRow = {
   id: string
   status: OrderStatus
   fulfillment: 'DELIVERY' | 'PICKUP'
+  driverId: string | null
+  driverRequestedAt: string | null
   paymentMethod: string
   changeForCents: number | null
   totalCents: number
@@ -23,6 +25,8 @@ type OrderRow = {
 type Detail = OrderRow & {
   subtotalCents: number
   deliveryFeeCents: number | null
+  driverName: string | null
+  driverPhone: string | null
   items: { id: string; nameSnapshot: string; quantity: number; totalCents: number; note: string | null; options: { label: string }[] }[]
 }
 
@@ -113,6 +117,16 @@ async function resolveCancel(o: OrderRow, approve: boolean) {
   await load()
 }
 
+async function requestDriver(o: OrderRow) {
+  error.value = ''
+  try {
+    await api(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+  }
+}
+
 async function openDetail(o: OrderRow) {
   detail.value = await api<Detail>(`/store/me/orders/${o.id}`)
 }
@@ -162,9 +176,18 @@ const groups = computed(() => {
             <button v-for="a in actionsFor(o)" :key="a.to" class="rounded bg-black px-2 py-1 text-white" @click="setStatus(o, a.to)">
               {{ a.label }}
             </button>
+            <button
+              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && !o.driverRequestedAt && !['DELIVERED', 'CANCELLED', 'DELIVERY_FAILED'].includes(o.status)"
+              class="rounded border px-2 py-1"
+              @click="requestDriver(o)"
+            >🛵 Solicitar entregador</button>
+            <span v-else-if="o.fulfillment === 'DELIVERY' && !o.driverId && o.driverRequestedAt" class="rounded bg-blue-100 px-2 py-1 text-xs">
+              aguardando entregador...
+            </span>
+            <span v-else-if="o.driverId" class="rounded bg-green-100 px-2 py-1 text-xs">entregador a caminho</span>
             <button class="rounded border px-2 py-1" @click="openDetail(o)">Detalhes</button>
             <button
-              v-if="!['DELIVERED', 'CANCELLED'].includes(o.status)"
+              v-if="!['DELIVERED', 'CANCELLED', 'DELIVERY_FAILED'].includes(o.status)"
               class="rounded border border-red-400 px-2 py-1 text-red-600"
               @click="setStatus(o, 'CANCELLED')"
             >
@@ -196,6 +219,10 @@ const groups = computed(() => {
         <template v-if="detail.changeForCents"> · troco p/ {{ formatBRL(detail.changeForCents) }}</template>
       </p>
       <p v-if="detail.taxId" class="text-sm text-gray-600">CPF/CNPJ na nota: {{ detail.taxId }}</p>
+      <p v-if="detail.driverName" class="text-sm text-gray-600">
+        Entregador: {{ detail.driverName }}
+        <a v-if="detail.driverPhone" :href="`https://wa.me/55${detail.driverPhone}`" target="_blank" class="underline">WhatsApp</a>
+      </p>
       <ul class="mt-2 space-y-1 text-sm">
         <li v-for="i in detail.items" :key="i.id">
           {{ i.quantity }}× {{ i.nameSnapshot }}

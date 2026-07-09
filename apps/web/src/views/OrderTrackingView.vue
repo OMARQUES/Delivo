@@ -27,6 +27,7 @@ type Order = {
   storeName: string
   storePhone: string | null
   storeSlug: string
+  driverName: string | null
   events: { status: OrderStatus; createdAt: string; note: string | null }[]
 }
 
@@ -91,6 +92,9 @@ async function requestCancel() {
       <section v-if="order.status === 'CANCELLED'" class="rounded border border-red-300 bg-red-50 p-3">
         Cancelado{{ order.cancelReason ? ` — ${order.cancelReason}` : '' }}
       </section>
+      <section v-else-if="order.status === 'DELIVERY_FAILED'" class="rounded border border-red-300 bg-red-50 p-3">
+        Entrega não realizada. Entre em contato com a loja.
+      </section>
       <ol v-else class="space-y-1">
         <li
           v-for="(s, i) in STEPS"
@@ -102,6 +106,10 @@ async function requestCancel() {
           {{ ORDER_STATUS_LABELS[s] }}
         </li>
       </ol>
+
+      <p v-if="order.driverName && !isFinal" class="rounded border border-blue-200 bg-blue-50 p-2 text-sm">
+        🛵 {{ order.driverName }} é seu entregador
+      </p>
 
       <p v-if="order.cancelRequestedAt && order.status !== 'CANCELLED'" class="rounded border border-yellow-300 bg-yellow-50 p-2 text-sm">
         Cancelamento solicitado — aguardando a loja.

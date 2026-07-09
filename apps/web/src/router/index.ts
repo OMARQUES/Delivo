@@ -46,6 +46,11 @@ export const router = createRouter({
           name: 'admin-stores',
           component: () => import('../views/admin/AdminStoresView.vue'),
         },
+        {
+          path: 'entregadores',
+          name: 'admin-drivers',
+          component: () => import('../views/admin/AdminDriversView.vue'),
+        },
       ],
     },
     { path: '/busca', name: 'search', component: () => import('../views/SearchView.vue') },
