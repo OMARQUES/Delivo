@@ -22,7 +22,7 @@ pnpm dev:web     # http://localhost:5173
 pnpm dev:driver  # http://localhost:5174
 ```
 
-Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`. Admin cria lojas em `/admin/lojas`.
+Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`. Admin cria lojas em `/admin/lojas`. Cardápio da loja em `/loja/cardapio`; import CSV: `POST /admin/stores/:id/catalog/import` (text/csv).
 
 ## Verificação
 
@@ -49,7 +49,7 @@ Email+senha (PBKDF2) ou telefone; JWT de acesso (15min) + refresh token rotativo
 1. ✅ Fundação (este repo)
 2. ✅ Auth — email+senha, JWT + refresh, RBAC (Google pendente)
 3. ✅ Lojas & Descoberta — cadastro admin, perfil da loja (horário/frete/pin/logo), home pública, deep-link `/:slug`
-4. Produtos & Cardápio — categorias, produtos, variações, adicionais, meio-a-meio, busca
+4. ✅ Produtos & Cardápio — categorias, produtos, variações, adicionais, meio-a-meio, busca
 5. Pedidos — carrinho, checkout (idempotente), máquina de status, amendment, retirada, painel loja, polling
 6. Dispatch — broadcast FCM, aceite com lock atômico, batching multi-loja/multi-destino, telas driver
 7. Pagamentos — Asaas PIX/cartão + split, estornos, webhooks

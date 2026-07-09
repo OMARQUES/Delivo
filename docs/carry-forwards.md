@@ -25,3 +25,11 @@
 | Home ordena abertas-primeiro no client; com muitas lojas mover ordenação/paginação pro SQL | Plano Lojas T11 | Quando lista crescer |
 | Re-upload de logo deixa objeto R2 órfão (chave antiga nunca deletada) — leak lento de storage | Review Lojas T7 | Limpeza futura (cron ou delete no upload) |
 | Admin UI: toggleActive sem try/catch (falha silenciosa em erro de API) | Review Lojas T9 | Plano Admin & Relatórios |
+| Fotos de produto: mesma nota do logo — órfãos no re-upload; volume maior que logos | Plano Produtos | Junto da limpeza de logos |
+| Import CSV não importa variações/adicionais (só categoria+produto+preço) — ajuste fino manual | Plano Produtos T8 | Aceito (decisão de escopo) |
+| Busca FTS sem paginação/ranking fino (limit 30) | Plano Produtos T7 | Quando catálogo crescer |
+| Editor de opções: replace-all regenera ids de opção — inofensivo até Plano 5 snapshotar itens de pedido (CONFIRMAR snapshot no plano 5) | Plano Produtos | Plano Pedidos |
+| Busca: FTS side ainda sensível a acento (só ILIKE tem unaccent) + sem índice em unaccent(name) — ok em escala atual | Review Prod T5 | Quando catálogo crescer |
+| minMenuPrice ignora FLAVOR-only (produto só-sabores mostra "a partir de" pela base) — by-spec, revisar exibição | Review Prod T2 | Plano Design/UX |
+| Painel: swap de ordenação usa índices do array como sortIndex — gaps podem gerar empate momentâneo | Review Prod T9 | Oportunista |
+| Modal: checkbox acima do max não re-renderiza (desync visual, preço correto) + produto indisponível abre modal | Review Prod T11 | Plano Pedidos (cart) |
