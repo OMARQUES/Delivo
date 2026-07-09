@@ -10,6 +10,7 @@ import { authRoutes } from './routes/auth'
 import { healthRoutes } from './routes/health'
 import { mediaRoutes } from './routes/media'
 import { menuPublicRoutes } from './routes/menu-public'
+import { orderRoutes } from './routes/orders'
 import { storeCatalogRoutes } from './routes/store-catalog'
 import { storeMeRoutes } from './routes/store-me'
 import { publicStoreRoutes } from './routes/stores-public'
@@ -35,6 +36,7 @@ app.notFound((c) => c.json({ error: 'Not Found' }, 404))
 app.route('/', healthRoutes)
 app.route('/', authRoutes)
 app.route('/', addressRoutes)
+app.route('/', orderRoutes)
 app.route('/', mediaRoutes)
 app.route('/', adminStoreRoutes)
 app.route('/', storeMeRoutes)
