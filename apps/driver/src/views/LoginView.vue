@@ -33,7 +33,7 @@ async function submit() {
   <main class="mx-auto max-w-sm p-4">
     <h1 class="text-2xl font-bold">Entregador - Entrar</h1>
     <form class="mt-4 space-y-3" @submit.prevent="submit">
-      <input v-model="identifier" type="text" required placeholder="Telefone ou email" class="w-full rounded border p-2" autocomplete="username" />
+      <input v-model="identifier" type="text" required placeholder="Telefone (ou email, se cadastrou)" class="w-full rounded border p-2" autocomplete="username" />
       <input v-model="password" type="password" required placeholder="Senha" class="w-full rounded border p-2" autocomplete="current-password" />
       <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
       <button type="submit" :disabled="loading" class="w-full rounded bg-black p-2 font-semibold text-white disabled:opacity-50">

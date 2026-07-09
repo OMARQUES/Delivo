@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/auth'
 const auth = useAuthStore()
 const name = ref('')
 const phone = ref('')
+const email = ref('')
 const password = ref('')
 const acceptedTerms = ref(false)
 const error = ref('')
@@ -18,6 +19,7 @@ async function submit() {
     await auth.register({
       name: name.value,
       phone: phone.value,
+      email: email.value || undefined,
       password: password.value,
       acceptedTerms: acceptedTerms.value,
       role: 'DRIVER',
@@ -41,8 +43,9 @@ async function submit() {
     <template v-else>
       <h1 class="text-2xl font-bold">Cadastro de entregador</h1>
       <form class="mt-4 space-y-3" @submit.prevent="submit">
-        <input v-model="name" required placeholder="Nome" class="w-full rounded border p-2" />
+        <input v-model="name" required placeholder="Nome completo" class="w-full rounded border p-2" />
         <input v-model="phone" type="tel" required placeholder="WhatsApp (44) 99999-9999" class="w-full rounded border p-2" />
+        <input v-model="email" type="email" placeholder="Email (opcional — permite login por email)" class="w-full rounded border p-2" autocomplete="email" />
         <input v-model="password" type="password" required minlength="8" placeholder="Senha (min. 8)" class="w-full rounded border p-2" />
         <label class="flex items-start gap-2 text-sm text-gray-700">
           <input v-model="acceptedTerms" type="checkbox" required class="mt-1" />
