@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, lt, ne, sql } from 'drizzle-orm'
 import type { CheckoutInput } from '@delivery/shared/schemas'
 import {
   calcDeliveryFee,
@@ -15,6 +15,7 @@ import {
   orderItems,
   orders,
   stores,
+  users,
 } from '../db/schema'
 import { getAddress } from './address.service'
 import { getMenuProductsByIds } from './catalog.service'
@@ -236,6 +237,59 @@ export async function getCustomerOrder(db: Db, customerId: string, orderId: stri
     .where(eq(stores.id, order.storeId))
     .limit(1)
   return { ...detail, storeName: store?.name ?? '', storePhone: store?.phone ?? null, storeSlug: store?.slug ?? '' }
+}
+
+const ACTIVE_STATUSES = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER', 'OUT_FOR_DELIVERY'] as const
+
+export async function listStoreOrders(db: Db, storeId: string, scope: 'active' | 'done') {
+  const rows = await db
+    .select({
+      order: orders,
+      customerName: users.name,
+      customerPhone: users.phone,
+    })
+    .from(orders)
+    .innerJoin(users, eq(orders.customerId, users.id))
+    .where(and(
+      eq(orders.storeId, storeId),
+      scope === 'active'
+        ? inArray(orders.status, [...ACTIVE_STATUSES])
+        : inArray(orders.status, ['DELIVERED', 'DELIVERY_FAILED', 'CANCELLED']),
+    ))
+    .orderBy(desc(orders.createdAt))
+    .limit(scope === 'active' ? 100 : 30)
+
+  const result = []
+  for (const r of rows) {
+    const [prev] = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(
+        eq(orders.customerId, r.order.customerId),
+        ne(orders.id, r.order.id),
+        ne(orders.status, 'CANCELLED'),
+        lt(orders.createdAt, r.order.createdAt),
+      ))
+      .limit(1)
+    result.push({ ...r.order, customerName: r.customerName, customerPhone: r.customerPhone, isFirstOrder: !prev })
+  }
+  return result
+}
+
+export async function getStoreOrder(db: Db, storeId: string, orderId: string) {
+  const [order] = await db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId)))
+    .limit(1)
+  if (!order) return null
+  const [customer] = await db
+    .select({ name: users.name, phone: users.phone })
+    .from(users)
+    .where(eq(users.id, order.customerId))
+    .limit(1)
+  const detail = await withDetail(db, order)
+  return { ...detail, customerName: customer?.name ?? '', customerPhone: customer?.phone ?? null }
 }
 
 export async function withDetail(db: Db, order: typeof orders.$inferSelect) {

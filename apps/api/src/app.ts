@@ -13,6 +13,7 @@ import { menuPublicRoutes } from './routes/menu-public'
 import { orderRoutes } from './routes/orders'
 import { storeCatalogRoutes } from './routes/store-catalog'
 import { storeMeRoutes } from './routes/store-me'
+import { storeOrderRoutes } from './routes/store-orders'
 import { publicStoreRoutes } from './routes/stores-public'
 
 export const app = createRouter()
@@ -40,6 +41,7 @@ app.route('/', orderRoutes)
 app.route('/', mediaRoutes)
 app.route('/', adminStoreRoutes)
 app.route('/', storeMeRoutes)
+app.route('/', storeOrderRoutes)
 app.route('/', storeCatalogRoutes)
 app.route('/', menuPublicRoutes)
 app.route('/', publicStoreRoutes)
