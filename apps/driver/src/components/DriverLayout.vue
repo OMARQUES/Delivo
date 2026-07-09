@@ -2,12 +2,14 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../lib/api'
+import { enablePush, pushConfigured } from '../lib/push'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
 const isAvailable = ref(false)
 const saving = ref(false)
+const showPushButton = ref(pushConfigured())
 
 onMounted(async () => {
   try {
@@ -31,6 +33,11 @@ async function toggle() {
   }
 }
 
+async function onEnablePush() {
+  const r = await enablePush()
+  if (r === 'ok') showPushButton.value = false
+}
+
 async function logout() {
   await auth.logout()
   await router.replace('/login')
@@ -45,6 +52,7 @@ async function logout() {
         <RouterLink to="/entregas" class="underline">Minhas entregas</RouterLink>
       </nav>
       <div class="flex items-center gap-2">
+        <button v-if="showPushButton" class="text-sm underline" @click="onEnablePush">🔔 Ativar alertas</button>
         <button
           :disabled="saving"
           class="rounded-full px-3 py-1 text-sm font-semibold"
