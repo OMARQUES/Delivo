@@ -158,6 +158,26 @@ describe('PATCH /store/me/orders/:id/status', () => {
   })
 })
 
+describe('POST /store/me/orders/:id/request-driver', () => {
+  it('requests driver; idempotent; READY order flips to AWAITING_DRIVER', async () => {
+    const o = await createOrder(testDb, customerId, checkout())
+    const r1 = await req(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
+    expect(r1.status).toBe(200)
+    const r2 = await req(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
+    expect(r2.status).toBe(200)
+    for (const to of ['ACCEPTED', 'PREPARING', 'READY']) {
+      await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })
+    }
+    const detail = await req(`/store/me/orders/${o.id}`)
+    expect(((await detail.json()) as { status: string }).status).toBe('AWAITING_DRIVER')
+  })
+
+  it('rejects pickup orders and orders with driver', async () => {
+    const p = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
+    expect((await req(`/store/me/orders/${p.id}/request-driver`, { method: 'POST' })).status).toBe(400)
+  })
+})
+
 describe('cancel-request resolution', () => {
   it('approve cancels; deny clears request', async () => {
     const o = await createOrder(testDb, customerId, checkout())

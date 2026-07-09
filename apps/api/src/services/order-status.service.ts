@@ -1,7 +1,7 @@
-import { and, eq, inArray, isNull, lt } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt } from 'drizzle-orm'
 import { canTransition, type OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { orderEvents, orders } from '../db/schema'
+import { drivers, orderEvents, orders } from '../db/schema'
 import { OrderError } from './order.service'
 
 export async function addEvent(
@@ -58,6 +58,47 @@ export async function cancelStalePendingOrders(db: Db, olderThanMinutes = 30) {
 }
 
 const STORE_ALLOWED: OrderStatus[] = ['ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']
+const REQUESTABLE_FOR_DRIVER: OrderStatus[] = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER']
+
+export async function requestDriver(db: Db, storeId: string, orderId: string) {
+  const [order] = await db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId)))
+  if (!order) throw new OrderError('Pedido não encontrado', 404)
+  if (order.fulfillment !== 'DELIVERY') throw new OrderError('Pedido é retirada — sem entrega', 400)
+  if (order.driverId) throw new OrderError('Pedido já tem entregador', 409)
+  if (!REQUESTABLE_FOR_DRIVER.includes(order.status)) throw new OrderError('Pedido não está em andamento', 409)
+  if (order.driverRequestedAt) return order
+
+  const [updated] = await db
+    .update(orders)
+    .set({ driverRequestedAt: new Date() })
+    .where(and(eq(orders.id, orderId), isNull(orders.driverId)))
+    .returning()
+  if (!updated) throw new OrderError('Pedido mudou — recarregue', 409)
+
+  if (updated.status === 'READY') {
+    const rows = await db
+      .update(orders)
+      .set({ status: 'AWAITING_DRIVER' })
+      .where(and(eq(orders.id, orderId), eq(orders.status, 'READY'), isNull(orders.driverId)))
+      .returning()
+    if (rows.length > 0) {
+      await addEvent(db, orderId, 'AWAITING_DRIVER', 'SYSTEM', null, 'aguardando entregador')
+      return rows[0]!
+    }
+  }
+  return updated
+}
+
+export async function listAvailableDriverTokens(db: Db): Promise<string[]> {
+  const rows = await db
+    .select({ fcmToken: drivers.fcmToken })
+    .from(drivers)
+    .where(and(eq(drivers.isAvailable, true), isNotNull(drivers.fcmToken)))
+  return rows.map((r) => r.fcmToken!).filter(Boolean)
+}
 
 export async function storeUpdateOrderStatus(
   db: Db,
@@ -86,7 +127,19 @@ export async function storeUpdateOrderStatus(
     .returning()
   if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)
   await addEvent(db, orderId, to, 'STORE', actorId, reason)
-  return rows[0]!
+  let final = rows[0]!
+  if (to === 'READY' && final.driverRequestedAt && !final.driverId) {
+    const auto = await db
+      .update(orders)
+      .set({ status: 'AWAITING_DRIVER' })
+      .where(and(eq(orders.id, orderId), eq(orders.status, 'READY'), isNull(orders.driverId)))
+      .returning()
+    if (auto.length > 0) {
+      await addEvent(db, orderId, 'AWAITING_DRIVER', 'SYSTEM', null, 'aguardando entregador')
+      final = auto[0]!
+    }
+  }
+  return final
 }
 
 export async function storeResolveCancelRequest(

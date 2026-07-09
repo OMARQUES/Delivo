@@ -6,7 +6,7 @@ import { createRouter } from '../app-factory'
 import type { AppContext } from '../env'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.service'
-import { storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
+import { requestDriver, storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
 import { getStoreByOwner } from '../services/store.service'
 
 export const storeOrderRoutes = createRouter()
@@ -70,6 +70,17 @@ storeOrderRoutes.openapi(
     ).catch(rethrow)
     return c.json(order, 200)
   },
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/store/me/orders/{id}/request-driver',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Entregador solicitado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) =>
+    c.json(await requestDriver(c.get('db'), await ownStoreId(c), c.req.valid('param').id).catch(rethrow), 200),
 )
 
 storeOrderRoutes.openapi(
