@@ -38,7 +38,10 @@ const filtered = computed(() =>
     <header class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Lojas da cidade</h1>
       <RouterLink v-if="!auth.isAuthenticated" to="/login" class="text-sm underline">Entrar</RouterLink>
-      <span v-else class="text-sm text-gray-600">Olá, {{ auth.user?.name }}</span>
+      <span v-else class="flex items-center gap-2">
+        <span class="text-sm text-gray-600">Olá, {{ auth.user?.name }}</span>
+        <RouterLink to="/pedidos" class="text-sm underline">Meus pedidos</RouterLink>
+      </span>
     </header>
 
     <RouterLink to="/busca" class="mt-3 block rounded border p-2 text-center text-sm text-gray-600">
