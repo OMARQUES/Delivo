@@ -84,6 +84,7 @@ async function makeRequestedOrder() {
     items: [{ productId, quantity: 1, selections: [] }],
     idempotencyKey: crypto.randomUUID(),
   })
+  await storeUpdateOrderStatus(testDb, storeId, order.id, 'ACCEPTED', customerId)
   await requestDriver(testDb, storeId, order.id)
   return order
 }
@@ -110,7 +111,7 @@ describe('driver flow via HTTP', () => {
     expect(((await acc.json()) as { customerName: string }).customerName).toBe('Ana')
     expect((await req(`/driver/orders/${order.id}/accept`, { method: 'POST' }, driver2Token)).status).toBe(409)
     expect((await req(`/driver/orders/${order.id}/collect`, { method: 'POST' }, driverToken)).status).toBe(409)
-    for (const to of ['ACCEPTED', 'PREPARING', 'READY']) {
+    for (const to of ['PREPARING', 'READY']) {
       await storeUpdateOrderStatus(testDb, storeId, order.id, to as OrderStatus, customerId)
     }
     expect((await req(`/driver/orders/${order.id}/collect`, { method: 'POST' }, driverToken)).status).toBe(200)
@@ -125,7 +126,7 @@ describe('driver flow via HTTP', () => {
     const rel = await req(`/driver/orders/${order.id}/release`, { method: 'POST' }, driverToken)
     expect(rel.status).toBe(200)
     await req(`/driver/orders/${order.id}/accept`, { method: 'POST' }, driverToken)
-    for (const to of ['ACCEPTED', 'PREPARING', 'READY']) {
+    for (const to of ['PREPARING', 'READY']) {
       await storeUpdateOrderStatus(testDb, storeId, order.id, to as OrderStatus, customerId)
     }
     await req(`/driver/orders/${order.id}/collect`, { method: 'POST' }, driverToken)
@@ -138,5 +139,15 @@ describe('driver flow via HTTP', () => {
     expect((await req('/driver/available', {}, customerToken)).status).toBe(403)
     expect((await app.request('/driver/available', {}, env)).status).toBe(401)
     expect((await req('/driver/me/fcm-token', { method: 'POST', body: JSON.stringify({ token: 'tok-1234567890' }) }, driverToken)).status).toBe(200)
+  })
+
+  it('unavailable driver sees an empty pool', async () => {
+    await makeRequestedOrder()
+    const off = await req('/driver/available', {}, driverToken)
+    expect(off.status).toBe(200)
+    expect((await off.json()) as unknown[]).toHaveLength(0)
+    await req('/driver/me/availability', { method: 'PATCH', body: JSON.stringify({ isAvailable: true }) }, driverToken)
+    const on = await req('/driver/available', {}, driverToken)
+    expect(((await on.json()) as unknown[]).length).toBe(1)
   })
 })

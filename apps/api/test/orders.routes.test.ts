@@ -14,7 +14,7 @@ import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
-import { requestDriver } from '../src/services/order-status.service'
+import { requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 
 const env = {
@@ -161,6 +161,7 @@ describe('GET /orders + /orders/:id', () => {
 
   it('customer tracking shows driver first name once assigned', async () => {
     const o = await createOrder(testDb, customerId, checkout())
+    await storeUpdateOrderStatus(testDb, storeId, o.id, 'ACCEPTED', customerId)
     await requestDriver(testDb, storeId, o.id)
     const { acceptDelivery } = await import('../src/services/dispatch.service')
     await acceptDelivery(testDb, driverUserId, o.id)

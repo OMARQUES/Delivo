@@ -14,7 +14,7 @@ export class DispatchError extends Error {
   }
 }
 
-const ACCEPTABLE: OrderStatus[] = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER']
+const ACCEPTABLE: OrderStatus[] = ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER']
 const COLLECTIBLE: OrderStatus[] = ['READY', 'AWAITING_DRIVER']
 
 export async function ensureDriverProfile(db: Db, userId: string) {
@@ -35,7 +35,9 @@ export async function setFcmToken(db: Db, userId: string, token: string) {
   return row!
 }
 
-export async function listAvailableDeliveries(db: Db) {
+export async function listAvailableDeliveries(db: Db, driverUserId: string) {
+  const profile = await ensureDriverProfile(db, driverUserId)
+  if (!profile.isAvailable) return []
   return db
     .select({
       orderId: orders.id,

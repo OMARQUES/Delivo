@@ -44,3 +44,4 @@
 | isFirstOrder faz 1 query por pedido da fila (N+1) — ok em cidade pequena | Plano Pedidos T6 | Se fila crescer |
 | listCustomerOrders/listStoreOrders sem paginação real (limit fixo) | Plano Pedidos | Quando volume crescer |
 | Pool/aceite do driver não é gated em isAvailable (toggle afeta só FCM+UI) — driver indisponível ainda pode aceitar via API. Design aceito; endurecer se virar problema | Audit Plano 6 | Se comportamento incomodar |
+| Cron auto-cancel de PENDING não notifica entregador se houver atribuição legada; após fix A o estado é inatingível, linha de defesa mantida | Fix pós-Plano 6 | N/A (estado inválido bloqueado) |

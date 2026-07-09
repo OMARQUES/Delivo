@@ -20,6 +20,7 @@ const router = useRouter()
 const list = ref<Available[]>([])
 const error = ref('')
 const accepting = ref('')
+const available = ref(true)
 let timer: ReturnType<typeof setInterval> | undefined
 let known = new Set<string>()
 let firstLoad = true
@@ -43,9 +44,11 @@ function beep() {
 
 async function load() {
   try {
+    const me = await api<{ isAvailable: boolean }>('/driver/me')
+    available.value = me.isAvailable
     const rows = await api<Available[]>('/driver/available')
     const ids = new Set(rows.map((r) => r.orderId))
-    if (!firstLoad && [...ids].some((id) => !known.has(id))) beep()
+    if (available.value && !firstLoad && [...ids].some((id) => !known.has(id))) beep()
     known = ids
     firstLoad = false
     list.value = rows
@@ -56,7 +59,7 @@ async function load() {
 
 onMounted(() => {
   load()
-  timer = setInterval(load, 12_000)
+  timer = setInterval(load, 10_000)
 })
 onBeforeUnmount(() => clearInterval(timer))
 
@@ -78,6 +81,9 @@ async function accept(o: Available) {
 <template>
   <main class="mx-auto max-w-lg p-4">
     <h1 class="text-xl font-bold">Entregas disponíveis</h1>
+    <p v-if="!available" class="mt-2 rounded bg-yellow-100 p-2 text-sm text-yellow-800">
+      Você está indisponível — ative no topo para receber entregas
+    </p>
     <p v-if="error" class="mt-1 text-sm text-red-600">{{ error }}</p>
     <p v-if="list.length === 0" class="mt-4 text-gray-500">Nenhuma entrega no momento. Avisamos quando pintar!</p>
     <ul class="mt-3 space-y-2">

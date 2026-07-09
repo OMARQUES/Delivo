@@ -67,6 +67,13 @@ async function load() {
     firstLoad = false
     active.value = a
     done.value = d
+    if (detail.value) {
+      try {
+        detail.value = await api<Detail>(`/store/me/orders/${detail.value.id}`)
+      } catch {
+        // Detalhe pode ter saído da janela; ignora.
+      }
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
   }
@@ -74,7 +81,7 @@ async function load() {
 
 onMounted(() => {
   load()
-  timer = setInterval(load, 15_000)
+  timer = setInterval(load, 10_000)
 })
 onBeforeUnmount(() => clearInterval(timer))
 
@@ -177,7 +184,7 @@ const groups = computed(() => {
               {{ a.label }}
             </button>
             <button
-              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && !o.driverRequestedAt && !['DELIVERED', 'CANCELLED', 'DELIVERY_FAILED'].includes(o.status)"
+              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && !o.driverRequestedAt && ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER'].includes(o.status)"
               class="rounded border px-2 py-1"
               @click="requestDriver(o)"
             >🛵 Solicitar entregador</button>

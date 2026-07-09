@@ -15,7 +15,7 @@ import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
-import { customerRequestCancel, requestDriver } from '../src/services/order-status.service'
+import { customerRequestCancel, requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 
 const env = {
@@ -143,6 +143,7 @@ describe('GET /store/me/orders', () => {
 describe('GET /store/me/orders/:id driver info', () => {
   it('store order payloads include driver name/phone once assigned', async () => {
     const o = await createOrder(testDb, customerId, checkout())
+    await storeUpdateOrderStatus(testDb, storeId, o.id, 'ACCEPTED', customerId)
     await requestDriver(testDb, storeId, o.id)
     const { acceptDelivery } = await import('../src/services/dispatch.service')
     await acceptDelivery(testDb, driverUserId, o.id)
@@ -180,11 +181,12 @@ describe('PATCH /store/me/orders/:id/status', () => {
 describe('POST /store/me/orders/:id/request-driver', () => {
   it('requests driver; idempotent; READY order flips to AWAITING_DRIVER', async () => {
     const o = await createOrder(testDb, customerId, checkout())
+    await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
     const r1 = await req(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
     expect(r1.status).toBe(200)
     const r2 = await req(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
     expect(r2.status).toBe(200)
-    for (const to of ['ACCEPTED', 'PREPARING', 'READY']) {
+    for (const to of ['PREPARING', 'READY']) {
       await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })
     }
     const detail = await req(`/store/me/orders/${o.id}`)
@@ -194,6 +196,13 @@ describe('POST /store/me/orders/:id/request-driver', () => {
   it('rejects pickup orders and orders with driver', async () => {
     const p = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
     expect((await req(`/store/me/orders/${p.id}/request-driver`, { method: 'POST' })).status).toBe(400)
+  })
+
+  it('rejects request-driver on a PENDING order (must accept first)', async () => {
+    const o = await createOrder(testDb, customerId, checkout())
+    const r = await req(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
+    expect(r.status).toBe(409)
+    expect(((await r.json()) as { error: string }).error).toContain('Aceite o pedido')
   })
 })
 

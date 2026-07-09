@@ -64,7 +64,7 @@ driverRoutes.openapi(
     path: '/driver/available',
     responses: { 200: { description: 'Entregas disponíveis', content: { 'application/json': { schema: z.array(Out) } } } },
   }),
-  async (c) => c.json(await listAvailableDeliveries(c.get('db')), 200),
+  async (c) => c.json(await listAvailableDeliveries(c.get('db'), c.get('auth')!.sub), 200),
 )
 
 driverRoutes.openapi(

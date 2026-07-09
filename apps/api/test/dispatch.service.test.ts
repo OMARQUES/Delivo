@@ -6,7 +6,7 @@ import { createCategory, createProduct } from '../src/services/catalog.service'
 import { registerUser } from '../src/services/auth.service'
 import { createAddress } from '../src/services/address.service'
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
-import { requestDriver } from '../src/services/order-status.service'
+import { requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import {
   DispatchError,
   ensureDriverProfile,
@@ -81,7 +81,10 @@ async function makeRequestedOrder() {
     items: [{ productId, quantity: 1, selections: [] }],
     idempotencyKey: crypto.randomUUID(),
   })
+  await storeUpdateOrderStatus(testDb, storeId, order.id, 'ACCEPTED', customerId)
   await requestDriver(testDb, storeId, order.id)
+  await setAvailability(testDb, driver1, true)
+  await setAvailability(testDb, driver2, true)
   return order
 }
 
@@ -101,11 +104,30 @@ describe('profile + availability', () => {
 describe('listAvailableDeliveries', () => {
   it('shows requested unassigned DELIVERY orders with store info + fee, NO customer data', async () => {
     await makeRequestedOrder()
-    const list = await listAvailableDeliveries(testDb)
+    const list = await listAvailableDeliveries(testDb, driver1)
     expect(list).toHaveLength(1)
     expect(list[0]).toMatchObject({ storeName: 'Pizzaria', deliveryFeeCents: 500 })
     expect(list[0]).not.toHaveProperty('customerName')
     expect(list[0]).not.toHaveProperty('addressText')
+  })
+
+  it('returns [] when the driver is unavailable', async () => {
+    await makeRequestedOrder()
+    await setAvailability(testDb, driver1, false)
+    expect(await listAvailableDeliveries(testDb, driver1)).toHaveLength(0)
+    expect(await listAvailableDeliveries(testDb, driver2)).toHaveLength(1)
+  })
+
+  it('rejects requestDriver on a PENDING order (must accept first)', async () => {
+    const order = await createOrder(testDb, customerId, {
+      storeSlug: 'pizzaria',
+      fulfillment: 'DELIVERY',
+      addressId,
+      paymentMethod: 'CASH',
+      items: [{ productId, quantity: 1, selections: [] }],
+      idempotencyKey: crypto.randomUUID(),
+    })
+    await expect(requestDriver(testDb, storeId, order.id)).rejects.toThrow('Aceite o pedido')
   })
 
   it('hides orders not requested, already assigned, or PICKUP', async () => {
@@ -120,7 +142,7 @@ describe('listAvailableDeliveries', () => {
     void notRequested
     const requested = await makeRequestedOrder()
     await acceptDelivery(testDb, driver1, requested.id)
-    expect(await listAvailableDeliveries(testDb)).toHaveLength(0)
+    expect(await listAvailableDeliveries(testDb, driver1)).toHaveLength(0)
   })
 })
 
@@ -137,7 +159,7 @@ describe('acceptDelivery - atomic lock', () => {
     expect(fail).toHaveLength(1)
     expect((fail[0] as PromiseRejectedResult).reason).toBeInstanceOf(DispatchError)
     const detail = (ok[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof acceptDelivery>>>).value
-    expect(detail.status).toBe('PENDING')
+    expect(detail.status).toBe('ACCEPTED')
     expect(detail.customerName).toBe('Ana')
     expect(detail.addressText).toBe('Rua B, 22')
     expect(detail.paymentMethod).toBe('CASH')
@@ -150,14 +172,12 @@ describe('release / collect / deliver / fail', () => {
     await acceptDelivery(testDb, driver1, order.id)
     await expect(collectDelivery(testDb, driver1, order.id)).rejects.toThrow(DispatchError)
     await releaseDelivery(testDb, driver1, order.id)
-    expect(await listAvailableDeliveries(testDb)).toHaveLength(1)
+    expect(await listAvailableDeliveries(testDb, driver1)).toHaveLength(1)
   })
 
   it('full happy path: accept -> (store readies) -> collect -> deliver, with events', async () => {
     const order = await makeRequestedOrder()
     await acceptDelivery(testDb, driver2, order.id)
-    const { storeUpdateOrderStatus } = await import('../src/services/order-status.service')
-    await storeUpdateOrderStatus(testDb, storeId, order.id, 'ACCEPTED', customerId)
     await storeUpdateOrderStatus(testDb, storeId, order.id, 'PREPARING', customerId)
     const ready = await storeUpdateOrderStatus(testDb, storeId, order.id, 'READY', customerId)
     expect(ready.status).toBe('READY')
@@ -173,8 +193,6 @@ describe('release / collect / deliver / fail', () => {
   it('fail sets DELIVERY_FAILED with reason; only assigned driver can act', async () => {
     const order = await makeRequestedOrder()
     await acceptDelivery(testDb, driver1, order.id)
-    const { storeUpdateOrderStatus } = await import('../src/services/order-status.service')
-    await storeUpdateOrderStatus(testDb, storeId, order.id, 'ACCEPTED', customerId)
     await storeUpdateOrderStatus(testDb, storeId, order.id, 'PREPARING', customerId)
     await storeUpdateOrderStatus(testDb, storeId, order.id, 'READY', customerId)
     await expect(collectDelivery(testDb, driver2, order.id)).rejects.toThrow(DispatchError)

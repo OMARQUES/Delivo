@@ -58,7 +58,7 @@ export async function cancelStalePendingOrders(db: Db, olderThanMinutes = 30) {
 }
 
 const STORE_ALLOWED: OrderStatus[] = ['ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']
-const REQUESTABLE_FOR_DRIVER: OrderStatus[] = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER']
+const REQUESTABLE_FOR_DRIVER: OrderStatus[] = ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER']
 
 export async function requestDriver(db: Db, storeId: string, orderId: string) {
   const [order] = await db
@@ -68,6 +68,7 @@ export async function requestDriver(db: Db, storeId: string, orderId: string) {
   if (!order) throw new OrderError('Pedido não encontrado', 404)
   if (order.fulfillment !== 'DELIVERY') throw new OrderError('Pedido é retirada — sem entrega', 400)
   if (order.driverId) throw new OrderError('Pedido já tem entregador', 409)
+  if (order.status === 'PENDING') throw new OrderError('Aceite o pedido antes de solicitar entregador', 409)
   if (!REQUESTABLE_FOR_DRIVER.includes(order.status)) throw new OrderError('Pedido não está em andamento', 409)
   if (order.driverRequestedAt) return order
 
