@@ -127,6 +127,13 @@ describe('quoteOrder', () => {
     }))
     expect(q4.problems.length).toBeGreaterThan(0)
   })
+
+  it('unconfigured delivery fee (FIXED w/o fixed cents) → "não configurou", not "raio"', async () => {
+    await updateStore(testDb, storeId, { deliveryFeeMode: 'FIXED', deliveryFixedFeeCents: null })
+    const q = await quoteOrder(testDb, customerId, checkout())
+    expect(q.problems.some((p) => p.includes('não configurou'))).toBe(true)
+    expect(q.problems.some((p) => p.includes('raio'))).toBe(false)
+  })
 })
 
 describe('createOrder', () => {

@@ -126,7 +126,14 @@ export async function quoteOrder(db: Db, customerId: string, input: CheckoutInpu
       address = { text: addr.addressText, reference: addr.reference, lat: addr.lat, lng: addr.lng }
       distanceKm = haversineKm({ lat: store.lat, lng: store.lng }, { lat: addr.lat, lng: addr.lng })
       deliveryFeeCents = calcDeliveryFee(store, distanceKm)
-      if (deliveryFeeCents == null) problems.push('Endereço fora do raio de entrega — só retirada')
+      if (deliveryFeeCents == null) {
+        const configured = store.deliveryFeeMode === 'FIXED'
+          ? store.deliveryFixedFeeCents != null
+          : store.deliveryPerKmCents != null
+        problems.push(configured
+          ? 'Endereço fora do raio de entrega — só retirada'
+          : 'A loja ainda não configurou a taxa de entrega — escolha retirada ou fale com a loja')
+      }
     }
   }
 
