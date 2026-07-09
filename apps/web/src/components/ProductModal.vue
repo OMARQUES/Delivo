@@ -3,9 +3,10 @@ import { computed, ref } from 'vue'
 import { calcItemPrice, formatBRL, type MenuProduct, type Selection } from '@delivery/shared/constants'
 
 const props = defineProps<{ product: MenuProduct; photoUrl: string | null }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'add', payload: { selections: Selection[]; quantity: number }): void }>()
 
 const picked = ref<Record<string, string[]>>({})
+const quantity = ref(1)
 
 function toggle(groupId: string, optionId: string, max: number, single: boolean) {
   const cur = picked.value[groupId] ?? []
@@ -66,9 +67,18 @@ const price = computed(() => calcItemPrice(props.product, selections.value))
       <div class="mt-4 border-t pt-3">
         <p v-if="price.ok" class="text-lg font-bold">{{ formatBRL(price.totalCents) }}</p>
         <p v-else class="text-sm text-gray-500">{{ price.error }}</p>
-        <button disabled class="mt-2 w-full rounded bg-gray-300 p-2 text-gray-600" title="Carrinho no próximo plano">
-          Adicionar ao carrinho (em breve)
-        </button>
+        <div class="mt-2 flex items-center gap-2">
+          <button class="h-8 w-8 rounded border" @click="quantity = Math.max(1, quantity - 1)">−</button>
+          <span class="w-8 text-center">{{ quantity }}</span>
+          <button class="h-8 w-8 rounded border" @click="quantity = Math.min(50, quantity + 1)">+</button>
+          <button
+            class="flex-1 rounded bg-black p-2 text-white disabled:opacity-50"
+            :disabled="!price.ok"
+            @click="price.ok && emit('add', { selections, quantity })"
+          >
+            Adicionar {{ price.ok ? formatBRL(price.totalCents * quantity) : '' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>

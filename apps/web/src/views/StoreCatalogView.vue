@@ -3,7 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../lib/api'
 import ProductModal from '../components/ProductModal.vue'
-import { formatBRL, minMenuPrice, type MenuProduct } from '@delivery/shared/constants'
+import { formatBRL, minMenuPrice, type MenuProduct, type Selection } from '@delivery/shared/constants'
+import { useCartStore } from '../stores/cart'
 
 type PublicStore = {
   name: string; slug: string; category: string; phone: string; addressText: string
@@ -14,6 +15,7 @@ type PublicStore = {
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
 const route = useRoute()
+const cart = useCartStore()
 const store = ref<PublicStore | null>(null)
 const notFound = ref(false)
 
@@ -48,6 +50,20 @@ const filteredMenu = computed(() =>
     }))
     .filter((c) => c.products.length > 0),
 )
+
+function onAdd(payload: { selections: Selection[]; quantity: number }) {
+  if (!selected.value || !store.value) return
+  const r = cart.addItem(store.value.slug, store.value.name, selected.value, payload.selections, payload.quantity)
+  if (r === 'other-store') {
+    if (confirm(`Seu carrinho tem itens de ${cart.storeName}. Limpar e começar nesta loja?`)) {
+      cart.clear()
+      cart.addItem(store.value.slug, store.value.name, selected.value, payload.selections, payload.quantity)
+    } else {
+      return
+    }
+  }
+  selected.value = null
+}
 
 onMounted(() => load(route.params.storeSlug as string))
 watch(
@@ -101,7 +117,15 @@ watch(
         :product="selected"
         :photo-url="selected.photoKey ? `${API_URL}/media/${selected.photoKey}` : null"
         @close="selected = null"
+        @add="onAdd"
       />
+      <RouterLink
+        v-if="!cart.isEmpty && cart.storeSlug === store?.slug"
+        to="/checkout"
+        class="fixed bottom-3 left-1/2 w-[92%] max-w-md -translate-x-1/2 rounded bg-black p-3 text-center font-semibold text-white"
+      >
+        Ver carrinho ({{ cart.count }}) — {{ formatBRL(cart.subtotalCents) }}
+      </RouterLink>
     </template>
     <p v-else class="text-gray-500">Carregando…</p>
   </main>
