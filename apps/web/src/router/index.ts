@@ -49,6 +49,9 @@ export const router = createRouter({
       ],
     },
     { path: '/busca', name: 'search', component: () => import('../views/SearchView.vue') },
+    { path: '/checkout', name: 'checkout', component: () => import('../views/CheckoutView.vue'), meta: { requiresAuth: true } },
+    { path: '/pedidos', name: 'my-orders', component: () => import('../views/MyOrdersView.vue'), meta: { requiresAuth: true } },
+    { path: '/pedido/:orderId', name: 'order-tracking', component: () => import('../views/OrderTrackingView.vue'), meta: { requiresAuth: true } },
     // deep-link da loja: exemplo.com.br/NomeDaLoja — SEMPRE por último
     {
       path: '/:storeSlug',
@@ -64,6 +67,10 @@ export const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  if (to.meta.requiresAuth) {
+    const auth = useAuthStore()
+    if (!auth.isAuthenticated) return { name: 'login', query: { redirect: to.fullPath } }
+  }
   const required = to.matched.flatMap((r) => (r.meta.requiresRole as string[] | undefined) ?? [])
   if (required.length === 0) return true
   const auth = useAuthStore()
