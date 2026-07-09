@@ -236,7 +236,12 @@ export async function getCustomerOrder(db: Db, customerId: string, orderId: stri
     .from(stores)
     .where(eq(stores.id, order.storeId))
     .limit(1)
-  return { ...detail, storeName: store?.name ?? '', storePhone: store?.phone ?? null, storeSlug: store?.slug ?? '' }
+  let driverName: string | null = null
+  if (order.driverId) {
+    const [d] = await db.select({ name: users.name }).from(users).where(eq(users.id, order.driverId))
+    driverName = d?.name?.split(' ')[0] ?? null
+  }
+  return { ...detail, storeName: store?.name ?? '', storePhone: store?.phone ?? null, storeSlug: store?.slug ?? '', driverName }
 }
 
 const ACTIVE_STATUSES = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER', 'OUT_FOR_DELIVERY'] as const
@@ -289,7 +294,14 @@ export async function getStoreOrder(db: Db, storeId: string, orderId: string) {
     .where(eq(users.id, order.customerId))
     .limit(1)
   const detail = await withDetail(db, order)
-  return { ...detail, customerName: customer?.name ?? '', customerPhone: customer?.phone ?? null }
+  let driverName: string | null = null
+  let driverPhone: string | null = null
+  if (order.driverId) {
+    const [d] = await db.select({ name: users.name, phone: users.phone }).from(users).where(eq(users.id, order.driverId))
+    driverName = d?.name ?? null
+    driverPhone = d?.phone ?? null
+  }
+  return { ...detail, customerName: customer?.name ?? '', customerPhone: customer?.phone ?? null, driverName, driverPhone }
 }
 
 export async function withDetail(db: Db, order: typeof orders.$inferSelect) {

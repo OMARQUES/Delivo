@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
+import { eq } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
@@ -8,12 +9,13 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
+import { users } from '../src/db/schema'
 import { signAccessToken } from '../src/lib/tokens'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
-import { customerRequestCancel } from '../src/services/order-status.service'
+import { customerRequestCancel, requestDriver } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 
 const env = {
@@ -41,6 +43,7 @@ let customerId: string
 let ownerToken: string
 let addressId: string
 let productId: string
+let driverUserId: string
 let groupIds: { varId: string; varG: string; adId: string; adBorda: string }
 
 beforeAll(migrateTestDb)
@@ -59,6 +62,9 @@ beforeEach(async () => {
   })
   const customer = await registerUser(testDb, ana, env.JWT_SECRET)
   customerId = customer.user.id
+  const driver = await registerUser(testDb, { ...ana, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
+  driverUserId = driver.user.id
+  await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverUserId))
   const addr = await createAddress(testDb, customerId, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })
   addressId = addr.id
   const cat = await createCategory(testDb, storeId, { name: 'Pizzas' })
@@ -131,6 +137,19 @@ describe('GET /store/me/orders', () => {
     const res2 = await req('/store/me/orders?scope=active')
     const list2 = (await res2.json()) as { isFirstOrder: boolean }[]
     expect(list2.some((o) => o.isFirstOrder === false)).toBe(true)
+  })
+})
+
+describe('GET /store/me/orders/:id driver info', () => {
+  it('store order payloads include driver name/phone once assigned', async () => {
+    const o = await createOrder(testDb, customerId, checkout())
+    await requestDriver(testDb, storeId, o.id)
+    const { acceptDelivery } = await import('../src/services/dispatch.service')
+    await acceptDelivery(testDb, driverUserId, o.id)
+    const detail = await req(`/store/me/orders/${o.id}`)
+    const body = (await detail.json()) as { driverName: string | null; driverPhone: string | null }
+    expect(body.driverName).toBe('Duda')
+    expect(body.driverPhone).toBe('44911111111')
   })
 })
 

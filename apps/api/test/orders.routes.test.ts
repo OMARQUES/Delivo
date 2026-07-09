@@ -9,11 +9,12 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { orders } from '../src/db/schema'
+import { orders, users } from '../src/db/schema'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
+import { requestDriver } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 
 const env = {
@@ -41,6 +42,7 @@ let customerId: string
 let customerToken: string
 let addressId: string
 let productId: string
+let driverUserId: string
 let groupIds: { varId: string; varG: string; adId: string; adBorda: string }
 
 beforeAll(migrateTestDb)
@@ -59,6 +61,9 @@ beforeEach(async () => {
   const customer = await registerUser(testDb, ana, env.JWT_SECRET)
   customerId = customer.user.id
   customerToken = customer.accessToken!
+  const driver = await registerUser(testDb, { ...ana, name: 'Duda Motoboy', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
+  driverUserId = driver.user.id
+  await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverUserId))
   const addr = await createAddress(testDb, customerId, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })
   addressId = addr.id
   const cat = await createCategory(testDb, storeId, { name: 'Pizzas' })
@@ -152,6 +157,15 @@ describe('GET /orders + /orders/:id', () => {
     expect(body.items.length).toBe(1)
     const other = await registerUser(testDb, { ...ana, phone: '44911112222' }, 'test-secret')
     expect((await req(`/orders/${created.id}`, {}, other.accessToken!)).status).toBe(404)
+  })
+
+  it('customer tracking shows driver first name once assigned', async () => {
+    const o = await createOrder(testDb, customerId, checkout())
+    await requestDriver(testDb, storeId, o.id)
+    const { acceptDelivery } = await import('../src/services/dispatch.service')
+    await acceptDelivery(testDb, driverUserId, o.id)
+    const detail = await req(`/orders/${o.id}`)
+    expect(((await detail.json()) as { driverName: string | null }).driverName).toBe('Duda')
   })
 })
 
