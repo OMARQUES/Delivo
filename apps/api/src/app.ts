@@ -5,6 +5,7 @@ import { createRouter } from './app-factory'
 import { dbMiddleware } from './middleware/db'
 import { errorHandler } from './middleware/error-handler'
 import { addressRoutes } from './routes/addresses'
+import { adminDriverRoutes } from './routes/admin-drivers'
 import { adminStoreRoutes } from './routes/admin-stores'
 import { authRoutes } from './routes/auth'
 import { driverRoutes } from './routes/driver'
@@ -41,6 +42,7 @@ app.route('/', driverRoutes)
 app.route('/', addressRoutes)
 app.route('/', orderRoutes)
 app.route('/', mediaRoutes)
+app.route('/', adminDriverRoutes)
 app.route('/', adminStoreRoutes)
 app.route('/', storeMeRoutes)
 app.route('/', storeOrderRoutes)
