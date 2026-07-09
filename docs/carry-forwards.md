@@ -43,3 +43,4 @@
 | Re-notificação da loja (10/20min) antes do auto-cancel 30min não implementada (só o cancel) — precisa canal de push | Plano Pedidos | Plano 6 (FCM) |
 | isFirstOrder faz 1 query por pedido da fila (N+1) — ok em cidade pequena | Plano Pedidos T6 | Se fila crescer |
 | listCustomerOrders/listStoreOrders sem paginação real (limit fixo) | Plano Pedidos | Quando volume crescer |
+| Pool/aceite do driver não é gated em isAvailable (toggle afeta só FCM+UI) — driver indisponível ainda pode aceitar via API. Design aceito; endurecer se virar problema | Audit Plano 6 | Se comportamento incomodar |

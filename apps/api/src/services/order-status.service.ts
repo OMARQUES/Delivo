@@ -108,7 +108,7 @@ export async function storeUpdateOrderStatus(
   actorId: string,
   reason?: string,
 ) {
-  if (to === 'AWAITING_DRIVER') throw new OrderError('Dispatch de entregador chega no Plano 6', 400)
+  if (to === 'AWAITING_DRIVER') throw new OrderError('Use o botão Solicitar entregador', 400)
   if (!STORE_ALLOWED.includes(to)) throw new OrderError('Transição não permitida para a loja', 403)
   if (to === 'CANCELLED' && !reason) throw new OrderError('Cancelamento exige motivo', 400)
 
