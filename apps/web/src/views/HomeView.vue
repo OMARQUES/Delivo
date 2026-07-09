@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { STORE_CATEGORIES } from '@delivery/shared/constants'
+import { formatBRL, STORE_CATEGORIES } from '@delivery/shared/constants'
 import { api } from '../lib/api'
 import { useAuthStore } from '../stores/auth'
 
@@ -31,9 +31,6 @@ const filtered = computed(() =>
     .sort((a, b) => Number(b.isOpen) - Number(a.isOpen)),
 )
 
-function money(cents: number | null) {
-  return cents == null ? null : (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-}
 </script>
 
 <template>
@@ -74,7 +71,7 @@ function money(cents: number | null) {
             <p class="text-xs text-gray-500">
               {{ s.isOpen ? 'Aberto' : 'Fechado' }}
               <template v-if="s.deliveryEtaMinutes"> · {{ s.deliveryEtaMinutes[0] }}-{{ s.deliveryEtaMinutes[1] }} min</template>
-              <template v-if="money(s.minOrderCents)"> · mín {{ money(s.minOrderCents) }}</template>
+              <template v-if="s.minOrderCents != null"> · mín {{ formatBRL(s.minOrderCents) }}</template>
             </p>
           </div>
         </RouterLink>

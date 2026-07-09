@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { formatBRL } from '@delivery/shared/constants'
 import { api } from '../../lib/api'
 
 type Product = { id: string; name: string; basePriceCents: number; isAvailable: boolean; sortIndex: number }
@@ -57,8 +58,6 @@ function swapProduct(c: Category, i: number, j: number) {
     await api(`/store/me/products/${b.id}`, { method: 'PATCH', body: JSON.stringify({ sortIndex: i }) })
   })
 }
-
-const money = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 </script>
 
 <template>
@@ -87,7 +86,7 @@ const money = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currenc
       <ul class="divide-y">
         <li v-for="p in c.products" :key="p.id" class="flex items-center justify-between p-2" :class="!p.isAvailable && 'opacity-50'">
           <RouterLink :to="`/loja/cardapio/produto/${p.id}`" class="flex-1">
-            {{ p.name }} <span class="text-sm text-gray-500">{{ money(p.basePriceCents) }}</span>
+            {{ p.name }} <span class="text-sm text-gray-500">{{ formatBRL(p.basePriceCents) }}</span>
           </RouterLink>
           <span class="flex gap-2 text-sm">
             <button :disabled="c.products.indexOf(p) === 0" @click="swapProduct(c, c.products.indexOf(p), c.products.indexOf(p) - 1)">↑</button>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { parseBRLToCents } from '@delivery/shared/constants'
 import { api } from '../../lib/api'
 
 type Opt = { name: string; priceCents: number | null; isAvailable: boolean; variationPrices?: Record<string, number> }
@@ -106,6 +107,11 @@ function setPrice(o: Opt, ev: Event) {
   o.priceCents = v === '' ? null : Math.round(Number(v) * 100)
 }
 
+function setBasePrice(ev: Event) {
+  const cents = parseBRLToCents((ev.target as HTMLInputElement).value)
+  if (cents != null) form.basePriceCents = cents
+}
+
 function setMatrix(opt: Opt, varIndex: number, ev: Event) {
   const v = (ev.target as HTMLInputElement).value
   const rec = { ...(opt.variationPrices ?? {}) }
@@ -162,8 +168,15 @@ async function uploadPhoto(ev: Event) {
       </select>
       <input v-model="form.name" required placeholder="Nome" class="w-full rounded border p-2" />
       <textarea v-model="form.description" placeholder="Descrição" class="w-full rounded border p-2"></textarea>
-      <label class="block text-sm">Preço base (centavos)
-        <input v-model.number="form.basePriceCents" type="number" min="0" class="w-full rounded border p-2" />
+      <label class="block text-sm">Preço base (R$)
+        <input
+          :value="form.basePriceCents / 100"
+          type="number"
+          step="0.01"
+          min="0"
+          class="w-full rounded border p-2"
+          @input="setBasePrice"
+        />
       </label>
       <label class="flex items-center gap-2 text-sm">
         <input v-model="form.isAvailable" type="checkbox" /> Disponível

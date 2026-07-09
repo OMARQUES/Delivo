@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../lib/api'
 import ProductModal from '../components/ProductModal.vue'
-import { minMenuPrice, type MenuProduct } from '@delivery/shared/constants'
+import { formatBRL, minMenuPrice, type MenuProduct } from '@delivery/shared/constants'
 
 type PublicStore = {
   name: string; slug: string; category: string; phone: string; addressText: string
@@ -48,7 +48,6 @@ const filteredMenu = computed(() =>
     }))
     .filter((c) => c.products.length > 0),
 )
-const money = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
 onMounted(() => load(route.params.storeSlug as string))
 watch(
@@ -92,7 +91,7 @@ watch(
               <p>{{ p.name }}</p>
               <p v-if="p.description" class="text-xs text-gray-500">{{ p.description }}</p>
             </div>
-            <span class="text-sm">{{ p.groups.length ? 'a partir de ' : '' }}{{ money(minMenuPrice(p)) }}</span>
+            <span class="text-sm">{{ p.groups.length ? 'a partir de ' : '' }}{{ formatBRL(minMenuPrice(p)) }}</span>
           </li>
         </ul>
       </section>

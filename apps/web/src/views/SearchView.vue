@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { formatBRL } from '@delivery/shared/constants'
 import { api } from '../lib/api'
 
 type Result = {
@@ -35,8 +36,6 @@ function submit() {
 
 onMounted(search)
 watch(() => route.query.q, (v) => { q.value = (v as string) ?? ''; search() })
-
-const money = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 </script>
 
 <template>
@@ -56,7 +55,7 @@ const money = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currenc
         <li v-for="p in r.products" :key="p.id" class="flex items-center gap-2 p-2">
           <img v-if="p.photoKey" :src="`${API_URL}/media/${p.photoKey}`" class="h-10 w-10 rounded object-cover" alt="" />
           <span class="flex-1">{{ p.name }}</span>
-          <span class="text-sm">{{ money(p.priceCents) }}</span>
+          <span class="text-sm">{{ formatBRL(p.priceCents) }}</span>
         </li>
       </ul>
     </section>

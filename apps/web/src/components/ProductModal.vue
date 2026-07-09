@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { calcItemPrice, type MenuProduct, type Selection } from '@delivery/shared/constants'
+import { calcItemPrice, formatBRL, type MenuProduct, type Selection } from '@delivery/shared/constants'
 
 const props = defineProps<{ product: MenuProduct; photoUrl: string | null }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -25,7 +25,6 @@ const selections = computed<Selection[]>(() =>
 )
 
 const price = computed(() => calcItemPrice(props.product, selections.value))
-const money = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 </script>
 
 <template>
@@ -59,13 +58,13 @@ const money = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currenc
           />
           <span class="flex-1">{{ o.name }}</span>
           <span v-if="o.priceCents != null" class="text-sm text-gray-600">
-            {{ g.type === 'ADDON' ? '+' : '' }}{{ money(o.priceCents) }}
+            {{ g.type === 'ADDON' ? '+' : '' }}{{ formatBRL(o.priceCents) }}
           </span>
         </label>
       </section>
 
       <div class="mt-4 border-t pt-3">
-        <p v-if="price.ok" class="text-lg font-bold">{{ money(price.totalCents) }}</p>
+        <p v-if="price.ok" class="text-lg font-bold">{{ formatBRL(price.totalCents) }}</p>
         <p v-else class="text-sm text-gray-500">{{ price.error }}</p>
         <button disabled class="mt-2 w-full rounded bg-gray-300 p-2 text-gray-600" title="Carrinho no próximo plano">
           Adicionar ao carrinho (em breve)
