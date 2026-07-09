@@ -22,7 +22,7 @@ pnpm dev:web     # http://localhost:5173
 pnpm dev:driver  # http://localhost:5174
 ```
 
-Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`. Admin cria lojas em `/admin/lojas`. Cardápio da loja em `/loja/cardapio`; import CSV: `POST /admin/stores/:id/catalog/import` (text/csv). Fluxo de pedido completo: cliente pede, loja gerencia em `/loja/pedidos`.
+Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`. Admin cria lojas em `/admin/lojas` e aprova entregadores em `/admin/entregadores`. Cardápio da loja em `/loja/cardapio`; import CSV: `POST /admin/stores/:id/catalog/import` (text/csv). Fluxo de pedido completo: cliente pede, loja gerencia em `/loja/pedidos`, solicita entregador, e o app driver aceita/coleta/entrega.
 
 ## Verificação
 
@@ -38,6 +38,10 @@ Deploy prod ainda não executado. Quando houver conta Neon + token Cloudflare, s
 
 Email+senha (PBKDF2) ou telefone; JWT de acesso (15min) + refresh token rotativo (30d). Google OAuth pendente — ver `docs/carry-forwards.md`.
 
+## FCM (opcional)
+
+Backend lê `FIREBASE_PROJECT_ID` e `FIREBASE_SERVICE_ACCOUNT` em `apps/api/.dev.vars`/secrets Cloudflare. Driver lê `VITE_FIREBASE_*` em `apps/driver/.env.development`; o service worker `apps/driver/public/firebase-messaging-sw.js` contém só identificadores públicos do Firebase. Sem esses valores, dispatch segue por polling + beep.
+
 ## Specs e planos
 
 - Requisitos funcionais: `docs/superpowers/specs/2026-07-06-requisitos-funcionais-design.md`
@@ -52,7 +56,7 @@ Email+senha (PBKDF2) ou telefone; JWT de acesso (15min) + refresh token rotativo
 4. ✅ Produtos & Cardápio — categorias, produtos, variações, adicionais, meio-a-meio, busca
 5. ✅ Pedidos (core) — carrinho, checkout idempotente, máquina de status, retirada, painel loja, polling
 5b. Amendment — proposta de alteração pela loja, aprovação do cliente
-6. Dispatch — broadcast FCM, aceite com lock atômico, batching multi-loja/multi-destino, telas driver
+6. ✅ Dispatch — broadcast FCM, aceite com lock atômico, batching multi-loja/multi-destino, telas driver
 7. Pagamentos — Asaas PIX/cartão + split, estornos, webhooks
 8. Financeiro — ledger, fatura de comissão, payout semanal
 9. Capacitor — build Android driver, FCM nativo
