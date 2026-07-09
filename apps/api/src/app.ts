@@ -7,6 +7,7 @@ import { errorHandler } from './middleware/error-handler'
 import { addressRoutes } from './routes/addresses'
 import { adminStoreRoutes } from './routes/admin-stores'
 import { authRoutes } from './routes/auth'
+import { driverRoutes } from './routes/driver'
 import { healthRoutes } from './routes/health'
 import { mediaRoutes } from './routes/media'
 import { menuPublicRoutes } from './routes/menu-public'
@@ -36,6 +37,7 @@ app.notFound((c) => c.json({ error: 'Not Found' }, 404))
 
 app.route('/', healthRoutes)
 app.route('/', authRoutes)
+app.route('/', driverRoutes)
 app.route('/', addressRoutes)
 app.route('/', orderRoutes)
 app.route('/', mediaRoutes)
