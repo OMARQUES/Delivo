@@ -28,8 +28,13 @@
 | Fotos de produto: mesma nota do logo — órfãos no re-upload; volume maior que logos | Plano Produtos | Junto da limpeza de logos |
 | Import CSV não importa variações/adicionais (só categoria+produto+preço) — ajuste fino manual | Plano Produtos T8 | Aceito (decisão de escopo) |
 | Busca FTS sem paginação/ranking fino (limit 30) | Plano Produtos T7 | Quando catálogo crescer |
-| Editor de opções: replace-all regenera ids de opção — inofensivo até Plano 5 snapshotar itens de pedido (CONFIRMAR snapshot no plano 5) | Plano Produtos | Plano Pedidos |
 | Busca: FTS side ainda sensível a acento (só ILIKE tem unaccent) + sem índice em unaccent(name) — ok em escala atual | Review Prod T5 | Quando catálogo crescer |
 | minMenuPrice ignora FLAVOR-only (produto só-sabores mostra "a partir de" pela base) — by-spec, revisar exibição | Review Prod T2 | Plano Design/UX |
 | Painel: swap de ordenação usa índices do array como sortIndex — gaps podem gerar empate momentâneo | Review Prod T9 | Oportunista |
 | Modal: checkbox acima do max não re-renderiza (desync visual, preço correto) + produto indisponível abre modal | Review Prod T11 | Plano Pedidos (cart) |
+| Amendment (item em falta, aprovação do cliente, ajuste de total) adiado — Plano 5b dedicado | Plano Pedidos | Plano 5b (antes do Dispatch idealmente) |
+| Beep da loja depende de aba aberta + polling 15s — FCM/push real no Plano 6 | Plano Pedidos | Plano 6 |
+| PIX_ONLINE bloqueado no checkout (400) até Pagamentos | Plano Pedidos | Plano 7 |
+| Re-notificação da loja (10/20min) antes do auto-cancel 30min não implementada (só o cancel) — precisa canal de push | Plano Pedidos | Plano 6 (FCM) |
+| isFirstOrder faz 1 query por pedido da fila (N+1) — ok em cidade pequena | Plano Pedidos T6 | Se fila crescer |
+| listCustomerOrders/listStoreOrders sem paginação real (limit fixo) | Plano Pedidos | Quando volume crescer |
