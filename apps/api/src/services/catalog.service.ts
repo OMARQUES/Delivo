@@ -215,6 +215,14 @@ async function loadGroupsForProducts(db: Db, productIds: string[]) {
   return byProduct
 }
 
+/** Produtos (com grupos/opções/matriz por id) de uma loja, por ids. Para o checkout. */
+export async function getMenuProductsByIds(db: Db, storeId: string, ids: string[]) {
+  if (ids.length === 0) return []
+  const prods = await db.select().from(products).where(and(eq(products.storeId, storeId), inArray(products.id, ids)))
+  const groupsByProduct = await loadGroupsForProducts(db, prods.map((p) => p.id))
+  return prods.map((p) => ({ ...p, groups: groupsByProduct.get(p.id) ?? [] }))
+}
+
 /** Painel da loja: tudo aninhado (inclui indisponíveis). */
 export async function getStoreCatalog(db: Db, storeId: string) {
   const cats = await db
