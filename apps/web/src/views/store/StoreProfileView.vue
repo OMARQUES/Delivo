@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { STORE_CATEGORIES } from '@delivery/shared/constants'
+import { parseBRLToCents, STORE_CATEGORIES } from '@delivery/shared/constants'
 import { api } from '../../lib/api'
 import MapPicker from '../../components/MapPicker.vue'
 
@@ -29,6 +29,11 @@ onMounted(async () => {
   Object.assign(form, store.value)
   if (!form.openingHours) form.openingHours = []
 })
+
+type CentsField = 'deliveryFixedFeeCents' | 'deliveryMinFeeCents' | 'deliveryPerKmCents' | 'minOrderCents'
+function setCents(key: CentsField, ev: Event) {
+  form[key] = parseBRLToCents((ev.target as HTMLInputElement).value)
+}
 
 function addHour() {
   form.openingHours!.push({ dow: 1, open: '18:00', close: '23:00' })
@@ -104,13 +109,13 @@ async function uploadLogo(ev: Event) {
         <option value="FIXED">Taxa fixa</option>
         <option value="DISTANCE">Mínimo + por km</option>
       </select>
-      <input v-if="form.deliveryFeeMode === 'FIXED'" v-model.number="form.deliveryFixedFeeCents" type="number" class="w-full rounded border p-2" placeholder="Taxa fixa (centavos)" />
+      <input v-if="form.deliveryFeeMode === 'FIXED'" :value="form.deliveryFixedFeeCents != null ? form.deliveryFixedFeeCents / 100 : ''" type="number" class="w-full rounded border p-2" placeholder="Taxa fixa (R$)" @input="setCents('deliveryFixedFeeCents', $event)" />
       <template v-else>
-        <input v-model.number="form.deliveryMinFeeCents" type="number" class="w-full rounded border p-2" placeholder="Taxa mínima (centavos)" />
-        <input v-model.number="form.deliveryPerKmCents" type="number" class="w-full rounded border p-2" placeholder="Por km (centavos)" />
+        <input :value="form.deliveryMinFeeCents != null ? form.deliveryMinFeeCents / 100 : ''" type="number" class="w-full rounded border p-2" placeholder="Taxa mínima (R$)" @input="setCents('deliveryMinFeeCents', $event)" />
+        <input :value="form.deliveryPerKmCents != null ? form.deliveryPerKmCents / 100 : ''" type="number" class="w-full rounded border p-2" placeholder="Por km (R$)" @input="setCents('deliveryPerKmCents', $event)" />
         <input v-model.number="form.deliveryMaxKm" type="number" step="0.5" class="w-full rounded border p-2" placeholder="Raio máx (km, opcional)" />
       </template>
-      <input v-model.number="form.minOrderCents" type="number" class="w-full rounded border p-2" placeholder="Pedido mínimo (centavos, opcional)" />
+      <input :value="form.minOrderCents != null ? form.minOrderCents / 100 : ''" type="number" class="w-full rounded border p-2" placeholder="Pedido mínimo (R$, opcional)" @input="setCents('minOrderCents', $event)" />
     </section>
 
     <section class="space-y-2">

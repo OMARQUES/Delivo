@@ -173,4 +173,13 @@ describe('cancel-request resolution', () => {
     const dn = await req(`/store/me/orders/${o2.id}/cancel-request/deny`, { method: 'POST' })
     expect(((await dn.json()) as { cancelRequestedAt: string | null }).cancelRequestedAt).toBeNull()
   })
+
+  it('direct CANCELLED clears a pending cancel-request', async () => {
+    const o = await createOrder(testDb, customerId, checkout())
+    await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
+    await customerRequestCancel(testDb, customerId, o.id, 'mudei de ideia')
+    const res = await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'CANCELLED', reason: 'sem estoque' }) })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { cancelRequestedAt: string | null }).cancelRequestedAt).toBeNull()
+  })
 })

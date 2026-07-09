@@ -81,7 +81,7 @@ export async function storeUpdateOrderStatus(
 
   const rows = await db
     .update(orders)
-    .set({ status: to, ...(to === 'CANCELLED' ? { cancelReason: reason } : {}) })
+    .set({ status: to, ...(to === 'CANCELLED' ? { cancelReason: reason, cancelRequestedAt: null, cancelRequestNote: null } : {}) })
     .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
     .returning()
   if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)
@@ -108,7 +108,7 @@ export async function storeResolveCancelRequest(
     const rows = await db
       .update(orders)
       .set({ status: 'CANCELLED', cancelReason: 'Cancelamento aprovado pela loja', cancelRequestedAt: null })
-      .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
+      .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId), eq(orders.status, order.status)))
       .returning()
     if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)
     await addEvent(db, orderId, 'CANCELLED', 'STORE', actorId, 'solicitação do cliente aprovada')
@@ -117,7 +117,7 @@ export async function storeResolveCancelRequest(
   const rows = await db
     .update(orders)
     .set({ cancelRequestedAt: null, cancelRequestNote: null })
-    .where(eq(orders.id, orderId))
+    .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId)))
     .returning()
   await addEvent(db, orderId, order.status, 'STORE', actorId, 'solicitação de cancelamento negada')
   return rows[0]!
