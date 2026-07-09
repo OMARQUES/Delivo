@@ -1,12 +1,15 @@
 import type { Context } from 'hono'
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
+import { eq } from 'drizzle-orm'
 import { StatusUpdateSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
+import { stores } from '../db/schema'
 import type { AppContext } from '../env'
+import { sendPushToTokens } from '../lib/fcm'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.service'
-import { requestDriver, storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
+import { listAvailableDriverTokens, requestDriver, storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
 import { getStoreByOwner } from '../services/store.service'
 
 export const storeOrderRoutes = createRouter()
@@ -79,8 +82,24 @@ storeOrderRoutes.openapi(
     request: { params: IdParam },
     responses: { 200: { description: 'Entregador solicitado', content: { 'application/json': { schema: Out } } } },
   }),
-  async (c) =>
-    c.json(await requestDriver(c.get('db'), await ownStoreId(c), c.req.valid('param').id).catch(rethrow), 200),
+  async (c) => {
+    const db = c.get('db')
+    const order = await requestDriver(db, await ownStoreId(c), c.req.valid('param').id).catch(rethrow)
+    const [store] = await db.select({ name: stores.name }).from(stores).where(eq(stores.id, order.storeId))
+    const tokens = await listAvailableDriverTokens(db)
+    const push = sendPushToTokens(
+      c.env.FIREBASE_PROJECT_ID,
+      c.env.FIREBASE_SERVICE_ACCOUNT,
+      tokens,
+      { title: 'Nova entrega disponível! 🛵', body: store?.name ?? 'Uma loja', data: { orderId: order.id } },
+    )
+    try {
+      c.executionCtx.waitUntil(push)
+    } catch {
+      await push
+    }
+    return c.json(order, 200)
+  },
 )
 
 storeOrderRoutes.openapi(

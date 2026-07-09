@@ -6,6 +6,8 @@ export type Env = {
   BUCKET: R2Bucket
   JWT_SECRET: string
   ALLOWED_ORIGINS: string
+  FIREBASE_PROJECT_ID?: string
+  FIREBASE_SERVICE_ACCOUNT?: string
 }
 
 export type AppContext = {

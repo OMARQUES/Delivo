@@ -1,1 +1,5 @@
 JWT_SECRET=dev-secret-troque-me
+
+# FCM (opcional - sem isso o push e silenciosamente pulado)
+FIREBASE_PROJECT_ID=
+FIREBASE_SERVICE_ACCOUNT=
