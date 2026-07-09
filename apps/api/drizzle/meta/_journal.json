@@ -57,6 +57,13 @@
       "when": 1783604609683,
       "tag": "0007_panoramic_aqueduct",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783624700364,
+      "tag": "0008_tricky_blue_marvel",
+      "breakpoints": true
     }
   ]
 }

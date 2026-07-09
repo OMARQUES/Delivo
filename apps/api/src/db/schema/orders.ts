@@ -50,6 +50,11 @@ export const orders = pgTable(
     cancelRequestNote: text('cancel_request_note'),
     /** Plano 6 */
     driverId: uuid('driver_id'),
+    /** loja solicitou entregador (broadcast ativo enquanto driverId null) */
+    driverRequestedAt: timestamp('driver_requested_at', { withTimezone: true }),
+    driverAssignedAt: timestamp('driver_assigned_at', { withTimezone: true }),
+    /** DELIVERY_FAILED: motivo (enum em shared) */
+    failReason: text('fail_reason'),
     idempotencyKey: text('idempotency_key').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
