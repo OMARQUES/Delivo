@@ -67,3 +67,4 @@
 | `markStoreInvoicePaid`/`markStorePayoutPaid`/`markDriverPayoutPaid` sem guard `status='OPEN'` — remarcar sobrescreve `paidAt`. Menor | Plano 8 (audit) | Oportunista |
 | Comissão não é snapshotada na entry do ledger (só o valor final é congelado) — perde trilha da alíquota usada | Plano 8 (audit) | Se auditoria fiscal exigir |
 | Pacote com TODOS os pedidos cancelados fica órfão ACCEPTED (loja não cancela mais; driver só faz release → volta ao pool mostrando "0 entregas") — cosmético, sem risco de dinheiro | Plano ③ (audit) | Hardening (auto-cancelar pacote vazio) |
+| Escala AVANÇADA do entregador próprio: valor (diária/extra) e horário DIFERENTES por dia da semana — hoje 1 valor + 1 horário por vínculo aplicado aos dias marcados. Precisa valor por item da agenda + editor rico | Decisão pós-④a | Plano futuro dedicado |
