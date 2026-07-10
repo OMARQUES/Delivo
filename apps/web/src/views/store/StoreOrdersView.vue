@@ -28,12 +28,22 @@ type Detail = OrderRow & {
   driverName: string | null
   driverPhone: string | null
   items: { id: string; nameSnapshot: string; quantity: number; totalCents: number; note: string | null; options: { label: string }[] }[]
+  amendment: {
+    id: string
+    note: string | null
+    refundCents: number
+    newTotalCents: number
+    items: { nameSnapshot: string; oldQuantity: number; newQuantity: number }[]
+  } | null
 }
 
 const active = ref<OrderRow[]>([])
 const done = ref<OrderRow[]>([])
 const detail = ref<Detail | null>(null)
 const error = ref('')
+const amending = ref(false)
+const amendQty = ref<Record<string, number>>({})
+const amendNote = ref('')
 let timer: ReturnType<typeof setInterval> | undefined
 let knownPending = new Set<string>()
 let firstLoad = true
@@ -136,10 +146,60 @@ async function requestDriver(o: OrderRow) {
 
 async function openDetail(o: OrderRow) {
   detail.value = await api<Detail>(`/store/me/orders/${o.id}`)
+  amending.value = false
+  amendQty.value = {}
+  amendNote.value = ''
 }
 
 function printOrder() {
   window.print()
+}
+
+function startAmend() {
+  if (!detail.value) return
+  amendQty.value = Object.fromEntries(detail.value.items.map((i) => [i.id, i.quantity]))
+  amendNote.value = ''
+  amending.value = true
+}
+
+function setAmendQty(itemId: string, max: number, value: string) {
+  const n = Number(value)
+  amendQty.value[itemId] = Number.isFinite(n) ? Math.min(max, Math.max(0, Math.trunc(n))) : max
+}
+
+async function submitAmend() {
+  if (!detail.value) return
+  error.value = ''
+  const items = detail.value.items
+    .filter((i) => (amendQty.value[i.id] ?? i.quantity) < i.quantity)
+    .map((i) => ({ orderItemId: i.id, newQuantity: amendQty.value[i.id] ?? i.quantity }))
+  if (items.length === 0) {
+    error.value = 'Reduza a quantidade de pelo menos um item'
+    return
+  }
+  try {
+    await api(`/store/me/orders/${detail.value.id}/amendments`, {
+      method: 'POST',
+      body: JSON.stringify({ note: amendNote.value || undefined, items }),
+    })
+    amending.value = false
+    await openDetail(detail.value)
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+  }
+}
+
+async function withdrawAmend() {
+  if (!detail.value) return
+  error.value = ''
+  try {
+    await api(`/store/me/orders/${detail.value.id}/amendments/current`, { method: 'DELETE' })
+    await openDetail(detail.value)
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+  }
 }
 
 function paymentLabel(o: { paymentMethod: string; changeForCents: number | null }) {
@@ -244,6 +304,41 @@ const groups = computed(() => {
           <span class="float-right">{{ formatBRL(i.totalCents) }}</span>
         </li>
       </ul>
+      <div v-if="detail.amendment" class="mt-2 rounded bg-yellow-50 p-2 text-sm">
+        <p class="font-medium">Alteração aguardando o cliente</p>
+        <p v-for="i in detail.amendment.items" :key="`${detail.amendment.id}-${i.nameSnapshot}`" class="text-xs">
+          {{ i.nameSnapshot }}: {{ i.oldQuantity }}× → {{ i.newQuantity }}×
+        </p>
+        <p class="text-xs">Novo total {{ formatBRL(detail.amendment.newTotalCents) }}</p>
+        <button class="mt-1 underline" @click="withdrawAmend">Retirar proposta</button>
+      </div>
+      <button
+        v-else-if="['ACCEPTED', 'PREPARING'].includes(detail.status)"
+        class="mt-2 rounded border px-2 py-1 text-sm"
+        @click="startAmend"
+      >
+        Propor alteração (item em falta)
+      </button>
+
+      <div v-if="amending" class="mt-2 space-y-2 rounded border p-2">
+        <p class="text-sm font-semibold">Reduza as quantidades (0 = remover):</p>
+        <div v-for="i in detail.items" :key="i.id" class="flex items-center gap-2 text-sm">
+          <span class="flex-1">{{ i.nameSnapshot }} (atual: {{ i.quantity }})</span>
+          <input
+            type="number"
+            :max="i.quantity"
+            min="0"
+            :value="amendQty[i.id]"
+            class="w-16 rounded border p-1"
+            @input="setAmendQty(i.id, i.quantity, ($event.target as HTMLInputElement).value)"
+          />
+        </div>
+        <input v-model="amendNote" placeholder="Motivo (ex.: acabou o catupiry)" class="w-full rounded border p-2 text-sm" />
+        <div class="flex gap-2">
+          <button class="flex-1 rounded border p-1 text-sm" @click="amending = false">Voltar</button>
+          <button class="flex-1 rounded bg-black p-1 text-sm text-white" @click="submitAmend">Enviar ao cliente</button>
+        </div>
+      </div>
       <hr class="my-2" />
       <p class="flex justify-between text-sm"><span>Subtotal</span><span>{{ formatBRL(detail.subtotalCents) }}</span></p>
       <p v-if="detail.deliveryFeeCents != null" class="flex justify-between text-sm"><span>Entrega</span><span>{{ formatBRL(detail.deliveryFeeCents) }}</span></p>
