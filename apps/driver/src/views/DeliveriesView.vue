@@ -4,16 +4,18 @@ import {
   DELIVERY_FAIL_REASONS,
   DELIVERY_FAIL_REASON_LABELS,
   formatBRL,
+  isPaidOnline,
   ORDER_STATUS_LABELS,
   type DeliveryFailReason,
   type OrderStatus,
+  type PaymentMethod,
 } from '@delivery/shared/constants'
 import { api } from '../lib/api'
 
 type Delivery = {
   id: string
   status: OrderStatus
-  paymentMethod: 'CASH' | 'CARD_MACHINE' | 'PIX_ONLINE'
+  paymentMethod: PaymentMethod
   changeForCents: number | null
   totalCents: number
   deliveryFeeCents: number | null
@@ -90,6 +92,14 @@ const collectible = (o: Delivery) => o.status === 'READY' || o.status === 'AWAIT
 const inRoute = (o: Delivery) => o.status === 'OUT_FOR_DELIVERY'
 const waiting = (o: Delivery) => !collectible(o) && !inRoute(o)
 
+function paymentLine(o: Delivery) {
+  if (isPaidOnline(o.paymentMethod)) return `Pago online - não cobrar (total ${formatBRL(o.totalCents)})`
+  const how = o.paymentMethod === 'CASH'
+    ? `dinheiro${o.changeForCents ? `, troco p/ ${formatBRL(o.changeForCents)}` : ''}`
+    : 'maquininha'
+  return `Receber: ${formatBRL(o.totalCents)} (${how})`
+}
+
 const toCollect = computed(() => active.value.filter((o) => !inRoute(o)))
 const toDeliver = computed(() => active.value.filter(inRoute))
 </script>
@@ -103,11 +113,11 @@ const toDeliver = computed(() => active.value.filter(inRoute))
       <ul class="mt-2 space-y-2">
         <li v-for="o in toCollect" :key="o.id" class="rounded border p-3">
           <p class="font-semibold">{{ o.storeName }}</p>
-          <p class="text-xs text-gray-500">{{ o.storeAddressText }} · {{ ORDER_STATUS_LABELS[o.status] }}</p>
-          <p class="text-xs">
-            Receber: <strong>{{ formatBRL(o.totalCents) }}</strong>
-            ({{ o.paymentMethod === 'CASH' ? `dinheiro${o.changeForCents ? `, troco p/ ${formatBRL(o.changeForCents)}` : ''}` : 'maquininha' }})
+          <p class="text-xs text-gray-500">Coleta: {{ o.storeAddressText }} · {{ ORDER_STATUS_LABELS[o.status] }}</p>
+          <p v-if="o.addressText" class="text-xs text-gray-500">
+            Entrega: {{ o.addressText }}<template v-if="o.addressReference"> · {{ o.addressReference }}</template>
           </p>
+          <p class="text-xs" :class="isPaidOnline(o.paymentMethod) ? 'font-semibold text-green-700' : ''">{{ paymentLine(o) }}</p>
           <div class="mt-2 flex flex-wrap gap-2 text-sm">
             <a :href="waze(o.storeLat, o.storeLng)" target="_blank" class="rounded border px-2 py-1 underline">Waze loja</a>
             <a :href="`https://wa.me/55${o.storePhone}`" target="_blank" class="rounded border px-2 py-1 underline">WhatsApp loja</a>
@@ -126,12 +136,9 @@ const toDeliver = computed(() => active.value.filter(inRoute))
         <li v-for="o in toDeliver" :key="o.id" class="rounded border border-green-500 p-3">
           <p class="font-semibold">{{ o.customerName }}</p>
           <p class="text-xs text-gray-500">
-            {{ o.addressText }}<template v-if="o.addressReference"> · {{ o.addressReference }}</template>
+            Entrega: {{ o.addressText }}<template v-if="o.addressReference"> · {{ o.addressReference }}</template>
           </p>
-          <p class="text-xs">
-            Receber: <strong>{{ formatBRL(o.totalCents) }}</strong>
-            ({{ o.paymentMethod === 'CASH' ? `dinheiro${o.changeForCents ? `, troco p/ ${formatBRL(o.changeForCents)}` : ''}` : 'maquininha' }})
-          </p>
+          <p class="text-xs" :class="isPaidOnline(o.paymentMethod) ? 'font-semibold text-green-700' : ''">{{ paymentLine(o) }}</p>
           <p v-if="o.note" class="text-xs italic">Obs: {{ o.note }}</p>
           <div class="mt-2 flex flex-wrap gap-2 text-sm">
             <a v-if="o.addressLat && o.addressLng" :href="waze(o.addressLat, o.addressLng)" target="_blank" class="rounded border px-2 py-1 underline">Waze cliente</a>
