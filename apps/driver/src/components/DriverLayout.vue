@@ -67,6 +67,7 @@ async function logout() {
       <nav class="flex gap-3 text-sm">
         <RouterLink to="/" class="underline">Disponíveis</RouterLink>
         <RouterLink to="/entregas" class="underline">Minhas entregas</RouterLink>
+        <RouterLink to="/financeiro" class="underline">Ganhos</RouterLink>
       </nav>
       <div class="flex items-center gap-2">
         <button v-if="showPushButton" class="text-sm underline" @click="onEnablePush">🔔 Ativar alertas</button>

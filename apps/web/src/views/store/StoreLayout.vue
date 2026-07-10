@@ -6,6 +6,7 @@
         <RouterLink to="/loja/pedidos" class="underline">Pedidos</RouterLink>
         <RouterLink to="/loja/perfil" class="underline">Perfil</RouterLink>
         <RouterLink to="/loja/cardapio" class="underline">Cardápio</RouterLink>
+        <RouterLink to="/loja/financeiro" class="underline">Financeiro</RouterLink>
       </nav>
     </header>
     <RouterView />

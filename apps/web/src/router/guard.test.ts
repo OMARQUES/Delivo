@@ -39,4 +39,23 @@ describe('route guards', () => {
     await router.push('/')
     expect(router.currentRoute.value.name).toBe('home')
   })
+
+  it('allows finance views for the correct roles', async () => {
+    const auth = useAuthStore()
+    auth.$patch({
+      user: { id: 's', name: 'Loja', role: 'STORE', status: 'ACTIVE', phone: null, email: null },
+      accessToken: 'a',
+      refreshToken: 'r',
+    })
+    await router.push('/loja/financeiro')
+    expect(router.currentRoute.value.name).toBe('store-finance')
+
+    auth.$patch({
+      user: { id: 'a', name: 'Admin', role: 'ADMIN', status: 'ACTIVE', phone: null, email: null },
+      accessToken: 'a',
+      refreshToken: 'r',
+    })
+    await router.push('/admin/financeiro')
+    expect(router.currentRoute.value.name).toBe('admin-finance')
+  })
 })

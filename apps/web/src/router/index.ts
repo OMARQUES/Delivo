@@ -33,6 +33,11 @@ export const router = createRouter({
           name: 'store-product-form',
           component: () => import('../views/store/ProductFormView.vue'),
         },
+        {
+          path: 'financeiro',
+          name: 'store-finance',
+          component: () => import('../views/store/StoreFinanceView.vue'),
+        },
       ],
     },
     {
@@ -50,6 +55,11 @@ export const router = createRouter({
           path: 'entregadores',
           name: 'admin-drivers',
           component: () => import('../views/admin/AdminDriversView.vue'),
+        },
+        {
+          path: 'financeiro',
+          name: 'admin-finance',
+          component: () => import('../views/admin/AdminFinanceView.vue'),
         },
       ],
     },
