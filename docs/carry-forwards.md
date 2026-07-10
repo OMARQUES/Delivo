@@ -39,10 +39,14 @@
 | Modal: checkbox acima do max não re-renderiza (desync visual, preço correto) + produto indisponível abre modal | Review Prod T11 | Plano Pedidos (cart) |
 | Amendment (item em falta, aprovação do cliente, ajuste de total) adiado — Plano 5b dedicado | Plano Pedidos | Plano 5b (antes do Dispatch idealmente) |
 | Beep da loja depende de aba aberta + polling 15s — FCM/push real no Plano 6 | Plano Pedidos | Plano 6 |
-| PIX_ONLINE bloqueado no checkout (400) até Pagamentos | Plano Pedidos | Plano 7 |
 | Re-notificação da loja (10/20min) antes do auto-cancel 30min não implementada (só o cancel) — precisa canal de push | Plano Pedidos | Plano 6 (FCM) |
 | isFirstOrder faz 1 query por pedido da fila (N+1) — ok em cidade pequena | Plano Pedidos T6 | Se fila crescer |
 | listCustomerOrders/listStoreOrders sem paginação real (limit fixo) | Plano Pedidos | Quando volume crescer |
 | Pool/aceite do driver não é gated em isAvailable (toggle afeta só FCM+UI) — driver indisponível ainda pode aceitar via API. Design aceito; endurecer se virar problema | Audit Plano 6 | Se comportamento incomodar |
 | Cron auto-cancel de PENDING não notifica entregador se houver atribuição legada; após fix A o estado é inatingível, linha de defesa mantida | Fix pós-Plano 6 | N/A (estado inválido bloqueado) |
 | MP: integração usa Payments API clássica (/v1/payments, webhook "Pagamentos (legacy)") — MP empurra novas integrações pra Orders API; migrar se a clássica for deprecada | Plano 7 setup | Monitorar avisos do MP |
+| Pagamentos centralizados na conta MP da plataforma — split nativo/automação = fases futuras (ver runbook) | Plano 7 | Plano 8 (ledger) + futuro split |
+| Webhook exige URL pública (PUBLIC_API_URL) — em dev usar tunnel (cloudflared) ou confirmar via reconsulta; produção resolve no deploy CF | Plano 7 | Deploy prod |
+| Cartão: MVP 1x sem parcelamento; sem 3DS challenge flow | Plano 7 | Se recusas indicarem necessidade |
+| Estorno parcial (amendment) pendente | Plano 7 | Plano 5b |
+| Tracking não tem botão "regenerar PIX" após expirar — cliente refaz o pedido | Plano 7 | UX futura |

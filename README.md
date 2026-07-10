@@ -42,6 +42,10 @@ Email+senha (PBKDF2) ou telefone; JWT de acesso (15min) + refresh token rotativo
 
 Backend lê `FIREBASE_PROJECT_ID` e `FIREBASE_SERVICE_ACCOUNT` em `apps/api/.dev.vars`/secrets Cloudflare. Driver lê `VITE_FIREBASE_*` em `apps/driver/.env.development`; o service worker `apps/driver/public/firebase-messaging-sw.js` contém só identificadores públicos do Firebase. Sem esses valores, dispatch segue por polling + beep.
 
+## Mercado Pago (opcional em dev)
+
+Backend usa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `PUBLIC_API_URL` em `apps/api/.dev.vars`. Web usa `VITE_MP_PUBLIC_KEY` em `apps/web/.env.development`; sem public key o cartão online fica oculto, e sem access token o checkout online retorna 503. Para testar webhook local, exponha o Worker com tunnel (ex.: cloudflared) e use essa URL em `PUBLIC_API_URL`.
+
 ## Specs e planos
 
 - Requisitos funcionais: `docs/superpowers/specs/2026-07-06-requisitos-funcionais-design.md`
@@ -57,7 +61,7 @@ Backend lê `FIREBASE_PROJECT_ID` e `FIREBASE_SERVICE_ACCOUNT` em `apps/api/.dev
 5. ✅ Pedidos (core) — carrinho, checkout idempotente, máquina de status, retirada, painel loja, polling
 5b. Amendment — proposta de alteração pela loja, aprovação do cliente
 6. ✅ Dispatch — broadcast FCM, aceite com lock atômico, batching multi-loja/multi-destino, telas driver
-7. Pagamentos — Asaas PIX/cartão + split, estornos, webhooks
+7. ✅ Pagamentos — MP centralizado (PIX+cartão), estornos, webhook
 8. Financeiro — ledger, fatura de comissão, payout semanal
 9. Capacitor — build Android driver, FCM nativo
 10. Admin & Relatórios — gestão, import CSV, faturamento, mini-ERP
