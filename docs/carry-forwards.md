@@ -2,6 +2,9 @@
 
 | Item | Origem | Dono futuro |
 |---|---|---|
+| Pacote: só broadcast (sem escolher entregador específico) — específico depende do Plano ④ (entregadores próprios) | Plano ③ | Plano ④ |
+| Pacote: coleta exige TODOS os pedidos READY (sem coleta parcial) | Plano ③ | Se lojas pedirem coleta parcial |
+| `orders.batchId` sem FK declarada (integridade no service, segue padrão de `driverId`) | Plano ③ | Hardening/deploy |
 | apps/driver duplica lib/api.ts + stores/auth.ts do web (cópia deliberada) — extrair pra package shared quando doer | Plano Dispatch T8 | Oportunista |
 | FCM: 1 token por entregador (último dispositivo vence); sem retry/cleanup de tokens inválidos | Plano Dispatch T13 | Plano Capacitor |
 | Re-broadcast automático (3-5min) + alerta à loja (10min sem aceite) não implementados — broadcast é a lista viva + FCM one-shot | Plano Dispatch | Plano 8/hardening (cron existe, falta canal loja) |
