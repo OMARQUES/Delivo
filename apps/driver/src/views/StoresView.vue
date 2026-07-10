@@ -6,6 +6,7 @@ import { api } from '../lib/api'
 // recarrega a barra de turno do layout (o botão "Iniciar turno" depende dos vínculos confirmados)
 const reloadDriverBar = inject<() => Promise<void> | void>('reloadDriverBar', () => {})
 
+type ScheduleItem = { dow: number; start: string; end: string }
 type Link = {
   id: string
   status: 'INVITED' | 'CONFIRMED'
@@ -13,6 +14,12 @@ type Link = {
   storeAddressText: string
   dailyRateCents: number
   perDeliveryCents: number
+  schedule: ScheduleItem[]
+}
+const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+function daysLabel(schedule: ScheduleItem[]) {
+  if (!schedule?.length) return 'Sem dias definidos'
+  return `${schedule.map((s) => DOW[s.dow]).join(', ')} · ${schedule[0]!.start}–${schedule[0]!.end}`
 }
 const links = ref<Link[]>([])
 const error = ref('')
@@ -41,6 +48,7 @@ onMounted(load)
           </span>
         </div>
         <p class="mt-2 text-sm">Diária {{ formatBRL(link.dailyRateCents) }} · extra {{ formatBRL(link.perDeliveryCents) }}/entrega</p>
+        <p class="text-xs text-gray-500">🗓️ {{ daysLabel(link.schedule) }}</p>
         <button v-if="link.status === 'INVITED'" class="mt-2 w-full rounded bg-black p-2 text-white" @click="confirm(link.id)">Confirmar convite</button>
       </li>
     </ul>
