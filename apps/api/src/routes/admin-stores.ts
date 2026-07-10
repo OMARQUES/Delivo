@@ -7,7 +7,7 @@ import { stores } from '../db/schema'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { importCsvCatalog } from '../services/catalog.service'
 import {
-  createStoreWithOwner, listAllStores, setStoreActive, StoreError,
+  createStoreWithOwner, listAllStores, setStoreActive, setStoreCommission, StoreError,
 } from '../services/store.service'
 
 export const adminStoreRoutes = createRouter()
@@ -54,6 +54,24 @@ adminStoreRoutes.openapi(
     const { id } = c.req.valid('param')
     const { isActive } = c.req.valid('json')
     const store = await setStoreActive(c.get('db'), id, isActive).catch(rethrow)
+    return c.json(store, 200)
+  },
+)
+
+adminStoreRoutes.openapi(
+  createRoute({
+    method: 'patch', path: '/admin/stores/{id}/commission',
+    request: {
+      params: z.object({ id: z.uuid() }),
+      // basis points: 0..10000 = 0%..100%
+      body: { content: { 'application/json': { schema: z.object({ commissionBps: z.number().int().min(0).max(10_000) }) } } },
+    },
+    responses: { 200: { description: 'Comissão atualizada', content: { 'application/json': { schema: StoreOut } } } },
+  }),
+  async (c) => {
+    const { id } = c.req.valid('param')
+    const { commissionBps } = c.req.valid('json')
+    const store = await setStoreCommission(c.get('db'), id, commissionBps).catch(rethrow)
     return c.json(store, 200)
   },
 )

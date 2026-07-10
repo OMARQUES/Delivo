@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { STORE_CATEGORIES, slugify } from '@delivery/shared/constants'
 import { api } from '../../lib/api'
 
-type AdminStore = { id: string; name: string; slug: string; category: string; isActive: boolean }
+type AdminStore = { id: string; name: string; slug: string; category: string; isActive: boolean; commissionBps: number }
 
 const stores = ref<AdminStore[]>([])
 const error = ref('')
@@ -56,6 +56,21 @@ async function toggleActive(s: AdminStore) {
   await api(`/admin/stores/${s.id}/active`, {
     method: 'PATCH',
     body: JSON.stringify({ isActive: !s.isActive }),
+  })
+  await load()
+}
+
+// comissão exibida/editada em %, armazenada em basis points (10000 = 100%)
+async function saveCommission(s: AdminStore, percentStr: string) {
+  const percent = Number(percentStr)
+  if (Number.isNaN(percent) || percent < 0 || percent > 100) {
+    error.value = 'Comissão deve ser 0–100%'
+    return
+  }
+  error.value = ''
+  await api(`/admin/stores/${s.id}/commission`, {
+    method: 'PATCH',
+    body: JSON.stringify({ commissionBps: Math.round(percent * 100) }),
   })
   await load()
 }
@@ -160,6 +175,19 @@ async function toggleActive(s: AdminStore) {
           <p class="text-xs text-gray-500">
             {{ s.category }} · {{ s.isActive ? 'ativa' : 'bloqueada' }}
           </p>
+          <label class="mt-1 flex items-center gap-1 text-xs text-gray-600">
+            Comissão:
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.5"
+              :value="(s.commissionBps / 100).toString()"
+              class="w-16 rounded border p-1"
+              @change="saveCommission(s, ($event.target as HTMLInputElement).value)"
+            />
+            %
+          </label>
         </div>
         <button class="rounded border px-2 py-1 text-sm" @click="toggleActive(s)">
           {{ s.isActive ? 'Bloquear' : 'Desbloquear' }}

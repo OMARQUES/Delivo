@@ -121,6 +121,13 @@ export async function setStoreActive(db: Db, storeId: string, isActive: boolean)
   return row
 }
 
+/** Comissão da plataforma em basis points (0..10000 = 0..100%). Admin-only. */
+export async function setStoreCommission(db: Db, storeId: string, commissionBps: number) {
+  const [row] = await db.update(stores).set({ commissionBps }).where(eq(stores.id, storeId)).returning()
+  if (!row) throw new StoreError('Loja não encontrada', 404)
+  return row
+}
+
 export async function setStoreLogo(db: Db, storeId: string, logoKey: string) {
   const [row] = await db.update(stores).set({ logoKey }).where(eq(stores.id, storeId)).returning()
   if (!row) throw new StoreError('Loja não encontrada', 404)

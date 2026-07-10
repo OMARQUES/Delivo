@@ -75,6 +75,27 @@ describe('GET /admin/stores + PATCH active', () => {
   })
 })
 
+describe('PATCH /admin/stores/:id/commission', () => {
+  it('admin define comissão (bps); reflete na listagem', async () => {
+    const create = await req('/admin/stores', { method: 'POST', body: JSON.stringify(storeInput) }, await adminToken())
+    const { id } = (await create.json()) as StoreBody
+    const patch = await req(`/admin/stores/${id}/commission`, { method: 'PATCH', body: JSON.stringify({ commissionBps: 1200 }) }, await adminToken())
+    expect(patch.status).toBe(200)
+    const list = await req('/admin/stores', {}, await adminToken())
+    const body = (await list.json()) as { id: string; commissionBps: number }[]
+    expect(body.find((s) => s.id === id)?.commissionBps).toBe(1200)
+  })
+
+  it('403 não-admin, 404 loja inexistente, 400 fora de 0..10000', async () => {
+    const create = await req('/admin/stores', { method: 'POST', body: JSON.stringify(storeInput) }, await adminToken())
+    const { id } = (await create.json()) as StoreBody
+    expect((await req(`/admin/stores/${id}/commission`, { method: 'PATCH', body: JSON.stringify({ commissionBps: 1000 }) }, await customerToken())).status).toBe(403)
+    expect((await req(`/admin/stores/${crypto.randomUUID()}/commission`, { method: 'PATCH', body: JSON.stringify({ commissionBps: 1000 }) }, await adminToken())).status).toBe(404)
+    expect((await req(`/admin/stores/${id}/commission`, { method: 'PATCH', body: JSON.stringify({ commissionBps: 10001 }) }, await adminToken())).status).toBe(400)
+    expect((await req(`/admin/stores/${id}/commission`, { method: 'PATCH', body: JSON.stringify({ commissionBps: -1 }) }, await adminToken())).status).toBe(400)
+  })
+})
+
 describe('POST /admin/stores/:id/catalog/import', () => {
   it('imports csv, returns counts + line errors', async () => {
     const create = await req('/admin/stores', { method: 'POST', body: JSON.stringify(storeInput) }, await adminToken())

@@ -4,7 +4,6 @@
 > fechar o período (gera faturas/repasses a partir do ledger) e marcar cada documento como pago.
 > Os passos SQL abaixo ficam como **fallback** / conferência. O PIX em si continua manual
 > (fora do sistema) — o painel só registra e marca como pago.
-> ⚠️ Enquanto não houver campo de comissão por loja no admin, `commissionBps` fica 0 e as
 > faturas de comissão saem zeradas.
 
 Todo pagamento ONLINE (PIX/cartão) cai na conta Mercado Pago da plataforma.
