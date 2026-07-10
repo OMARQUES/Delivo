@@ -21,8 +21,14 @@ export const CheckoutSchema = z
     storeSlug: z.string().min(1).max(60),
     fulfillment: z.enum(['DELIVERY', 'PICKUP']),
     addressId: z.uuid().optional(),
-    paymentMethod: z.enum(['CASH', 'CARD_MACHINE', 'PIX_ONLINE']),
+    paymentMethod: z.enum(['CASH', 'CARD_MACHINE', 'PIX_ONLINE', 'CARD_ONLINE']),
     changeForCents: Cents.nullable().optional(),
+    /** CARD_ONLINE: token do Payment Brick */
+    cardToken: z.string().min(8).max(120).optional(),
+    /** CARD_ONLINE: bandeira retornada pelo Brick (ex: 'master', 'visa') */
+    cardPaymentMethodId: z.string().min(2).max(40).optional(),
+    /** CARD_ONLINE: parcelas (MVP: só 1) */
+    installments: z.number().int().min(1).max(1).optional(),
     /** CPF/CNPJ na nota (opcional) — só dígitos, 11 ou 14 */
     taxId: z.string().transform((s) => s.replace(/\D/g, '')).pipe(z.string().regex(/^(\d{11}|\d{14})$/)).optional(),
     note: z.string().trim().max(280).optional(),
@@ -31,6 +37,9 @@ export const CheckoutSchema = z
   })
   .refine((v) => v.fulfillment !== 'DELIVERY' || Boolean(v.addressId), {
     message: 'Entrega exige endereço',
+  })
+  .refine((v) => v.paymentMethod !== 'CARD_ONLINE' || (Boolean(v.cardToken) && Boolean(v.cardPaymentMethodId)), {
+    message: 'Cartão online exige token do cartão',
   })
 export type CheckoutInput = z.infer<typeof CheckoutSchema>
 

@@ -26,6 +26,18 @@ describe('CheckoutSchema', () => {
     expect(CheckoutSchema.parse({ ...base, changeForCents: 10000 }).changeForCents).toBe(10000)
     expect(() => CheckoutSchema.parse({ ...base, changeForCents: -1 })).toThrow()
   })
+  it('CARD_ONLINE requires cardToken; PIX_ONLINE does not', () => {
+    expect(() => CheckoutSchema.parse({ ...base, paymentMethod: 'CARD_ONLINE' })).toThrow()
+    const card = CheckoutSchema.parse({
+      ...base,
+      paymentMethod: 'CARD_ONLINE',
+      cardToken: 'tok_abc123',
+      cardPaymentMethodId: 'master',
+      installments: 1,
+    })
+    expect(card.cardToken).toBe('tok_abc123')
+    expect(CheckoutSchema.parse({ ...base, paymentMethod: 'PIX_ONLINE' }).cardToken).toBeUndefined()
+  })
   it('taxId: optional, strips mask, requires 11 or 14 digits', () => {
     expect(CheckoutSchema.parse({ ...base, taxId: '123.456.789-09' }).taxId).toBe('12345678909')
     expect(() => CheckoutSchema.parse({ ...base, taxId: '123' })).toThrow()
