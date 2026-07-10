@@ -30,6 +30,12 @@ type Order = {
   storeSlug: string
   driverName: string | null
   payment: { qrCode: string; qrCodeBase64: string | null; expiresAt: string | null } | null
+  amendment: {
+    note: string | null
+    refundCents: number
+    newTotalCents: number
+    items: { nameSnapshot: string; oldQuantity: number; newQuantity: number }[]
+  } | null
   events: { status: OrderStatus; createdAt: string; note: string | null }[]
 }
 
@@ -100,6 +106,18 @@ async function requestCancel() {
     error.value = e instanceof Error ? e.message : 'Erro'
   }
 }
+
+async function resolveAmendment(action: 'approve' | 'reject') {
+  if (!order.value) return
+  const label = action === 'approve' ? 'Aprovar a alteração?' : 'Recusar? O pedido será CANCELADO.'
+  if (!confirm(label)) return
+  try {
+    await api(`/orders/${order.value.id}/amendments/current/${action}`, { method: 'POST' })
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+  }
+}
 </script>
 
 <template>
@@ -159,6 +177,27 @@ async function requestCancel() {
       <p v-if="order.cancelRequestedAt && order.status !== 'CANCELLED'" class="rounded border border-yellow-300 bg-yellow-50 p-2 text-sm">
         Cancelamento solicitado — aguardando a loja.
       </p>
+
+      <section v-if="order.amendment && !isFinal" class="space-y-2 rounded border border-orange-300 bg-orange-50 p-3">
+        <p class="font-semibold">A loja propôs uma alteração</p>
+        <p v-if="order.amendment.note" class="text-sm italic">"{{ order.amendment.note }}"</p>
+        <ul class="text-sm">
+          <li v-for="(i, idx) in order.amendment.items" :key="idx">
+            {{ i.nameSnapshot }}: {{ i.oldQuantity }}× →
+            <strong>{{ i.newQuantity === 0 ? 'remover' : `${i.newQuantity}×` }}</strong>
+          </li>
+        </ul>
+        <p class="text-sm">
+          Novo total: <strong>{{ formatBRL(order.amendment.newTotalCents) }}</strong>
+          <span v-if="order.amendment.refundCents > 0" class="text-green-700">
+            (−{{ formatBRL(order.amendment.refundCents) }}<template v-if="order.paymentMethod.includes('ONLINE')"> — estorno automático</template>)
+          </span>
+        </p>
+        <div class="flex gap-2">
+          <button class="flex-1 rounded bg-green-600 p-2 text-white" @click="resolveAmendment('approve')">Aprovar</button>
+          <button class="flex-1 rounded border border-red-400 p-2 text-red-600" @click="resolveAmendment('reject')">Recusar (cancela)</button>
+        </div>
+      </section>
 
       <section class="rounded border p-3 text-sm">
         <ul class="space-y-1">
