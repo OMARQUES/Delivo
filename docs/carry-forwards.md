@@ -62,3 +62,4 @@
 | DELIVERY_FAILED + pagamento online: sem estorno automático, plataforma retém o subtotal, loja não recebe crédito. Política de estorno/retenção em falha a definir | Plano 8 (audit) | Definir com operação |
 | `markStoreInvoicePaid`/`markStorePayoutPaid`/`markDriverPayoutPaid` sem guard `status='OPEN'` — remarcar sobrescreve `paidAt`. Menor | Plano 8 (audit) | Oportunista |
 | Comissão não é snapshotada na entry do ledger (só o valor final é congelado) — perde trilha da alíquota usada | Plano 8 (audit) | Se auditoria fiscal exigir |
+| Pacote com TODOS os pedidos cancelados fica órfão ACCEPTED (loja não cancela mais; driver só faz release → volta ao pool mostrando "0 entregas") — cosmético, sem risco de dinheiro | Plano ③ (audit) | Hardening (auto-cancelar pacote vazio) |
