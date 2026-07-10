@@ -38,9 +38,9 @@ beforeEach(async () => {
 })
 afterAll(closeTestDb)
 
-function req(path: string, init: RequestInit = {}) {
+function req(path: string, init: RequestInit = {}, accessToken = token) {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json', Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}`,
     ...(init.headers as Record<string, string>),
   }
   return app.request(path, { ...init, headers }, env)
@@ -56,6 +56,27 @@ async function makeProduct(categoryId: string) {
     body: JSON.stringify({ categoryId, name: 'Pizza', basePriceCents: 3000 }),
   })
   return (await res.json()) as { id: string }
+}
+
+async function makeProductWithOption() {
+  const category = await makeCategory()
+  const product = await makeProduct(category.id)
+  const tree = await req(`/store/me/products/${product.id}/options`, {
+    method: 'PUT',
+    body: JSON.stringify([
+      {
+        name: 'Extras', type: 'ADDON', minSelect: 0, maxSelect: 2,
+        options: [{ name: 'Catupiry', priceCents: 500 }],
+      },
+    ]),
+  })
+  expect(tree.status).toBe(200)
+
+  const catalog = (await (await req('/store/me/catalog')).json()) as {
+    products: { id: string; groups: { options: { id: string }[] }[] }[]
+  }[]
+  const option = catalog[0]!.products[0]!.groups[0]!.options[0]!
+  return { product, option }
 }
 
 describe('categories routes', () => {
@@ -119,5 +140,95 @@ describe('products routes', () => {
     expect(
       (await app.request('/store/me/catalog', { headers: { Authorization: `Bearer ${cust}` } }, env)).status,
     ).toBe(403)
+  })
+})
+
+describe('PATCH /store/me/options/:id', () => {
+  it('pausa e repreça uma opção sem trocar seu id', async () => {
+    const { option } = await makeProductWithOption()
+
+    const pause = await req(`/store/me/options/${option.id}`, {
+      method: 'PATCH', body: JSON.stringify({ isAvailable: false }),
+    })
+    expect(pause.status).toBe(200)
+    expect((await pause.json()) as { id: string; isAvailable: boolean }).toMatchObject({
+      id: option.id,
+      isAvailable: false,
+    })
+
+    const reprice = await req(`/store/me/options/${option.id}`, {
+      method: 'PATCH', body: JSON.stringify({ priceCents: 777 }),
+    })
+    expect(reprice.status).toBe(200)
+
+    const catalog = (await (await req('/store/me/catalog')).json()) as {
+      products: { groups: { options: { id: string; priceCents: number | null; isAvailable: boolean }[] }[] }[]
+    }[]
+    const updated = catalog
+      .flatMap((category) => category.products)
+      .flatMap((product) => product.groups)
+      .flatMap((group) => group.options)
+      .find((candidate) => candidate.id === option.id)
+    expect(updated).toEqual(expect.objectContaining({
+      id: option.id,
+      isAvailable: false,
+      priceCents: 777,
+    }))
+  })
+
+  it('rejeita corpo vazio, acesso anônimo e opção de outra loja', async () => {
+    const { option } = await makeProductWithOption()
+
+    expect((await req(`/store/me/options/${option.id}`, {
+      method: 'PATCH', body: JSON.stringify({}),
+    })).status).toBe(400)
+
+    expect((await app.request(`/store/me/options/${option.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isAvailable: false }),
+    }, env)).status).toBe(401)
+
+    const otherStore = await createStoreWithOwner(testDb, {
+      ...storeInput,
+      name: 'Outra Pizzaria',
+      slug: 'outra-pizzaria',
+      owner: { ...storeInput.owner, email: 'outra@email.com' },
+    })
+    const otherToken = await signAccessToken(
+      { sub: otherStore.ownerUserId, role: 'STORE', name: 'Outra Loja' },
+      env.JWT_SECRET,
+    )
+    expect((await req(`/store/me/options/${option.id}`, {
+      method: 'PATCH', body: JSON.stringify({ isAvailable: false }),
+    }, otherToken)).status).toBe(404)
+  })
+})
+
+describe('PATCH /store/me/products/:id (controle ao vivo)', () => {
+  it('repreça e pausa o produto', async () => {
+    const category = await makeCategory()
+    const product = await makeProduct(category.id)
+
+    const reprice = await req(`/store/me/products/${product.id}`, {
+      method: 'PATCH', body: JSON.stringify({ basePriceCents: 3199 }),
+    })
+    expect(reprice.status).toBe(200)
+    expect((await reprice.json()) as { basePriceCents: number }).toMatchObject({ basePriceCents: 3199 })
+
+    const pause = await req(`/store/me/products/${product.id}`, {
+      method: 'PATCH', body: JSON.stringify({ isAvailable: false }),
+    })
+    expect(pause.status).toBe(200)
+    expect((await pause.json()) as { isAvailable: boolean }).toMatchObject({ isAvailable: false })
+
+    const catalog = (await (await req('/store/me/catalog')).json()) as {
+      products: { id: string; basePriceCents: number; isAvailable: boolean }[]
+    }[]
+    expect(catalog[0]!.products[0]).toMatchObject({
+      id: product.id,
+      basePriceCents: 3199,
+      isAvailable: false,
+    })
   })
 })
