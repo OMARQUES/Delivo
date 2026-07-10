@@ -55,7 +55,7 @@ async function load() {
 
 onMounted(() => {
   load()
-  timer = setInterval(load, 10_000)
+  timer = setInterval(load, 1_000)
 })
 onBeforeUnmount(() => clearInterval(timer))
 

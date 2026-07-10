@@ -59,7 +59,7 @@ async function load() {
 
 onMounted(() => {
   load()
-  timer = setInterval(load, 15_000)
+  timer = setInterval(load, 1_000)
   clockTimer = setInterval(() => (now.value = Date.now()), 1000)
 })
 onBeforeUnmount(() => {
