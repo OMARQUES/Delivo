@@ -63,6 +63,7 @@ Backend usa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `PUBLIC_API_URL` em `apps/a
 6. ✅ Dispatch — broadcast FCM, aceite com lock atômico, batching multi-loja/multi-destino, telas driver
 7. ✅ Pagamentos — MP centralizado (PIX+cartão), estornos, webhook
 8. ✅ Financeiro — ledger imutável, fatura de comissão, payout manual por período, extratos loja/entregador, comissão por loja definida pelo admin (`/admin/lojas`, em %)
+- ✅ Controle da Loja — pausar/repreçar produto e opção ao vivo (sem replace-all), no cardápio da loja
 9. Capacitor — build Android driver, FCM nativo
 10. Admin & Relatórios — gestão, import CSV, faturamento, mini-ERP
 11. Design & Identidade Visual — marca/nome definitivo, design system, refatoração UI/UX das telas existentes

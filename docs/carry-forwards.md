@@ -36,6 +36,7 @@
 | Busca: FTS side ainda sensível a acento (só ILIKE tem unaccent) + sem índice em unaccent(name) — ok em escala atual | Review Prod T5 | Quando catálogo crescer |
 | minMenuPrice ignora FLAVOR-only (produto só-sabores mostra "a partir de" pela base) — by-spec, revisar exibição | Review Prod T2 | Plano Design/UX |
 | Painel: swap de ordenação usa índices do array como sortIndex — gaps podem gerar empate momentâneo | Review Prod T9 | Oportunista |
+| Repreço de matriz sabor×variação (FLAVOR×VARIATION) segue só no editor completo do produto (replace-all); pausar/repreçar granular cobre produto + opções de preço simples | Plano Controle da Loja | Se lojas pedirem edição rápida da matriz |
 | Modal: checkbox acima do max não re-renderiza (desync visual, preço correto) + produto indisponível abre modal | Review Prod T11 | Plano Pedidos (cart) |
 | Amendment só REDUZ itens (não adiciona/troca) — adicionar item = pedido novo | Plano 5b | Se lojas pedirem |
 | Amendment em pedido cash: diferença só informativa (cobra novo total na porta) | Plano 5b | Aceito |
