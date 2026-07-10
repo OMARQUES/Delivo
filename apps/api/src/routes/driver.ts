@@ -17,6 +17,13 @@ import {
   setDriverPixKey,
   setFcmToken,
 } from '../services/dispatch.service'
+import {
+  BatchError,
+  acceptBatch,
+  collectBatch,
+  listAvailableBatches,
+  releaseBatch,
+} from '../services/batch.service'
 
 export const driverRoutes = createRouter()
 
@@ -24,6 +31,7 @@ driverRoutes.use('/driver/*', authMiddleware, requireRole('DRIVER'))
 
 function rethrow(e: unknown): never {
   if (e instanceof DispatchError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof BatchError) throw new HTTPException(e.status, { message: e.message })
   throw e
 }
 
@@ -37,6 +45,45 @@ driverRoutes.openapi(
     responses: { 200: { description: 'Perfil', content: { 'application/json': { schema: Out } } } },
   }),
   async (c) => c.json(await ensureDriverProfile(c.get('db'), c.get('auth')!.sub), 200),
+)
+
+driverRoutes.openapi(
+  createRoute({
+    method: 'get',
+    path: '/driver/batches',
+    responses: { 200: { description: 'Pacotes disponíveis', content: { 'application/json': { schema: z.array(Out) } } } },
+  }),
+  async (c) => c.json(await listAvailableBatches(c.get('db'), c.get('auth')!.sub), 200),
+)
+
+driverRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/driver/batches/{id}/accept',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Pacote aceito', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await acceptBatch(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200),
+)
+
+driverRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/driver/batches/{id}/release',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Pacote liberado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await releaseBatch(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200),
+)
+
+driverRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/driver/batches/{id}/collect',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Pacote coletado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await collectBatch(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200),
 )
 
 driverRoutes.openapi(

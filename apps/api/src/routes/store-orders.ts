@@ -13,6 +13,7 @@ import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.se
 import { listAvailableDriverTokens, requestDriver, storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
 import { getStoreByOwner } from '../services/store.service'
 import { AmendmentError, proposeAmendment, withdrawAmendment } from '../services/amendment.service'
+import { BatchError, broadcastBatch, cancelBatch, createBatch, listStoreBatches } from '../services/batch.service'
 
 export const storeOrderRoutes = createRouter()
 
@@ -20,6 +21,7 @@ storeOrderRoutes.use('/store/*', authMiddleware, requireRole('STORE'))
 
 function rethrow(e: unknown): never {
   if (e instanceof AmendmentError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof BatchError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof OrderError) throw new HTTPException(e.status, { message: e.message })
   throw e
 }
@@ -32,6 +34,55 @@ async function ownStoreId(c: Context<AppContext>): Promise<string> {
 
 const Out = z.object({ id: z.string() }).passthrough()
 const IdParam = z.object({ id: z.uuid() })
+const BatchBody = z.object({ orderIds: z.array(z.uuid()).min(2).max(30) })
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'get',
+    path: '/store/me/batches',
+    responses: { 200: { description: 'Pacotes ativos', content: { 'application/json': { schema: z.array(Out) } } } },
+  }),
+  async (c) => c.json(await listStoreBatches(c.get('db'), await ownStoreId(c)), 200),
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/store/me/batches',
+    request: { body: { content: { 'application/json': { schema: BatchBody } } } },
+    responses: { 201: { description: 'Pacote criado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(
+    await createBatch(c.get('db'), await ownStoreId(c), c.req.valid('json').orderIds).catch(rethrow),
+    201,
+  ),
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/store/me/batches/{id}/broadcast',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Pacote ofertado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(
+    await broadcastBatch(c.get('db'), await ownStoreId(c), c.req.valid('param').id).catch(rethrow),
+    200,
+  ),
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'delete',
+    path: '/store/me/batches/{id}',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Pacote cancelado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(
+    await cancelBatch(c.get('db'), await ownStoreId(c), c.req.valid('param').id).catch(rethrow),
+    200,
+  ),
+)
 
 storeOrderRoutes.openapi(
   createRoute({
