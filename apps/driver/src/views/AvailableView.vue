@@ -91,7 +91,8 @@ async function accept(o: Available) {
         <div class="flex items-center justify-between">
           <div>
             <p class="font-semibold">{{ o.storeName }}</p>
-            <p class="text-xs text-gray-500">{{ o.storeAddressText }}</p>
+            <p class="text-xs text-gray-500">Coleta: {{ o.storeAddressText }}</p>
+            <p class="text-xs text-gray-400">Endereço de entrega liberado após aceitar</p>
             <p v-if="o.distanceKm" class="text-xs text-gray-500">~{{ o.distanceKm.toFixed(1) }} km até o cliente</p>
           </div>
           <div class="text-right">
