@@ -1,12 +1,18 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
-import { CategorySchema, OptionsTreeSchema, ProductSchema, ProductUpdateSchema } from '@delivery/shared/schemas'
+import {
+  CategorySchema,
+  OptionUpdateSchema,
+  OptionsTreeSchema,
+  ProductSchema,
+  ProductUpdateSchema,
+} from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreByOwner, StoreError } from '../services/store.service'
 import {
   CatalogError, createCategory, createProduct, deleteCategory, deleteProduct,
-  getStoreCatalog, replaceProductOptions, setProductPhoto, updateCategory, updateProduct,
+  getStoreCatalog, replaceProductOptions, setProductPhoto, updateCategory, updateOption, updateProduct,
 } from '../services/catalog.service'
 import type { AppContext } from '../env'
 import type { Context } from 'hono'
@@ -97,6 +103,16 @@ storeCatalogRoutes.openapi(
     await replaceProductOptions(c.get('db'), await ownStoreId(c), c.req.valid('param').id, c.req.valid('json')).catch(rethrow)
     return c.json({ ok: true }, 200)
   },
+)
+
+storeCatalogRoutes.openapi(
+  createRoute({ method: 'patch', path: '/store/me/options/{id}',
+    request: { params: IdParam, body: { content: { 'application/json': { schema: OptionUpdateSchema } } } },
+    responses: { 200: { description: 'Opção atualizada', content: { 'application/json': { schema: Out } } } } }),
+  async (c) => c.json(
+    await updateOption(c.get('db'), await ownStoreId(c), c.req.valid('param').id, c.req.valid('json')).catch(rethrow),
+    200,
+  ),
 )
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
