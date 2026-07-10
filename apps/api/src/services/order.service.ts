@@ -311,7 +311,17 @@ export async function getCustomerOrder(db: Db, customerId: string, orderId: stri
     const [d] = await db.select({ name: users.name }).from(users).where(eq(users.id, order.driverId))
     driverName = d?.name?.split(' ')[0] ?? null
   }
-  return { ...detail, storeName: store?.name ?? '', storePhone: store?.phone ?? null, storeSlug: store?.slug ?? '', driverName }
+  const payment = await getOrderPayment(db, order.id)
+  return {
+    ...detail,
+    storeName: store?.name ?? '',
+    storePhone: store?.phone ?? null,
+    storeSlug: store?.slug ?? '',
+    driverName,
+    payment: payment && order.status === 'AWAITING_PAYMENT' && payment.qrCode
+      ? { qrCode: payment.qrCode, qrCodeBase64: payment.qrCodeBase64, expiresAt: payment.expiresAt?.toISOString() ?? null }
+      : null,
+  }
 }
 
 const ACTIVE_STATUSES = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER', 'OUT_FOR_DELIVERY'] as const

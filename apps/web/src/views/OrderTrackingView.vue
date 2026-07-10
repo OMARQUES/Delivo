@@ -16,6 +16,7 @@ type Order = {
   id: string
   status: OrderStatus
   fulfillment: 'DELIVERY' | 'PICKUP'
+  paymentMethod: string
   subtotalCents: number
   deliveryFeeCents: number | null
   totalCents: number
@@ -28,13 +29,17 @@ type Order = {
   storePhone: string | null
   storeSlug: string
   driverName: string | null
+  payment: { qrCode: string; qrCodeBase64: string | null; expiresAt: string | null } | null
   events: { status: OrderStatus; createdAt: string; note: string | null }[]
 }
 
 const route = useRoute()
 const order = ref<Order | null>(null)
 const error = ref('')
+const copied = ref(false)
+const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | undefined
+let clockTimer: ReturnType<typeof setInterval> | undefined
 
 const STEPS: OrderStatus[] = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'DELIVERED']
 
@@ -49,11 +54,31 @@ async function load() {
 onMounted(() => {
   load()
   timer = setInterval(load, 15_000)
+  clockTimer = setInterval(() => (now.value = Date.now()), 1000)
 })
-onBeforeUnmount(() => clearInterval(timer))
+onBeforeUnmount(() => {
+  clearInterval(timer)
+  clearInterval(clockTimer)
+})
 
 const stepIndex = computed(() => (order.value ? STEPS.indexOf(order.value.status) : -1))
 const isFinal = computed(() => order.value && ['DELIVERED', 'CANCELLED', 'DELIVERY_FAILED'].includes(order.value.status))
+const pixCountdown = computed(() => {
+  const exp = order.value?.payment?.expiresAt
+  if (!exp) return null
+  const ms = new Date(exp).getTime() - now.value
+  if (ms <= 0) return 'instantes'
+  const m = Math.floor(ms / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  return `${m}m${String(s).padStart(2, '0')}s`
+})
+
+function copyPix() {
+  if (!order.value?.payment) return
+  navigator.clipboard.writeText(order.value.payment.qrCode)
+  copied.value = true
+  setTimeout(() => (copied.value = false), 3000)
+}
 
 async function cancel() {
   if (!order.value || !confirm('Cancelar este pedido?')) return
@@ -94,6 +119,26 @@ async function requestCancel() {
       </section>
       <section v-else-if="order.status === 'DELIVERY_FAILED'" class="rounded border border-red-300 bg-red-50 p-3">
         Entrega não realizada. Entre em contato com a loja.
+      </section>
+      <section v-else-if="order.status === 'AWAITING_PAYMENT' && order.payment" class="space-y-2 rounded border border-blue-300 bg-blue-50 p-3">
+        <p class="font-semibold">Pague com PIX para confirmar o pedido</p>
+        <img
+          v-if="order.payment.qrCodeBase64"
+          :src="`data:image/png;base64,${order.payment.qrCodeBase64}`"
+          class="mx-auto h-48 w-48"
+          alt="QR Code PIX"
+        />
+        <div class="flex gap-2">
+          <input :value="order.payment.qrCode" readonly class="flex-1 rounded border bg-white p-2 text-xs" />
+          <button class="rounded bg-black px-3 text-white" @click="copyPix">Copiar</button>
+        </div>
+        <p class="text-xs text-gray-600">
+          {{ copied ? 'Copiado! Cole no app do seu banco.' : 'Escaneie o QR ou copie o código.' }}
+          <span v-if="pixCountdown"> Expira em {{ pixCountdown }}.</span>
+        </p>
+      </section>
+      <section v-else-if="order.status === 'AWAITING_PAYMENT'" class="rounded border border-blue-300 bg-blue-50 p-3">
+        Aguardando confirmação do pagamento…
       </section>
       <ol v-else class="space-y-1">
         <li

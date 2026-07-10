@@ -103,9 +103,12 @@ async function submit() {
   submitting.value = true
   error.value = ''
   try {
-    const order = await api<{ id: string }>('/orders', { method: 'POST', body: JSON.stringify(checkoutBody()) })
+    const r = await api<{ order: { id: string }; payment: unknown | null }>('/orders', {
+      method: 'POST',
+      body: JSON.stringify(checkoutBody()),
+    })
     cart.clear()
-    await router.replace(`/pedido/${order.id}`)
+    await router.replace(`/pedido/${r.order.id}`)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro ao enviar pedido'
   } finally {
@@ -157,11 +160,11 @@ async function submit() {
     </section>
 
     <section class="space-y-2 rounded border p-3">
-      <p class="font-semibold">Pagamento (na entrega)</p>
+      <p class="font-semibold">Pagamento</p>
       <label class="flex items-center gap-2"><input v-model="paymentMethod" type="radio" value="CASH" /> Dinheiro</label>
       <input v-if="paymentMethod === 'CASH'" v-model="changeFor" placeholder="Troco para quanto? (R$, opcional)" class="w-full rounded border p-2" />
       <label class="flex items-center gap-2"><input v-model="paymentMethod" type="radio" value="CARD_MACHINE" /> Maquininha (cartão)</label>
-      <label class="flex items-center gap-2 opacity-50"><input type="radio" disabled /> PIX online (em breve)</label>
+      <label class="flex items-center gap-2"><input v-model="paymentMethod" type="radio" value="PIX_ONLINE" /> PIX (pague agora)</label>
     </section>
 
     <input v-model="taxId" placeholder="CPF/CNPJ na nota (opcional)" class="w-full rounded border p-2" />

@@ -158,9 +158,11 @@ describe('POST /orders/quote + POST /orders', () => {
     const body = checkout({ paymentMethod: 'PIX_ONLINE' })
     const res = await req('/orders', { method: 'POST', body: JSON.stringify(body) }, customerToken)
     expect(res.status).toBe(201)
-    const r = (await res.json()) as { order: { status: string }; payment: { qrCode: string } }
+    const r = (await res.json()) as { order: { id: string; status: string }; payment: { qrCode: string } }
     expect(r.order.status).toBe('AWAITING_PAYMENT')
     expect(r.payment.qrCode).toBe('copia')
+    const detail = await req(`/orders/${r.order.id}`, {}, customerToken)
+    expect(((await detail.json()) as { payment: { qrCode: string } }).payment.qrCode).toBe('copia')
     const replay = await req('/orders', { method: 'POST', body: JSON.stringify(body) }, customerToken)
     expect(((await replay.json()) as { payment: { qrCode: string } }).payment.qrCode).toBe('copia')
     vi.restoreAllMocks()
