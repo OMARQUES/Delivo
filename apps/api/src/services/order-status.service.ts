@@ -15,7 +15,7 @@ export { addEvent } from './order-events'
 export async function customerCancelOrder(db: Db, customerId: string, orderId: string, provider?: PaymentProvider | null) {
   const rows = await db
     .update(orders)
-    .set({ status: 'CANCELLED', cancelReason: 'Cancelado pelo cliente' })
+    .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cancelado pelo cliente' })
     .where(and(eq(orders.id, orderId), eq(orders.customerId, customerId), eq(orders.status, 'PENDING')))
     .returning()
   if (rows.length === 0) throw new OrderError('Pedido não pode mais ser cancelado direto — solicite à loja', 409)
@@ -48,7 +48,7 @@ export async function cancelStalePendingOrders(db: Db, olderThanMinutes = 30, pr
   const cutoff = new Date(Date.now() - olderThanMinutes * 60_000)
   const rows = await db
     .update(orders)
-    .set({ status: 'CANCELLED', cancelReason: 'Loja não confirmou a tempo' })
+    .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Loja não confirmou a tempo' })
     .where(and(eq(orders.status, 'PENDING'), lt(orders.createdAt, cutoff)))
     .returning({ id: orders.id })
   for (const r of rows) {
@@ -70,6 +70,7 @@ export async function requestDriver(db: Db, storeId: string, orderId: string) {
   if (!order) throw new OrderError('Pedido não encontrado', 404)
   if (order.fulfillment !== 'DELIVERY') throw new OrderError('Pedido é retirada — sem entrega', 400)
   if (order.driverId) throw new OrderError('Pedido já tem entregador', 409)
+  if (order.batchId) throw new OrderError('Pedido já está em um pacote', 409)
   if (order.status === 'PENDING') throw new OrderError('Aceite o pedido antes de solicitar entregador', 409)
   if (!REQUESTABLE_FOR_DRIVER.includes(order.status)) throw new OrderError('Pedido não está em andamento', 409)
   if (order.driverRequestedAt) return order
@@ -132,7 +133,7 @@ export async function storeUpdateOrderStatus(
 
   const rows = await db
     .update(orders)
-    .set({ status: to, ...(to === 'CANCELLED' ? { cancelReason: reason, cancelRequestedAt: null, cancelRequestNote: null } : {}) })
+    .set({ status: to, ...(to === 'CANCELLED' ? { batchId: null, cancelReason: reason, cancelRequestedAt: null, cancelRequestNote: null } : {}) })
     .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
     .returning()
   if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)
@@ -143,7 +144,7 @@ export async function storeUpdateOrderStatus(
   }
   if (to === 'DELIVERED') await recordOrderLedger(db, orderId)
   let final = rows[0]!
-  if (to === 'READY' && final.driverRequestedAt && !final.driverId) {
+  if (to === 'READY' && final.driverRequestedAt && !final.driverId && !final.batchId) {
     const auto = await db
       .update(orders)
       .set({ status: 'AWAITING_DRIVER' })
@@ -176,7 +177,7 @@ export async function storeResolveCancelRequest(
     if (!canTransition(order.status, 'CANCELLED')) throw new OrderError('Pedido não é mais cancelável', 409)
     const rows = await db
       .update(orders)
-      .set({ status: 'CANCELLED', cancelReason: 'Cancelamento aprovado pela loja', cancelRequestedAt: null })
+      .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cancelamento aprovado pela loja', cancelRequestedAt: null })
       .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId), eq(orders.status, order.status)))
       .returning()
     if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)

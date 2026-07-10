@@ -135,7 +135,7 @@ export async function expireStaleAwaitingPayment(
 ) {
   const cutoff = new Date(Date.now() - olderThanMinutes * 60_000)
   const stale = await db.update(orders)
-    .set({ status: 'CANCELLED', cancelReason: 'Pagamento não realizado a tempo' })
+    .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Pagamento não realizado a tempo' })
     .where(and(eq(orders.status, 'AWAITING_PAYMENT'), lt(orders.createdAt, cutoff)))
     .returning({ id: orders.id })
   for (const o of stale) {

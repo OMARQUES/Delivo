@@ -161,7 +161,7 @@ export async function rejectAmendment(db: Db, provider: PaymentProvider | null, 
     if (claimed.length === 0) throw new AmendmentError('Alteração não está mais pendente', 409)
 
     return tx.update(orders)
-      .set({ status: 'CANCELLED', cancelReason: 'Cliente recusou a alteração proposta' })
+      .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cliente recusou a alteração proposta' })
       .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
       .returning()
   })

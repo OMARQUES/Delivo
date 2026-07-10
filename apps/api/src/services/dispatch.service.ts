@@ -62,6 +62,7 @@ export async function listAvailableDeliveries(db: Db, driverUserId: string) {
     .where(and(
       isNotNull(orders.driverRequestedAt),
       isNull(orders.driverId),
+      isNull(orders.batchId),
       eq(orders.fulfillment, 'DELIVERY'),
       inArray(orders.status, ACCEPTABLE),
     ))
@@ -115,6 +116,7 @@ export async function acceptDelivery(db: Db, driverUserId: string, orderId: stri
     .where(and(
       eq(orders.id, orderId),
       isNull(orders.driverId),
+      isNull(orders.batchId),
       isNotNull(orders.driverRequestedAt),
       eq(orders.fulfillment, 'DELIVERY'),
       inArray(orders.status, ACCEPTABLE),
@@ -132,6 +134,7 @@ export async function releaseDelivery(db: Db, driverUserId: string, orderId: str
     .where(and(
       eq(orders.id, orderId),
       eq(orders.driverId, driverUserId),
+      isNull(orders.batchId),
       inArray(orders.status, ACCEPTABLE),
     ))
     .returning({ id: orders.id, status: orders.status })
@@ -147,6 +150,7 @@ export async function collectDelivery(db: Db, driverUserId: string, orderId: str
     .where(and(
       eq(orders.id, orderId),
       eq(orders.driverId, driverUserId),
+      isNull(orders.batchId),
       inArray(orders.status, COLLECTIBLE),
     ))
     .returning()

@@ -283,7 +283,7 @@ export async function createOrder(
         const [paid] = await db.select().from(orders).where(eq(orders.id, order.id))
         return { order: paid!, payment: null }
       }
-      await db.update(orders).set({ status: 'CANCELLED', cancelReason: 'Cartão recusado' }).where(eq(orders.id, order.id))
+      await db.update(orders).set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cartão recusado' }).where(eq(orders.id, order.id))
       await addEvent(db, order.id, 'CANCELLED', 'SYSTEM', null, `cartão recusado: ${result.statusDetail}`)
       throw new PaymentError('Cartão recusado — verifique os dados ou tente outro método', 402)
     }
@@ -292,7 +292,7 @@ export async function createOrder(
       // gateway falhou APÓS insert do pedido → cancela pra não deixar órfão AWAITING_PAYMENT
       await db
         .update(orders)
-        .set({ status: 'CANCELLED', cancelReason: 'Falha no gateway de pagamento' })
+        .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Falha no gateway de pagamento' })
         .where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
       await addEvent(db, order.id, 'CANCELLED', 'SYSTEM', null, 'Falha no gateway de pagamento')
     }
