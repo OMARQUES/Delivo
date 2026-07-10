@@ -26,7 +26,9 @@ import {
   listAvailableBatches,
   releaseBatch,
 } from '../services/batch.service'
-import { confirmLink, listDriverLinks, StoreDriverError } from '../services/store-driver.service'
+import {
+  confirmLink, confirmLinkTermsChange, listDriverLinks, rejectLinkTermsChange, StoreDriverError,
+} from '../services/store-driver.service'
 import { endShift, getActiveShift, ShiftError, startShift } from '../services/shift.service'
 
 export const driverRoutes = createRouter()
@@ -53,6 +55,20 @@ driverRoutes.openapi(createRoute({
   method: 'post', path: '/driver/links/{id}/confirm', request: { params: IdParam },
   responses: { 200: { description: 'Vínculo confirmado', content: { 'application/json': { schema: Out } } } },
 }), async (c) => c.json(await confirmLink(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/links/{id}/terms/confirm', request: { params: IdParam },
+  responses: { 200: { description: 'Novos termos confirmados', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await confirmLinkTermsChange(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/links/{id}/terms/reject', request: { params: IdParam },
+  responses: { 200: { description: 'Novos termos recusados', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await rejectLinkTermsChange(
   c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
 ).catch(rethrow), 200))
 

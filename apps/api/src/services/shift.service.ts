@@ -1,8 +1,8 @@
 import { and, desc, eq } from 'drizzle-orm'
 import { haversineKm, SHIFT_START_RADIUS_KM } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { driverShifts, storeDrivers, stores, users, type DriverSchedule } from '../db/schema'
-import { recordShiftDaily } from './finance.service'
+import { driverShifts, orders, storeDrivers, stores, users, type DriverSchedule } from '../db/schema'
+import { recordPerDeliveryAdjustment, recordShiftDaily } from './finance.service'
 
 export class ShiftError extends Error {
   constructor(message: string, public status: 400 | 404 | 409 = 409) {
@@ -99,6 +99,52 @@ export function endShift(db: Db, driverUserId: string, shiftId: string) {
 
 export function releaseShift(db: Db, storeId: string, shiftId: string) {
   return closeShift(db, shiftId, { storeId }, 'STORE')
+}
+
+export async function updateActiveShift(
+  db: Db,
+  storeId: string,
+  shiftId: string,
+  input: { dailyRateCents?: number; perDeliveryCents?: number; applyRetroactive?: boolean },
+) {
+  return db.transaction(async (tx) => {
+    const [shift] = await tx.select().from(driverShifts).where(and(
+      eq(driverShifts.id, shiftId),
+      eq(driverShifts.storeId, storeId),
+      eq(driverShifts.status, 'ACTIVE'),
+    )).for('update')
+    if (!shift) throw new ShiftError('Turno ativo não encontrado', 404)
+
+    const dailyRateCents = input.dailyRateCents ?? shift.dailyRateCents
+    const perDeliveryCents = input.perDeliveryCents ?? shift.perDeliveryCents
+    const hasChange = dailyRateCents !== shift.dailyRateCents || perDeliveryCents !== shift.perDeliveryCents
+    if (!hasChange && !input.applyRetroactive) return shift
+
+    const adjustmentSeq = shift.adjustmentSeq + 1
+    const [updated] = await tx.update(driverShifts).set({
+      dailyRateCents,
+      perDeliveryCents,
+      adjustmentSeq,
+    }).where(and(eq(driverShifts.id, shiftId), eq(driverShifts.status, 'ACTIVE'))).returning()
+    if (!updated) throw new ShiftError('Turno mudou — recarregue', 409)
+
+    if (input.applyRetroactive) {
+      // O lock do turno serializa este bloco com completeDelivery. Os locks dos
+      // pedidos garantem que todo DELIVERED visto aqui já possui ledger base.
+      const delivered = await tx.select({ id: orders.id }).from(orders).where(and(
+        eq(orders.shiftId, shiftId),
+        eq(orders.status, 'DELIVERED'),
+      )).for('update')
+      await recordPerDeliveryAdjustment(tx, {
+        seq: adjustmentSeq,
+        storeId,
+        driverUserId: shift.driverUserId,
+        orderIds: delivered.map((order) => order.id),
+        targetPerDeliveryCents: perDeliveryCents,
+      })
+    }
+    return updated
+  })
 }
 
 export async function listActiveStoreShifts(db: Db, storeId: string) {

@@ -15,6 +15,10 @@ type Link = {
   dailyRateCents: number
   perDeliveryCents: number
   schedule: ScheduleItem[]
+  pendingDailyRateCents: number | null
+  pendingPerDeliveryCents: number | null
+  pendingSchedule: ScheduleItem[] | null
+  pendingProposedAt: string | null
 }
 const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 function daysLabel(schedule: ScheduleItem[]) {
@@ -30,6 +34,14 @@ async function load() {
 async function confirm(id: string) {
   try { await api(`/driver/links/${id}/confirm`, { method: 'POST' }); await load(); await reloadDriverBar() }
   catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
+async function decideTerms(id: string, decision: 'confirm' | 'reject') {
+  error.value = ''
+  try {
+    await api(`/driver/links/${id}/terms/${decision}`, { method: 'POST' })
+    await load()
+    await reloadDriverBar()
+  } catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
 }
 onMounted(load)
 </script>
@@ -50,6 +62,12 @@ onMounted(load)
         <p class="mt-2 text-sm">Diária {{ formatBRL(link.dailyRateCents) }} · extra {{ formatBRL(link.perDeliveryCents) }}/entrega</p>
         <p class="text-xs text-gray-500">🗓️ {{ daysLabel(link.schedule) }}</p>
         <button v-if="link.status === 'INVITED'" class="mt-2 w-full rounded bg-black p-2 text-white" @click="confirm(link.id)">Confirmar convite</button>
+        <div v-if="link.pendingProposedAt && link.pendingSchedule" class="mt-3 rounded border border-yellow-300 bg-yellow-50 p-3 text-sm">
+          <p class="font-semibold">🔔 A loja propôs novos termos</p>
+          <p class="mt-1 text-xs text-gray-600">Atual: {{ formatBRL(link.dailyRateCents) }}/dia + {{ formatBRL(link.perDeliveryCents) }}/entrega · {{ daysLabel(link.schedule) }}</p>
+          <p class="text-xs">Novo: {{ formatBRL(link.pendingDailyRateCents!) }}/dia + {{ formatBRL(link.pendingPerDeliveryCents!) }}/entrega · {{ daysLabel(link.pendingSchedule) }}</p>
+          <div class="mt-2 flex gap-2"><button class="flex-1 rounded border bg-white p-2" @click="decideTerms(link.id, 'reject')">Recusar</button><button class="flex-1 rounded bg-black p-2 text-white" @click="decideTerms(link.id, 'confirm')">Aceitar</button></div>
+        </div>
       </li>
     </ul>
   </main>

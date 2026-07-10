@@ -1,15 +1,15 @@
 import type { Context } from 'hono'
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
-import { InviteStoreDriverSchema, UpdateStoreDriverTermsSchema } from '@delivery/shared/schemas'
+import { AdjustActiveShiftSchema, InviteStoreDriverSchema, UpdateStoreDriverTermsSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import type { AppContext } from '../env'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreByOwner } from '../services/store.service'
 import {
-  inviteDriver, listStoreDrivers, removeLink, StoreDriverError, updateLinkTerms,
+  inviteDriver, listStoreDrivers, proposeLinkTerms, removeLink, StoreDriverError,
 } from '../services/store-driver.service'
-import { listActiveStoreShifts, releaseShift, ShiftError } from '../services/shift.service'
+import { listActiveStoreShifts, releaseShift, ShiftError, updateActiveShift } from '../services/shift.service'
 
 export const storeDriverRoutes = createRouter()
 storeDriverRoutes.use('/store/*', authMiddleware, requireRole('STORE'))
@@ -47,8 +47,8 @@ storeDriverRoutes.openapi(createRoute({
 storeDriverRoutes.openapi(createRoute({
   method: 'patch', path: '/store/me/drivers/{id}', request: {
     params: IdParam, body: { content: { 'application/json': { schema: UpdateStoreDriverTermsSchema } } },
-  }, responses: { 200: { description: 'Termos atualizados', content: { 'application/json': { schema: Out } } } },
-}), async (c) => c.json(await updateLinkTerms(
+  }, responses: { 200: { description: 'Alteração de termos proposta', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await proposeLinkTerms(
   c.get('db'), await ownStoreId(c), c.req.valid('param').id, c.req.valid('json'),
 ).catch(rethrow), 200))
 
@@ -61,6 +61,14 @@ storeDriverRoutes.openapi(createRoute({
   method: 'get', path: '/store/me/shifts',
   responses: { 200: { description: 'Turnos ativos', content: { 'application/json': { schema: z.array(Out) } } } },
 }), async (c) => c.json(await listActiveStoreShifts(c.get('db'), await ownStoreId(c)), 200))
+
+storeDriverRoutes.openapi(createRoute({
+  method: 'patch', path: '/store/me/shifts/{id}', request: {
+    params: IdParam, body: { content: { 'application/json': { schema: AdjustActiveShiftSchema } } },
+  }, responses: { 200: { description: 'Turno reajustado', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await updateActiveShift(
+  c.get('db'), await ownStoreId(c), c.req.valid('param').id, c.req.valid('json'),
+).catch(rethrow), 200))
 
 storeDriverRoutes.openapi(createRoute({
   method: 'post', path: '/store/me/shifts/{id}/release', request: { params: IdParam },

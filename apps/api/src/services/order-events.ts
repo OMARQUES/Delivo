@@ -3,7 +3,7 @@ import type { Db } from '../db/client'
 import { orderEvents } from '../db/schema'
 
 export async function addEvent(
-  db: Db,
+  db: Pick<Db, 'insert'>,
   orderId: string,
   status: OrderStatus,
   actorRole: string,

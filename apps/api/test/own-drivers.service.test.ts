@@ -7,8 +7,11 @@ import { createStoreWithOwner, updateStore } from '../src/services/store.service
 import { createAddress } from '../src/services/address.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
-import { confirmLink, inviteDriver, removeLink, updateLinkTerms } from '../src/services/store-driver.service'
-import { endShift, startShift } from '../src/services/shift.service'
+import {
+  confirmLink, confirmLinkTermsChange, inviteDriver, proposeLinkTerms,
+  rejectLinkTermsChange, removeLink,
+} from '../src/services/store-driver.service'
+import { endShift, startShift, updateActiveShift } from '../src/services/shift.service'
 import { requestDriver, requestDriverOwn, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import {
   acceptDelivery, acceptShiftDelivery, collectDelivery, completeDelivery,
@@ -63,6 +66,17 @@ async function makeOrder(paymentMethod: 'CASH' | 'PIX_ONLINE' = 'CASH') {
   return order
 }
 
+async function deliverOwn() {
+  const order = await makeOrder('CASH')
+  await requestDriverOwn(testDb, storeId, order.id)
+  await acceptShiftDelivery(testDb, driverId, order.id)
+  await storeUpdateOrderStatus(testDb, storeId, order.id, 'PREPARING', customerId)
+  await storeUpdateOrderStatus(testDb, storeId, order.id, 'READY', customerId)
+  await collectDelivery(testDb, driverId, order.id)
+  await completeDelivery(testDb, driverId, order.id)
+  return order
+}
+
 describe('entregadores próprios', () => {
   it('isola o broadcast, congela valores e lança extra + diária de forma idempotente', async () => {
     const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
@@ -71,7 +85,7 @@ describe('entregadores próprios', () => {
     await confirmLink(testDb, driverId, link.id)
     await expect(startShift(testDb, driverId, storeId, { lat: -24.55, lng: -51.9 })).rejects.toThrow('fora do raio')
     const shift = await startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })
-    await updateLinkTerms(testDb, storeId, link.id, { dailyRateCents: 20_000, perDeliveryCents: 2_000 })
+    await proposeLinkTerms(testDb, storeId, link.id, { dailyRateCents: 20_000, perDeliveryCents: 2_000 })
     expect(shift).toMatchObject({ dailyRateCents: 8_000, perDeliveryCents: 700, status: 'ACTIVE' })
     await expect(startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })).rejects.toThrow('turno')
 
@@ -106,6 +120,74 @@ describe('entregadores próprios', () => {
     expect((await testDb.select().from(driverShifts).where(eq(driverShifts.id, shift.id)))[0]).toMatchObject({ status: 'CLOSED', closedBy: 'DRIVER' })
     await expect(endShift(testDb, driverId, shift.id)).rejects.toThrow('não encontrado')
     expect(await testDb.select().from(ledgerEntries).where(isNull(ledgerEntries.orderId))).toHaveLength(2)
+  })
+
+  it('mantém termos ativos até confirmação e permite recusar a proposta', async () => {
+    const schedule = [{ dow: 1, start: '09:00', end: '18:00' }]
+    const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
+      dailyRateCents: 5_000, perDeliveryCents: 500, schedule,
+    })
+    await confirmLink(testDb, driverId, link.id)
+
+    const proposed = await proposeLinkTerms(testDb, storeId, link.id, {
+      dailyRateCents: 7_000, perDeliveryCents: 800,
+    })
+    expect(proposed).toMatchObject({
+      dailyRateCents: 5_000, perDeliveryCents: 500,
+      pendingDailyRateCents: 7_000, pendingPerDeliveryCents: 800,
+      pendingSchedule: schedule,
+    })
+    expect(proposed.pendingProposedAt).toBeInstanceOf(Date)
+    await expect(confirmLinkTermsChange(testDb, freelanceId, link.id)).rejects.toMatchObject({ status: 404 })
+
+    const confirmed = await confirmLinkTermsChange(testDb, driverId, link.id)
+    expect(confirmed).toMatchObject({
+      dailyRateCents: 7_000, perDeliveryCents: 800,
+      pendingDailyRateCents: null, pendingProposedAt: null,
+    })
+    await expect(confirmLinkTermsChange(testDb, driverId, link.id)).rejects.toThrow('Sem alteração pendente')
+
+    await proposeLinkTerms(testDb, storeId, link.id, { dailyRateCents: 9_000 })
+    const rejected = await rejectLinkTermsChange(testDb, driverId, link.id)
+    expect(rejected).toMatchObject({ dailyRateCents: 7_000, perDeliveryCents: 800, pendingProposedAt: null })
+    await expect(rejectLinkTermsChange(testDb, driverId, link.id)).rejects.toThrow('Sem alteração pendente')
+  })
+
+  it('reconcilia retroativo pelo saldo real de cada pedido e usa novos valores no futuro', async () => {
+    const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
+      dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [],
+    })
+    await confirmLink(testDb, driverId, link.id)
+    const shift = await startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })
+
+    const first = await deliverOwn() // 500
+    await updateActiveShift(testDb, storeId, shift.id, { perDeliveryCents: 700, applyRetroactive: false })
+    const second = await deliverOwn() // 700
+    const adjusted = await updateActiveShift(testDb, storeId, shift.id, {
+      dailyRateCents: 9_000, perDeliveryCents: 800, applyRetroactive: true,
+    })
+    expect(adjusted).toMatchObject({ dailyRateCents: 9_000, perDeliveryCents: 800, adjustmentSeq: 2 })
+
+    const driverCredits = await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.type, 'DRIVER_PER_DELIVERY_CREDIT'))
+    const sumFor = (orderId: string) => driverCredits
+      .filter((entry) => entry.orderId === orderId)
+      .reduce((sum, entry) => sum + entry.amountCents, 0)
+    expect(sumFor(first.id)).toBe(800)
+    expect(sumFor(second.id)).toBe(800)
+
+    const third = await deliverOwn()
+    const afterThird = await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.type, 'DRIVER_PER_DELIVERY_CREDIT'))
+    expect(afterThird.filter((entry) => entry.orderId === third.id).reduce((sum, entry) => sum + entry.amountCents, 0)).toBe(800)
+
+    const countBeforeRetry = afterThird.length
+    await updateActiveShift(testDb, storeId, shift.id, { perDeliveryCents: 800, applyRetroactive: true })
+    expect(await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.type, 'DRIVER_PER_DELIVERY_CREDIT'))).toHaveLength(countBeforeRetry)
+    await expect(updateActiveShift(testDb, crypto.randomUUID(), shift.id, { dailyRateCents: 1 })).rejects.toMatchObject({ status: 404 })
+
+    await endShift(testDb, driverId, shift.id)
+    const daily = await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.type, 'DRIVER_DAILY_RATE_CREDIT'))
+    expect(daily).toHaveLength(1)
+    expect(daily[0]!.amountCents).toBe(9_000)
   })
 
   it('reconvidar após remover reativa o vínculo (não dá 409)', async () => {

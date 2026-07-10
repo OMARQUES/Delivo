@@ -38,7 +38,12 @@ export async function inviteDriver(db: Db, storeId: string, phone: string, terms
   if (existing) {
     if (existing.status !== 'REMOVED') throw new StoreDriverError('Entregador já vinculado à loja', 409)
     const [revived] = await db.update(storeDrivers)
-      .set({ status: 'INVITED', ...terms, updatedAt: new Date() })
+      .set({
+        status: 'INVITED', ...terms,
+        pendingDailyRateCents: null, pendingPerDeliveryCents: null,
+        pendingSchedule: null, pendingProposedAt: null,
+        updatedAt: new Date(),
+      })
       .where(eq(storeDrivers.id, existing.id))
       .returning()
     return revived!
@@ -71,25 +76,87 @@ export async function confirmLink(db: Db, driverUserId: string, linkId: string) 
 
 export async function removeLink(db: Db, storeId: string, linkId: string) {
   const [link] = await db.update(storeDrivers)
-    .set({ status: 'REMOVED', updatedAt: new Date() })
+    .set({
+      status: 'REMOVED',
+      pendingDailyRateCents: null, pendingPerDeliveryCents: null,
+      pendingSchedule: null, pendingProposedAt: null,
+      updatedAt: new Date(),
+    })
     .where(and(eq(storeDrivers.id, linkId), eq(storeDrivers.storeId, storeId)))
     .returning()
   if (!link) throw new StoreDriverError('Vínculo não encontrado', 404)
   return link
 }
 
-export async function updateLinkTerms(
+export async function proposeLinkTerms(
   db: Db,
   storeId: string,
   linkId: string,
   terms: Partial<StoreDriverTerms>,
 ) {
-  const [link] = await db.update(storeDrivers)
-    .set({ ...terms, updatedAt: new Date() })
-    .where(and(eq(storeDrivers.id, linkId), eq(storeDrivers.storeId, storeId)))
-    .returning()
-  if (!link) throw new StoreDriverError('Vínculo não encontrado', 404)
-  return link
+  return db.transaction(async (tx) => {
+    const [link] = await tx.select().from(storeDrivers).where(and(
+      eq(storeDrivers.id, linkId),
+      eq(storeDrivers.storeId, storeId),
+      eq(storeDrivers.status, 'CONFIRMED'),
+    )).for('update')
+    if (!link) throw new StoreDriverError('Vínculo confirmado não encontrado', 404)
+    const [proposed] = await tx.update(storeDrivers).set({
+      pendingDailyRateCents: terms.dailyRateCents ?? link.dailyRateCents,
+      pendingPerDeliveryCents: terms.perDeliveryCents ?? link.perDeliveryCents,
+      pendingSchedule: terms.schedule ?? link.schedule,
+      pendingProposedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(and(eq(storeDrivers.id, linkId), eq(storeDrivers.status, 'CONFIRMED'))).returning()
+    if (!proposed) throw new StoreDriverError('Vínculo mudou — recarregue', 409)
+    return proposed
+  })
+}
+
+export async function confirmLinkTermsChange(db: Db, driverUserId: string, linkId: string) {
+  return db.transaction(async (tx) => {
+    const [link] = await tx.select().from(storeDrivers).where(and(
+      eq(storeDrivers.id, linkId),
+      eq(storeDrivers.driverUserId, driverUserId),
+      eq(storeDrivers.status, 'CONFIRMED'),
+    )).for('update')
+    if (!link) throw new StoreDriverError('Vínculo confirmado não encontrado', 404)
+    if (
+      link.pendingProposedAt == null
+      || link.pendingDailyRateCents == null
+      || link.pendingPerDeliveryCents == null
+      || link.pendingSchedule == null
+    ) throw new StoreDriverError('Sem alteração pendente', 409)
+    const [confirmed] = await tx.update(storeDrivers).set({
+      dailyRateCents: link.pendingDailyRateCents,
+      perDeliveryCents: link.pendingPerDeliveryCents,
+      schedule: link.pendingSchedule,
+      pendingDailyRateCents: null, pendingPerDeliveryCents: null,
+      pendingSchedule: null, pendingProposedAt: null,
+      updatedAt: new Date(),
+    }).where(and(eq(storeDrivers.id, linkId), eq(storeDrivers.status, 'CONFIRMED'))).returning()
+    if (!confirmed) throw new StoreDriverError('Vínculo mudou — recarregue', 409)
+    return confirmed
+  })
+}
+
+export async function rejectLinkTermsChange(db: Db, driverUserId: string, linkId: string) {
+  return db.transaction(async (tx) => {
+    const [link] = await tx.select().from(storeDrivers).where(and(
+      eq(storeDrivers.id, linkId),
+      eq(storeDrivers.driverUserId, driverUserId),
+      eq(storeDrivers.status, 'CONFIRMED'),
+    )).for('update')
+    if (!link) throw new StoreDriverError('Vínculo confirmado não encontrado', 404)
+    if (link.pendingProposedAt == null) throw new StoreDriverError('Sem alteração pendente', 409)
+    const [rejected] = await tx.update(storeDrivers).set({
+      pendingDailyRateCents: null, pendingPerDeliveryCents: null,
+      pendingSchedule: null, pendingProposedAt: null,
+      updatedAt: new Date(),
+    }).where(and(eq(storeDrivers.id, linkId), eq(storeDrivers.status, 'CONFIRMED'))).returning()
+    if (!rejected) throw new StoreDriverError('Vínculo mudou — recarregue', 409)
+    return rejected
+  })
 }
 
 export async function listStoreDrivers(db: Db, storeId: string) {

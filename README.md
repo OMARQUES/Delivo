@@ -24,7 +24,7 @@ pnpm dev:driver  # http://localhost:5174
 
 Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`. Admin cria lojas em `/admin/lojas` e aprova entregadores em `/admin/entregadores`. Cardápio da loja em `/loja/cardapio`; import CSV: `POST /admin/stores/:id/catalog/import` (text/csv). Fluxo de pedido completo: cliente pede, loja gerencia em `/loja/pedidos`, solicita entregador, e o app driver aceita/coleta/entrega.
 
-Entregadores próprios: a loja convida por telefone em `/loja/entregadores`; o entregador confirma em “Minhas lojas”, inicia o turno próximo à loja e passa a receber somente o broadcast daquela loja. Diária e extra por entrega são congelados no início do turno e contabilizados no ledger.
+Entregadores próprios: a loja convida por telefone em `/loja/entregadores`; o entregador confirma em “Minhas lojas”, inicia o turno próximo à loja e passa a receber somente o broadcast daquela loja. Mudanças nos termos do vínculo exigem confirmação do entregador. A loja pode reajustar um turno ativo e, opcionalmente, reconciliar o novo extra nas entregas já concluídas por lançamentos imutáveis no ledger.
 
 ## Verificação
 

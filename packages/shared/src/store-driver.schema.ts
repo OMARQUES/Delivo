@@ -28,3 +28,12 @@ export const StartShiftSchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
 })
+
+export const AdjustActiveShiftSchema = z.object({
+  dailyRateCents: z.number().int().min(0).max(1_000_000).optional(),
+  perDeliveryCents: z.number().int().min(0).max(100_000).optional(),
+  applyRetroactive: z.boolean().optional(),
+}).refine(
+  (value) => value.dailyRateCents != null || value.perDeliveryCents != null || value.applyRetroactive === true,
+  'Informe um novo valor ou solicite o ajuste retroativo',
+)

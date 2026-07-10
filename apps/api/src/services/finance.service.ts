@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { LedgerEntryType } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { driverShifts, ledgerEntries, orders, stores } from '../db/schema'
@@ -20,7 +20,8 @@ function commissionCents(subtotalCents: number, commissionBps: number) {
   return Math.round((subtotalCents * commissionBps) / 10_000)
 }
 
-type LedgerWriter = Pick<Db, 'insert'>
+export type LedgerWriter = Pick<Db, 'insert'>
+type LedgerDb = Pick<Db, 'select' | 'insert'>
 
 async function insertEntries(db: LedgerWriter, entries: LedgerInput[]) {
   for (const entry of entries) {
@@ -28,7 +29,7 @@ async function insertEntries(db: LedgerWriter, entries: LedgerInput[]) {
   }
 }
 
-export async function recordOrderLedger(db: Db, orderId: string) {
+export async function recordOrderLedger(db: LedgerDb, orderId: string) {
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1)
   if (!order) return []
   if (order.status !== 'DELIVERED' && order.status !== 'DELIVERY_FAILED') return []
@@ -150,4 +151,58 @@ export async function recordShiftDaily(
       storeId: shift.storeId,
     },
   ])
+}
+
+/**
+ * Faz cada pedido entregue chegar ao novo valor total de extra. O saldo é lido
+ * do ledger, não do valor anterior do turno: assim funciona mesmo após ajustes
+ * não retroativos e vários valores históricos no mesmo turno.
+ */
+export async function recordPerDeliveryAdjustment(
+  db: LedgerDb,
+  input: {
+    seq: number
+    storeId: string
+    driverUserId: string
+    orderIds: string[]
+    targetPerDeliveryCents: number
+  },
+) {
+  if (input.orderIds.length === 0) return
+  const credits = await db.select({
+    orderId: ledgerEntries.orderId,
+    amountCents: ledgerEntries.amountCents,
+  }).from(ledgerEntries).where(and(
+    inArray(ledgerEntries.orderId, input.orderIds),
+    eq(ledgerEntries.party, 'DRIVER'),
+    eq(ledgerEntries.type, 'DRIVER_PER_DELIVERY_CREDIT'),
+    eq(ledgerEntries.driverId, input.driverUserId),
+  ))
+  const paidByOrder = new Map<string, number>()
+  for (const credit of credits) {
+    if (credit.orderId) paidByOrder.set(
+      credit.orderId,
+      (paidByOrder.get(credit.orderId) ?? 0) + credit.amountCents,
+    )
+  }
+  const entries: LedgerInput[] = []
+  for (const orderId of input.orderIds) {
+    const delta = input.targetPerDeliveryCents - (paidByOrder.get(orderId) ?? 0)
+    if (delta === 0) continue
+    entries.push(
+      {
+        party: 'DRIVER', type: 'DRIVER_PER_DELIVERY_CREDIT', amountCents: delta,
+        description: 'Ajuste de extra por entrega',
+        uniqueKey: `${orderId}:driver-per-delivery-adj:v${input.seq}`,
+        orderId, driverId: input.driverUserId,
+      },
+      {
+        party: 'STORE', type: 'STORE_PER_DELIVERY_DEBIT', amountCents: -delta,
+        description: 'Ajuste de extra por entrega (entregador fixo)',
+        uniqueKey: `${orderId}:store-per-delivery-adj:v${input.seq}`,
+        orderId, storeId: input.storeId,
+      },
+    )
+  }
+  await insertEntries(db, entries)
 }

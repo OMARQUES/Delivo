@@ -6,6 +6,7 @@
 | GPS do início do turno confia no device; detecção de mock/root ainda não existe | Plano ④a | Plano 9 (Capacitor/anti-fraude) |
 | Falha de entrega própria + devolução + eventual meia-taxa não fazem parte do ledger atual | Emenda pós-Plano ④a | Fluxo de devolução |
 | Data operacional do turno usa `America/Sao_Paulo`; lojas em outros fusos exigirão timezone por loja | Review Plano ④a | Antes de expansão multi-fuso |
+| Escala avançada com valor e horário diferentes por dia exige termos financeiros por item da agenda e editor próprio | Plano ④a-2 | Evolução futura de escalas |
 | Pacote: só broadcast (sem escolher entregador específico) — específico depende do Plano ④ (entregadores próprios) | Plano ③ | Plano ④ |
 | Pacote: coleta exige TODOS os pedidos READY (sem coleta parcial) | Plano ③ | Se lojas pedirem coleta parcial |
 | `orders.batchId` sem FK declarada (integridade no service, segue padrão de `driverId`) | Plano ③ | Hardening/deploy |

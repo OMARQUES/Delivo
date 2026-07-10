@@ -225,19 +225,29 @@ export async function collectDelivery(db: Db, driverUserId: string, orderId: str
 }
 
 export async function completeDelivery(db: Db, driverUserId: string, orderId: string) {
-  const rows = await db
-    .update(orders)
-    .set({ status: 'DELIVERED' })
-    .where(and(
+  return db.transaction(async (tx) => {
+    const [candidate] = await tx.select({ shiftId: orders.shiftId }).from(orders).where(and(
       eq(orders.id, orderId),
       eq(orders.driverId, driverUserId),
       eq(orders.status, 'OUT_FOR_DELIVERY'),
-    ))
-    .returning()
-  if (rows.length === 0) throw new DispatchError('Pedido não está em rota', 409)
-  await addEvent(db, orderId, 'DELIVERED', 'DRIVER', driverUserId)
-  await recordOrderLedger(db, orderId)
-  return rows[0]!
+    )).limit(1)
+    if (!candidate) throw new DispatchError('Pedido não está em rota', 409)
+    // Ordem global dos locks: turno -> pedido. updateActiveShift usa a mesma
+    // ordem, evitando que reajuste e conclusão creditem o mesmo pedido duas vezes.
+    if (candidate.shiftId) {
+      await tx.select({ id: driverShifts.id }).from(driverShifts)
+        .where(eq(driverShifts.id, candidate.shiftId)).for('update')
+    }
+    const [delivered] = await tx.update(orders).set({ status: 'DELIVERED' }).where(and(
+      eq(orders.id, orderId),
+      eq(orders.driverId, driverUserId),
+      eq(orders.status, 'OUT_FOR_DELIVERY'),
+    )).returning()
+    if (!delivered) throw new DispatchError('Pedido não está em rota', 409)
+    await addEvent(tx, orderId, 'DELIVERED', 'DRIVER', driverUserId)
+    await recordOrderLedger(tx, orderId)
+    return delivered
+  })
 }
 
 export async function failDelivery(db: Db, driverUserId: string, orderId: string, input: DeliveryFailInput) {

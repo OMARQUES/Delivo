@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -35,10 +36,27 @@ export const storeDrivers = pgTable(
     dailyRateCents: integer('daily_rate_cents').notNull().default(0),
     perDeliveryCents: integer('per_delivery_cents').notNull().default(0),
     schedule: jsonb('schedule').$type<DriverSchedule>().notNull().default(sql`'[]'::jsonb`),
+    pendingDailyRateCents: integer('pending_daily_rate_cents'),
+    pendingPerDeliveryCents: integer('pending_per_delivery_cents'),
+    pendingSchedule: jsonb('pending_schedule').$type<DriverSchedule>(),
+    pendingProposedAt: timestamp('pending_proposed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   },
-  (t) => [uniqueIndex('store_drivers_unique').on(t.storeId, t.driverUserId)],
+  (t) => [
+    uniqueIndex('store_drivers_unique').on(t.storeId, t.driverUserId),
+    check('store_drivers_pending_terms_complete', sql`(
+      ${t.pendingProposedAt} is null
+      and ${t.pendingDailyRateCents} is null
+      and ${t.pendingPerDeliveryCents} is null
+      and ${t.pendingSchedule} is null
+    ) or (
+      ${t.pendingProposedAt} is not null
+      and ${t.pendingDailyRateCents} is not null
+      and ${t.pendingPerDeliveryCents} is not null
+      and ${t.pendingSchedule} is not null
+    )`),
+  ],
 )
 
 export const driverShifts = pgTable(
@@ -57,6 +75,7 @@ export const driverShifts = pgTable(
     endedAt: timestamp('ended_at', { withTimezone: true }),
     earlyClose: boolean('early_close').notNull().default(false),
     closedBy: shiftClosedBy('closed_by'),
+    adjustmentSeq: integer('adjustment_seq').notNull().default(0),
   },
   (t) => [
     uniqueIndex('driver_shifts_driver_store_day_unique').on(t.driverUserId, t.storeId, t.workDate),
