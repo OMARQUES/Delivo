@@ -78,6 +78,13 @@
       "when": 1783645857227,
       "tag": "0010_card_online_enum",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783682912827,
+      "tag": "0011_unique_nehzno",
+      "breakpoints": true
     }
   ]
 }

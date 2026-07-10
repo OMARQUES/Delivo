@@ -23,7 +23,7 @@ export async function migrateTestDb() {
 
 /** Limpa dados entre testes preservando schema. */
 export async function truncateAll() {
-  await testDb.execute(sql`TRUNCATE TABLE payments, order_events, order_item_options, order_items, orders, customer_addresses, drivers, option_variation_prices, options, option_groups, products, product_categories, refresh_tokens, auth_providers, stores, users CASCADE`)
+  await testDb.execute(sql`TRUNCATE TABLE order_amendment_items, order_amendments, payments, order_events, order_item_options, order_items, orders, customer_addresses, drivers, option_variation_prices, options, option_groups, products, product_categories, refresh_tokens, auth_providers, stores, users CASCADE`)
 }
 
 /** Fecha a conexão. Chamar em afterAll do último suite. */
