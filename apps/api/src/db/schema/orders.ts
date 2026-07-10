@@ -50,6 +50,8 @@ export const orders = pgTable(
     cancelRequestNote: text('cancel_request_note'),
     /** Plano 6 */
     driverId: uuid('driver_id'),
+    /** Plano ③: pacote de entregas (null = pedido avulso). */
+    batchId: uuid('batch_id'),
     /** loja solicitou entregador (broadcast ativo enquanto driverId null) */
     driverRequestedAt: timestamp('driver_requested_at', { withTimezone: true }),
     driverAssignedAt: timestamp('driver_assigned_at', { withTimezone: true }),
@@ -63,6 +65,7 @@ export const orders = pgTable(
     uniqueIndex('orders_idempotency_unique').on(t.customerId, t.idempotencyKey),
     index('orders_store_status_idx').on(t.storeId, t.status),
     index('orders_customer_idx').on(t.customerId, t.createdAt),
+    index('orders_batch_idx').on(t.batchId),
   ],
 )
 
