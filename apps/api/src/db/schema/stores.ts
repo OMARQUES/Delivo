@@ -24,6 +24,7 @@ export const stores = pgTable(
     lng: doublePrecision('lng').notNull(),
     /** chave do objeto no R2 (logos/<uuid>) */
     logoKey: text('logo_key'),
+    pixKey: text('pix_key'),
     deliveryFeeMode: deliveryFeeMode('delivery_fee_mode').notNull().default('FIXED'),
     deliveryFixedFeeCents: integer('delivery_fixed_fee_cents'),
     deliveryMinFeeCents: integer('delivery_min_fee_cents'),

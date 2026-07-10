@@ -64,6 +64,20 @@
       "when": 1783624700364,
       "tag": "0008_tricky_blue_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783645832536,
+      "tag": "0009_thankful_greymalkin",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783645857227,
+      "tag": "0010_card_online_enum",
+      "breakpoints": true
     }
   ]
 }

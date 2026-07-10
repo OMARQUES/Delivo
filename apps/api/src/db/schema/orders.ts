@@ -8,7 +8,7 @@ import { products } from './catalog'
 
 export const orderStatus = pgEnum('order_status', ORDER_STATUSES)
 export const fulfillmentType = pgEnum('fulfillment_type', ['DELIVERY', 'PICKUP'])
-export const paymentMethod = pgEnum('payment_method', ['CASH', 'CARD_MACHINE', 'PIX_ONLINE'])
+export const paymentMethod = pgEnum('payment_method', ['CASH', 'CARD_MACHINE', 'PIX_ONLINE', 'CARD_ONLINE'])
 
 export const customerAddresses = pgTable('customer_addresses', {
   id: uuid('id').primaryKey().defaultRandom(),

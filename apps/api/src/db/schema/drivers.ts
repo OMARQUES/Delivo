@@ -6,6 +6,7 @@ export const drivers = pgTable('drivers', {
   userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
   isAvailable: boolean('is_available').notNull().default(false),
   fcmToken: text('fcm_token'),
+  pixKey: text('pix_key'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 })
