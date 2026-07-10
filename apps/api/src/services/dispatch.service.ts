@@ -35,6 +35,12 @@ export async function setFcmToken(db: Db, userId: string, token: string) {
   return row!
 }
 
+export async function setDriverPixKey(db: Db, userId: string, pixKey: string | null) {
+  await ensureDriverProfile(db, userId)
+  const [row] = await db.update(drivers).set({ pixKey }).where(eq(drivers.userId, userId)).returning()
+  return row!
+}
+
 export async function listAvailableDeliveries(db: Db, driverUserId: string) {
   const profile = await ensureDriverProfile(db, driverUserId)
   if (!profile.isAvailable) return []

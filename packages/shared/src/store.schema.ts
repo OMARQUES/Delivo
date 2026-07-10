@@ -62,6 +62,7 @@ export const StoreUpdateSchema = z
     pickupEtaMinutes: EtaRange.nullable(),
     isPaused: z.boolean(),
     openingHours: OpeningHoursSchema,
+    pixKey: z.string().trim().min(3).max(140).nullable(),
   })
   .partial()
 export type StoreUpdateInput = z.infer<typeof StoreUpdateSchema>

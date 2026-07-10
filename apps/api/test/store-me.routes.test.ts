@@ -55,6 +55,20 @@ describe('GET/PATCH /store/me', () => {
     expect(body.minOrderCents).toBe(2000)
   })
 
+  it('updates pix key for weekly payouts', async () => {
+    const { token } = await makeStore()
+    const patch = await app.request('/store/me', {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pixKey: 'chave@pix.com' }),
+    }, env)
+    expect(patch.status).toBe(200)
+    expect(((await patch.json()) as { pixKey: string }).pixKey).toBe('chave@pix.com')
+
+    const get = await app.request('/store/me', { headers: { Authorization: `Bearer ${token}` } }, env)
+    expect(((await get.json()) as { pixKey: string }).pixKey).toBe('chave@pix.com')
+  })
+
   it('401 anon, 403 CUSTOMER, 404 STORE sem loja', async () => {
     expect((await app.request('/store/me', {}, env)).status).toBe(401)
     const cust = await signAccessToken({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)

@@ -14,6 +14,7 @@ import {
   listDriverDeliveries,
   releaseDelivery,
   setAvailability,
+  setDriverPixKey,
   setFcmToken,
 } from '../services/dispatch.service'
 
@@ -56,6 +57,16 @@ driverRoutes.openapi(
     responses: { 200: { description: 'Salvo', content: { 'application/json': { schema: Out } } } },
   }),
   async (c) => c.json(await setFcmToken(c.get('db'), c.get('auth')!.sub, c.req.valid('json').token), 200),
+)
+
+driverRoutes.openapi(
+  createRoute({
+    method: 'patch',
+    path: '/driver/me/pix-key',
+    request: { body: { content: { 'application/json': { schema: z.object({ pixKey: z.string().trim().min(3).max(140).nullable() }) } } } },
+    responses: { 200: { description: 'Salvo', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await setDriverPixKey(c.get('db'), c.get('auth')!.sub, c.req.valid('json').pixKey), 200),
 )
 
 driverRoutes.openapi(

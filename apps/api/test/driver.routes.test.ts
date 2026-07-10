@@ -97,6 +97,22 @@ function req(path: string, init: RequestInit = {}, token = driverToken) {
 }
 
 describe('driver flow via HTTP', () => {
+  it('saves and clears driver pix key', async () => {
+    const save = await req('/driver/me/pix-key', {
+      method: 'PATCH',
+      body: JSON.stringify({ pixKey: 'driver@pix.com' }),
+    }, driverToken)
+    expect(save.status).toBe(200)
+    expect(((await save.json()) as { pixKey: string }).pixKey).toBe('driver@pix.com')
+
+    const clear = await req('/driver/me/pix-key', {
+      method: 'PATCH',
+      body: JSON.stringify({ pixKey: null }),
+    }, driverToken)
+    expect(clear.status).toBe(200)
+    expect(((await clear.json()) as { pixKey: string | null }).pixKey).toBeNull()
+  })
+
   it('availability toggle + available list + accept + collect + deliver', async () => {
     const order = await makeRequestedOrder()
     const av = await req('/driver/me/availability', { method: 'PATCH', body: JSON.stringify({ isAvailable: true }) }, driverToken)
