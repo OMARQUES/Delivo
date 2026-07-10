@@ -5,6 +5,7 @@ import { CancelRequestSchema, CheckoutSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import { users } from '../db/schema'
 import { createPaymentProvider } from '../lib/mercadopago'
+import { resolvePayerEmail } from '../lib/payer-email'
 import { authMiddleware } from '../middleware/auth'
 import {
   OrderError,
@@ -53,7 +54,7 @@ orderRoutes.openapi(
     const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, sub))
     const result = await createOrder(db, sub, c.req.valid('json'), {
       provider: createPaymentProvider(c.env),
-      payerEmail: user?.email ?? `cliente-${sub.slice(0, 8)}@pedidos.delivo.app`,
+      payerEmail: resolvePayerEmail(c.env, user?.email, sub),
       publicApiUrl: c.env.PUBLIC_API_URL || null,
     }).catch(rethrow)
     return c.json(result, 201)
