@@ -4,6 +4,7 @@ import type { OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { drivers, orderItems, orders, stores, users } from '../db/schema'
 import { addEvent } from './order-status.service'
+import { recordOrderLedger } from './finance.service'
 
 export class DispatchError extends Error {
   constructor(
@@ -166,6 +167,7 @@ export async function completeDelivery(db: Db, driverUserId: string, orderId: st
     .returning()
   if (rows.length === 0) throw new DispatchError('Pedido não está em rota', 409)
   await addEvent(db, orderId, 'DELIVERED', 'DRIVER', driverUserId)
+  await recordOrderLedger(db, orderId)
   return rows[0]!
 }
 
@@ -181,6 +183,7 @@ export async function failDelivery(db: Db, driverUserId: string, orderId: string
     .returning()
   if (rows.length === 0) throw new DispatchError('Pedido não está em rota', 409)
   await addEvent(db, orderId, 'DELIVERY_FAILED', 'DRIVER', driverUserId, input.note ?? input.reason)
+  await recordOrderLedger(db, orderId)
   return rows[0]!
 }
 

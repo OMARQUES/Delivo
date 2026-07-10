@@ -8,9 +8,9 @@ vi.mock('../src/db/client', async () => {
   return { ...actual, createDb: () => ({ db: testDb, client: { end: async () => {} } }) }
 })
 
-import { inArray } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { app } from '../src/app'
-import { users } from '../src/db/schema'
+import { ledgerEntries, users } from '../src/db/schema'
 import { signAccessToken } from '../src/lib/tokens'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
@@ -96,6 +96,13 @@ function req(path: string, init: RequestInit = {}, token = driverToken) {
   }, env)
 }
 
+async function ledgerSummary(orderId: string) {
+  const rows = await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, orderId))
+  return rows
+    .map((e) => ({ party: e.party, type: e.type, amountCents: e.amountCents }))
+    .sort((a, b) => `${a.party}:${a.type}`.localeCompare(`${b.party}:${b.type}`))
+}
+
 describe('driver flow via HTTP', () => {
   it('saves and clears driver pix key', async () => {
     const save = await req('/driver/me/pix-key', {
@@ -132,6 +139,10 @@ describe('driver flow via HTTP', () => {
     }
     expect((await req(`/driver/orders/${order.id}/collect`, { method: 'POST' }, driverToken)).status).toBe(200)
     expect((await req(`/driver/orders/${order.id}/deliver`, { method: 'POST' }, driverToken)).status).toBe(200)
+    expect(await ledgerSummary(order.id)).toEqual([
+      { party: 'DRIVER', type: 'DRIVER_DELIVERY_CREDIT', amountCents: 500 },
+      { party: 'STORE', type: 'STORE_DRIVER_FEE_DEBIT', amountCents: -500 },
+    ])
     const done = await req('/driver/deliveries?scope=done', {}, driverToken)
     expect(((await done.json()) as unknown[]).length).toBe(1)
   })
@@ -152,6 +163,9 @@ describe('driver flow via HTTP', () => {
     }, driverToken)
     expect(fail.status).toBe(200)
     expect(((await fail.json()) as { failReason: string }).failReason).toBe('WRONG_ADDRESS')
+    expect(await ledgerSummary(order.id)).toEqual([
+      { party: 'DRIVER', type: 'DRIVER_DELIVERY_CREDIT', amountCents: 500 },
+    ])
     expect((await req('/driver/available', {}, customerToken)).status).toBe(403)
     expect((await app.request('/driver/available', {}, env)).status).toBe(401)
     expect((await req('/driver/me/fcm-token', { method: 'POST', body: JSON.stringify({ token: 'tok-1234567890' }) }, driverToken)).status).toBe(200)

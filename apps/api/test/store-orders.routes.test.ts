@@ -9,7 +9,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { orders, users } from '../src/db/schema'
+import { ledgerEntries, orders, users } from '../src/db/schema'
 import type { PaymentProvider } from '../src/lib/payment-provider'
 import * as mp from '../src/lib/mercadopago'
 import { signAccessToken } from '../src/lib/tokens'
@@ -247,9 +247,14 @@ describe('PATCH /store/me/orders/:id/status', () => {
 
   it('pickup: READY -> DELIVERED direct', async () => {
     const { order: o } = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
+    await testDb.update(orders).set({ paymentMethod: 'PIX_ONLINE' }).where(eq(orders.id, o.id))
     for (const to of ['ACCEPTED', 'PREPARING', 'READY', 'DELIVERED']) {
       expect((await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })).status).toBe(200)
     }
+    const entries = await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, o.id))
+    expect(entries.map((e) => ({ party: e.party, type: e.type, amountCents: e.amountCents }))).toEqual([
+      { party: 'STORE', type: 'STORE_SALE_CREDIT', amountCents: o.subtotalCents },
+    ])
   })
 
   it('delivery com entregador: loja não finaliza cliente; pickup continua finalizável', async () => {

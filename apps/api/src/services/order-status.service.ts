@@ -7,6 +7,7 @@ import { OrderError } from './order.service'
 import { addEvent } from './order-events'
 import { refundOrderPaymentIfAny } from './payment.service'
 import { expirePendingAmendment, getPendingAmendment } from './amendment.service'
+import { recordOrderLedger } from './finance.service'
 
 export { addEvent } from './order-events'
 
@@ -140,6 +141,7 @@ export async function storeUpdateOrderStatus(
     await expirePendingAmendment(db, orderId)
     await refundOrderPaymentIfAny(db, provider ?? null, orderId)
   }
+  if (to === 'DELIVERED') await recordOrderLedger(db, orderId)
   let final = rows[0]!
   if (to === 'READY' && final.driverRequestedAt && !final.driverId) {
     const auto = await db
