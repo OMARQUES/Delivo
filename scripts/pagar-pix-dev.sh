@@ -45,4 +45,8 @@ SELECT
 EOF
 )
 
-echo "$SQL" | docker compose exec -T postgres psql -U postgres -d delivery -v arg="$ARG" -t -A
+# terminal do VS Code flatpak não enxerga o docker do host — usa flatpak-spawn
+DOCKER="docker"
+command -v docker >/dev/null 2>&1 || DOCKER="flatpak-spawn --host docker"
+
+echo "$SQL" | $DOCKER compose exec -T postgres psql -U postgres -d delivery -v arg="$ARG" -t -A
