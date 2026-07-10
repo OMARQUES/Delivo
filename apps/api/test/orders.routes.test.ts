@@ -10,12 +10,12 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { orders, users } from '../src/db/schema'
-import type { CardPaymentResult } from '../src/lib/payment-provider'
+import { type CardPaymentResult, PaymentProviderError } from '../src/lib/payment-provider'
 import * as mp from '../src/lib/mercadopago'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
-import { createOrder } from '../src/services/order.service'
+import { createOrder, listCustomerOrders } from '../src/services/order.service'
 import { requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 
@@ -204,6 +204,23 @@ describe('POST /orders/quote + POST /orders', () => {
       })),
     }, customerToken)
     expect(bad.status).toBe(402)
+    vi.restoreAllMocks()
+  })
+
+  it('PIX_ONLINE gateway down -> 503 + order CANCELLED (no orphan)', async () => {
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
+      createPixPayment: async () => { throw new PaymentProviderError('down', 502) },
+      createCardPayment: async () => { throw new Error('not used') },
+      getPayment: async () => ({ providerPaymentId: 'x', status: 'PENDING' }),
+      refundPayment: async () => {},
+      cancelPayment: async () => {},
+    })
+    const res = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({ paymentMethod: 'PIX_ONLINE' })) }, customerToken)
+    expect(res.status).toBe(503)
+    const list = await listCustomerOrders(testDb, customerId)
+    expect(list.length).toBe(1)
+    expect(list[0]!.status).toBe('CANCELLED')
+    expect(list[0]!.cancelReason).toBe('Falha no gateway de pagamento')
     vi.restoreAllMocks()
   })
 

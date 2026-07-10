@@ -6,6 +6,7 @@ import { createRouter } from '../app-factory'
 import { users } from '../db/schema'
 import { createPaymentProvider } from '../lib/mercadopago'
 import { resolvePayerEmail } from '../lib/payer-email'
+import { PaymentProviderError } from '../lib/payment-provider'
 import { authMiddleware } from '../middleware/auth'
 import {
   OrderError,
@@ -24,6 +25,10 @@ orderRoutes.use('/orders', authMiddleware)
 
 function rethrow(e: unknown): never {
   if (e instanceof OrderError || e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof PaymentProviderError)
+    throw new HTTPException(e.status === 402 ? 402 : 503, {
+      message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega',
+    })
   throw e
 }
 

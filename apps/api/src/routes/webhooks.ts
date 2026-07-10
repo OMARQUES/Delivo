@@ -11,6 +11,13 @@ import { confirmPaymentApproved } from '../services/payment.service'
  */
 export const webhookRoutes = new Hono<AppContext>()
 
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
+}
+
 async function hmacHex(secret: string, manifest: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     'raw',
@@ -40,7 +47,7 @@ webhookRoutes.post('/webhooks/mercadopago', async (c) => {
   if (!ts || !v1) return c.json({ error: 'Assinatura ausente' }, 401)
   const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`
   const expected = await hmacHex(secret, manifest)
-  if (expected !== v1) return c.json({ error: 'Assinatura inválida' }, 401)
+  if (!timingSafeEqualHex(expected, v1)) return c.json({ error: 'Assinatura inválida' }, 401)
 
   try {
     const payment = await provider.getPayment(dataId)

@@ -17,7 +17,7 @@ import {
   stores,
   users,
 } from '../db/schema'
-import type { PaymentProvider } from '../lib/payment-provider'
+import { type PaymentProvider, PaymentProviderError } from '../lib/payment-provider'
 import { getAddress } from './address.service'
 import { getMenuProductsByIds } from './catalog.service'
 import { addEvent } from './order-events'
@@ -256,34 +256,46 @@ export async function createOrder(
     throw e
   }
 
-  if (input.paymentMethod === 'PIX_ONLINE') {
-    const payment = await createPixPaymentForOrder(db, paymentCtx!.provider!, order, paymentCtx!.payerEmail, paymentCtx!.publicApiUrl)
-    return {
-      order,
-      payment: { qrCode: payment.qrCode!, qrCodeBase64: payment.qrCodeBase64!, expiresAt: payment.expiresAt!.toISOString() },
+  try {
+    if (input.paymentMethod === 'PIX_ONLINE') {
+      const payment = await createPixPaymentForOrder(db, paymentCtx!.provider!, order, paymentCtx!.payerEmail, paymentCtx!.publicApiUrl)
+      return {
+        order,
+        payment: { qrCode: payment.qrCode!, qrCodeBase64: payment.qrCodeBase64!, expiresAt: payment.expiresAt!.toISOString() },
+      }
     }
-  }
 
-  if (input.paymentMethod === 'CARD_ONLINE') {
-    const result = await paymentCtx!.provider!.createCardPayment({
-      orderId: order.id,
-      amountCents: order.totalCents,
-      description: 'Pedido Delivo',
-      payerEmail: paymentCtx!.payerEmail,
-      cardToken: input.cardToken!,
-      cardPaymentMethodId: input.cardPaymentMethodId!,
-      installments: input.installments ?? 1,
-    })
-    await recordCardPayment(db, order.id, order.totalCents, result.providerPaymentId, result.status === 'APPROVED')
-    if (result.status === 'APPROVED') {
-      await db.update(orders).set({ status: 'PENDING' }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
-      await addEvent(db, order.id, 'PENDING', 'SYSTEM', null, 'pagamento confirmado (cartão)')
-      const [paid] = await db.select().from(orders).where(eq(orders.id, order.id))
-      return { order: paid!, payment: null }
+    if (input.paymentMethod === 'CARD_ONLINE') {
+      const result = await paymentCtx!.provider!.createCardPayment({
+        orderId: order.id,
+        amountCents: order.totalCents,
+        description: 'Pedido Delivo',
+        payerEmail: paymentCtx!.payerEmail,
+        cardToken: input.cardToken!,
+        cardPaymentMethodId: input.cardPaymentMethodId!,
+        installments: input.installments ?? 1,
+      })
+      await recordCardPayment(db, order.id, order.totalCents, result.providerPaymentId, result.status === 'APPROVED')
+      if (result.status === 'APPROVED') {
+        await db.update(orders).set({ status: 'PENDING' }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
+        await addEvent(db, order.id, 'PENDING', 'SYSTEM', null, 'pagamento confirmado (cartão)')
+        const [paid] = await db.select().from(orders).where(eq(orders.id, order.id))
+        return { order: paid!, payment: null }
+      }
+      await db.update(orders).set({ status: 'CANCELLED', cancelReason: 'Cartão recusado' }).where(eq(orders.id, order.id))
+      await addEvent(db, order.id, 'CANCELLED', 'SYSTEM', null, `cartão recusado: ${result.statusDetail}`)
+      throw new PaymentError('Cartão recusado — verifique os dados ou tente outro método', 402)
     }
-    await db.update(orders).set({ status: 'CANCELLED', cancelReason: 'Cartão recusado' }).where(eq(orders.id, order.id))
-    await addEvent(db, order.id, 'CANCELLED', 'SYSTEM', null, `cartão recusado: ${result.statusDetail}`)
-    throw new PaymentError('Cartão recusado — verifique os dados ou tente outro método', 402)
+  } catch (e) {
+    if (e instanceof PaymentProviderError) {
+      // gateway falhou APÓS insert do pedido → cancela pra não deixar órfão AWAITING_PAYMENT
+      await db
+        .update(orders)
+        .set({ status: 'CANCELLED', cancelReason: 'Falha no gateway de pagamento' })
+        .where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
+      await addEvent(db, order.id, 'CANCELLED', 'SYSTEM', null, 'Falha no gateway de pagamento')
+    }
+    throw e
   }
 
   return { order, payment: null }
