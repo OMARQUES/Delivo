@@ -37,7 +37,8 @@
 | minMenuPrice ignora FLAVOR-only (produto só-sabores mostra "a partir de" pela base) — by-spec, revisar exibição | Review Prod T2 | Plano Design/UX |
 | Painel: swap de ordenação usa índices do array como sortIndex — gaps podem gerar empate momentâneo | Review Prod T9 | Oportunista |
 | Modal: checkbox acima do max não re-renderiza (desync visual, preço correto) + produto indisponível abre modal | Review Prod T11 | Plano Pedidos (cart) |
-| Amendment (item em falta, aprovação do cliente, ajuste de total) adiado — Plano 5b dedicado | Plano Pedidos | Plano 5b (antes do Dispatch idealmente) |
+| Amendment só REDUZ itens (não adiciona/troca) — adicionar item = pedido novo | Plano 5b | Se lojas pedirem |
+| Amendment em pedido cash: diferença só informativa (cobra novo total na porta) | Plano 5b | Aceito |
 | Beep da loja depende de aba aberta + polling 15s — FCM/push real no Plano 6 | Plano Pedidos | Plano 6 |
 | Re-notificação da loja (10/20min) antes do auto-cancel 30min não implementada (só o cancel) — precisa canal de push | Plano Pedidos | Plano 6 (FCM) |
 | isFirstOrder faz 1 query por pedido da fila (N+1) — ok em cidade pequena | Plano Pedidos T6 | Se fila crescer |
@@ -48,5 +49,4 @@
 | Pagamentos centralizados na conta MP da plataforma — split nativo/automação = fases futuras (ver runbook) | Plano 7 | Plano 8 (ledger) + futuro split |
 | Webhook exige URL pública (PUBLIC_API_URL) — em dev usar tunnel (cloudflared) ou confirmar via reconsulta; produção resolve no deploy CF | Plano 7 | Deploy prod |
 | Cartão: MVP 1x sem parcelamento; sem 3DS challenge flow | Plano 7 | Se recusas indicarem necessidade |
-| Estorno parcial (amendment) pendente | Plano 7 | Plano 5b |
 | Tracking não tem botão "regenerar PIX" após expirar — cliente refaz o pedido | Plano 7 | UX futura |

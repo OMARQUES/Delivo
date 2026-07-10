@@ -59,7 +59,7 @@ Backend usa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `PUBLIC_API_URL` em `apps/a
 3. ✅ Lojas & Descoberta — cadastro admin, perfil da loja (horário/frete/pin/logo), home pública, deep-link `/:slug`
 4. ✅ Produtos & Cardápio — categorias, produtos, variações, adicionais, meio-a-meio, busca
 5. ✅ Pedidos (core) — carrinho, checkout idempotente, máquina de status, retirada, painel loja, polling
-5b. Amendment — proposta de alteração pela loja, aprovação do cliente
+5b. ✅ Amendment — proposta da loja, aprovação do cliente, estorno parcial
 6. ✅ Dispatch — broadcast FCM, aceite com lock atômico, batching multi-loja/multi-destino, telas driver
 7. ✅ Pagamentos — MP centralizado (PIX+cartão), estornos, webhook
 8. Financeiro — ledger, fatura de comissão, payout semanal

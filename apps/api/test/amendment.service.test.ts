@@ -207,6 +207,20 @@ describe('rejectAmendment', () => {
 })
 
 describe('withdraw + status gate', () => {
+  it('only one wins when customer approve and store withdraw race', async () => {
+    const { orderId, cocaItemId } = await makeAcceptedOrder()
+    await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
+
+    const results = await Promise.allSettled([
+      approveAmendment(testDb, fakeProvider(), customerId, orderId),
+      withdrawAmendment(testDb, storeId, orderId),
+    ])
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1)
+    expect(await getPendingAmendment(testDb, orderId)).toBeNull()
+  })
+
   it('withdraw expires proposal; store status change blocked while pending except CANCELLED', async () => {
     const { orderId, cocaItemId } = await makeAcceptedOrder()
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
