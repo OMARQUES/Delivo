@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
 import type { DeliveryFailInput } from '@delivery/shared/schemas'
 import type { OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
@@ -114,13 +114,12 @@ async function driverOrderDetail(db: Db, driverUserId: string, orderId: string) 
 
 export async function acceptDelivery(db: Db, driverUserId: string, orderId: string) {
   await ensureDriverProfile(db, driverUserId)
-  const [activeShift] = await db.select({ id: driverShifts.id }).from(driverShifts)
-    .where(and(eq(driverShifts.driverUserId, driverUserId), eq(driverShifts.status, 'ACTIVE'))).limit(1)
-  if (activeShift) throw new DispatchError('Encerre o turno antes de aceitar pedidos do pool geral', 409)
-  const rows = await db
-    .update(orders)
-    .set({ driverId: driverUserId, driverAssignedAt: new Date() })
-    .where(and(
+  await db.transaction(async (tx) => {
+    await tx.select({ id: users.id }).from(users).where(eq(users.id, driverUserId)).for('update')
+    const [activeShift] = await tx.select({ id: driverShifts.id }).from(driverShifts)
+      .where(and(eq(driverShifts.driverUserId, driverUserId), eq(driverShifts.status, 'ACTIVE'))).limit(1)
+    if (activeShift) throw new DispatchError('Encerre o turno antes de aceitar pedidos do pool geral', 409)
+    const [accepted] = await tx.update(orders).set({ driverId: driverUserId, driverAssignedAt: new Date() }).where(and(
       eq(orders.id, orderId),
       isNull(orders.driverId),
       isNull(orders.batchId),
@@ -128,10 +127,10 @@ export async function acceptDelivery(db: Db, driverUserId: string, orderId: stri
       eq(orders.driverRequestTarget, 'GENERAL'),
       eq(orders.fulfillment, 'DELIVERY'),
       inArray(orders.status, ACCEPTABLE),
-    ))
-    .returning({ id: orders.id, status: orders.status })
-  if (rows.length === 0) throw new DispatchError('Pedido já foi pego ou não está disponível', 409)
-  await addEvent(db, orderId, rows[0]!.status, 'DRIVER', driverUserId, 'entregador aceitou a entrega')
+    )).returning({ id: orders.id, status: orders.status })
+    if (!accepted) throw new DispatchError('Pedido já foi pego ou não está disponível', 409)
+    await addEvent(tx, orderId, accepted.status, 'DRIVER', driverUserId, 'entregador aceitou a entrega')
+  })
   return driverOrderDetail(db, driverUserId, orderId)
 }
 
@@ -162,6 +161,8 @@ export async function listShiftDeliveries(db: Db, driverUserId: string) {
     status: orders.status,
     deliveryFeeCents: orders.deliveryFeeCents,
     perDeliveryCents: driverShifts.perDeliveryCents,
+    driverRequestTarget: orders.driverRequestTarget,
+    requestedDriverId: orders.requestedDriverId,
     distanceKm: orders.distanceKm,
     createdAt: orders.createdAt,
     storeName: stores.name,
@@ -173,7 +174,11 @@ export async function listShiftDeliveries(db: Db, driverUserId: string) {
     .innerJoin(driverShifts, eq(driverShifts.id, shift.id))
     .where(and(
       eq(orders.storeId, shift.storeId),
-      eq(orders.driverRequestTarget, 'OWN'),
+      or(
+        eq(orders.driverRequestTarget, 'OWN'),
+        and(eq(orders.driverRequestTarget, 'SPECIFIC'), eq(orders.requestedDriverId, driverUserId)),
+      ),
+      isNull(orders.driverRequestRefusedAt),
       isNotNull(orders.driverRequestedAt),
       isNull(orders.driverId),
       isNull(orders.batchId),
@@ -184,28 +189,50 @@ export async function listShiftDeliveries(db: Db, driverUserId: string) {
 }
 
 export async function acceptShiftDelivery(db: Db, driverUserId: string, orderId: string) {
-  const [shift] = await db.select().from(driverShifts).where(and(
-    eq(driverShifts.driverUserId, driverUserId),
-    eq(driverShifts.status, 'ACTIVE'),
-  )).limit(1)
-  if (!shift) throw new DispatchError('Inicie um turno para aceitar esta entrega', 409)
-  const rows = await db.update(orders).set({
-    driverId: driverUserId,
-    shiftId: shift.id,
-    driverAssignedAt: new Date(),
-  }).where(and(
-    eq(orders.id, orderId),
-    eq(orders.storeId, shift.storeId),
-    eq(orders.driverRequestTarget, 'OWN'),
-    isNull(orders.driverId),
-    isNull(orders.batchId),
-    isNotNull(orders.driverRequestedAt),
-    eq(orders.fulfillment, 'DELIVERY'),
-    inArray(orders.status, ACCEPTABLE),
-  )).returning({ id: orders.id, status: orders.status })
-  if (!rows[0]) throw new DispatchError('Pedido já foi pego ou não está disponível para este turno', 409)
-  await addEvent(db, orderId, rows[0].status, 'DRIVER', driverUserId, 'entregador próprio aceitou a entrega')
+  await db.transaction(async (tx) => {
+    const [shift] = await tx.select().from(driverShifts).where(and(
+      eq(driverShifts.driverUserId, driverUserId),
+      eq(driverShifts.status, 'ACTIVE'),
+    )).for('update')
+    if (!shift) throw new DispatchError('Inicie um turno para aceitar esta entrega', 409)
+    const [accepted] = await tx.update(orders).set({
+      driverId: driverUserId,
+      shiftId: shift.id,
+      driverAssignedAt: new Date(),
+    }).where(and(
+      eq(orders.id, orderId),
+      eq(orders.storeId, shift.storeId),
+      or(
+        eq(orders.driverRequestTarget, 'OWN'),
+        and(eq(orders.driverRequestTarget, 'SPECIFIC'), eq(orders.requestedDriverId, driverUserId)),
+      ),
+      isNull(orders.driverRequestRefusedAt),
+      isNull(orders.driverId),
+      isNull(orders.batchId),
+      isNotNull(orders.driverRequestedAt),
+      eq(orders.fulfillment, 'DELIVERY'),
+      inArray(orders.status, ACCEPTABLE),
+    )).returning({ id: orders.id, status: orders.status })
+    if (!accepted) throw new DispatchError('Pedido já foi pego ou não está disponível para este turno', 409)
+    await addEvent(tx, orderId, accepted.status, 'DRIVER', driverUserId, 'entregador próprio aceitou a entrega')
+  })
   return driverOrderDetail(db, driverUserId, orderId)
+}
+
+export async function refuseDirectDelivery(db: Db, driverUserId: string, orderId: string) {
+  return db.transaction(async (tx) => {
+    const [refused] = await tx.update(orders).set({ driverRequestRefusedAt: new Date() }).where(and(
+      eq(orders.id, orderId),
+      eq(orders.driverRequestTarget, 'SPECIFIC'),
+      eq(orders.requestedDriverId, driverUserId),
+      isNull(orders.driverId),
+      isNull(orders.batchId),
+      isNull(orders.driverRequestRefusedAt),
+    )).returning({ id: orders.id, status: orders.status, driverRequestRefusedAt: orders.driverRequestRefusedAt })
+    if (!refused) throw new DispatchError('Pedido não está direcionado a você', 409)
+    await addEvent(tx, orderId, refused.status, 'DRIVER', driverUserId, 'entregador recusou o direcionamento')
+    return refused
+  })
 }
 
 export async function collectDelivery(db: Db, driverUserId: string, orderId: string) {

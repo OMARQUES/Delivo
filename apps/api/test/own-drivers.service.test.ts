@@ -12,10 +12,14 @@ import {
   rejectLinkTermsChange, removeLink,
 } from '../src/services/store-driver.service'
 import { endShift, startShift, updateActiveShift } from '../src/services/shift.service'
-import { requestDriver, requestDriverOwn, storeUpdateOrderStatus } from '../src/services/order-status.service'
+import {
+  listAvailableDriverTokens, listShiftDriverTokens, requestDriver, requestDriverOwn,
+  requestDriverSpecific, storeUpdateOrderStatus,
+} from '../src/services/order-status.service'
 import {
   acceptDelivery, acceptShiftDelivery, collectDelivery, completeDelivery,
-  listAvailableDeliveries, listShiftDeliveries, setAvailability,
+  listAvailableDeliveries, listShiftDeliveries, refuseDirectDelivery,
+  setAvailability, setFcmToken,
 } from '../src/services/dispatch.service'
 import { driverShifts, ledgerEntries, orders, stores, users } from '../src/db/schema'
 
@@ -215,5 +219,52 @@ describe('entregadores próprios', () => {
     await acceptDelivery(testDb, freelanceId, order.id)
     // GENERAL não regride pra OWN
     await expect(requestDriverOwn(testDb, storeId, order.id)).rejects.toThrow()
+  })
+
+  it('direciona a um entregador, permite recusa e redirecionamento explícito', async () => {
+    for (const [id, phone] of [[driverId, '44911111111'], [freelanceId, '44922222222']] as const) {
+      const link = await inviteDriver(testDb, storeId, phone, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [] })
+      await confirmLink(testDb, id, link.id)
+      await startShift(testDb, id, storeId, { lat: -23.55, lng: -51.9 })
+    }
+    await setFcmToken(testDb, driverId, 'token-direto-123')
+    await setFcmToken(testDb, freelanceId, 'token-outro-456')
+    const order = await makeOrder()
+    await requestDriverSpecific(testDb, storeId, order.id, driverId)
+    expect(await listShiftDeliveries(testDb, freelanceId)).toHaveLength(0)
+    expect(await listShiftDeliveries(testDb, driverId)).toMatchObject([
+      { orderId: order.id, driverRequestTarget: 'SPECIFIC', requestedDriverId: driverId },
+    ])
+    await expect(acceptShiftDelivery(testDb, freelanceId, order.id)).rejects.toMatchObject({ status: 409 })
+    await expect(refuseDirectDelivery(testDb, freelanceId, order.id)).rejects.toMatchObject({ status: 409 })
+    await refuseDirectDelivery(testDb, driverId, order.id)
+    expect(await listShiftDeliveries(testDb, driverId)).toHaveLength(0)
+
+    await requestDriverOwn(testDb, storeId, order.id)
+    expect(await listShiftDeliveries(testDb, freelanceId)).toHaveLength(1)
+    await acceptShiftDelivery(testDb, freelanceId, order.id)
+    expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]).toMatchObject({
+      driverId: freelanceId, driverRequestTarget: 'OWN', driverRequestRefusedAt: null,
+    })
+
+    expect(await listShiftDriverTokens(testDb, storeId, driverId)).toEqual(['token-direto-123'])
+    expect(await listAvailableDriverTokens(testDb)).toEqual([])
+  })
+
+  it('serializa início de turno com aceite do pool geral', async () => {
+    const link = await inviteDriver(testDb, storeId, '44911111111', {
+      dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [],
+    })
+    await confirmLink(testDb, driverId, link.id)
+    const order = await makeOrder()
+    await requestDriver(testDb, storeId, order.id)
+    const results = await Promise.allSettled([
+      startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 }),
+      acceptDelivery(testDb, driverId, order.id),
+    ])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const [activeShift] = await testDb.select().from(driverShifts).where(eq(driverShifts.driverUserId, driverId))
+    const [assigned] = await testDb.select().from(orders).where(eq(orders.id, order.id))
+    expect(Boolean(activeShift) && assigned!.driverId === driverId).toBe(false)
   })
 })

@@ -59,6 +59,10 @@ export const orders = pgTable(
     driverRequestedAt: timestamp('driver_requested_at', { withTimezone: true }),
     /** Separa de forma segura o pool geral do broadcast aos próprios. */
     driverRequestTarget: driverRequestTarget('driver_request_target'),
+    /** Alvo individual quando driverRequestTarget = SPECIFIC. */
+    requestedDriverId: uuid('requested_driver_id'),
+    /** O alvo individual recusou; a loja precisa redirecionar explicitamente. */
+    driverRequestRefusedAt: timestamp('driver_request_refused_at', { withTimezone: true }),
     driverAssignedAt: timestamp('driver_assigned_at', { withTimezone: true }),
     /** DELIVERY_FAILED: motivo (enum em shared) */
     failReason: text('fail_reason'),

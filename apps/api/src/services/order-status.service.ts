@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, lt } from 'drizzle-orm'
-import { canTransition, type OrderStatus } from '@delivery/shared/constants'
+import { canTransition, type DriverRequestTarget, type OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { drivers, orders } from '../db/schema'
+import { driverShifts, drivers, orders } from '../db/schema'
 import type { PaymentProvider } from '../lib/payment-provider'
 import { OrderError } from './order.service'
 import { addEvent } from './order-events'
@@ -62,78 +62,89 @@ export async function cancelStalePendingOrders(db: Db, olderThanMinutes = 30, pr
 const STORE_ALLOWED: OrderStatus[] = ['ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']
 const REQUESTABLE_FOR_DRIVER: OrderStatus[] = ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER']
 
-export async function requestDriver(db: Db, storeId: string, orderId: string) {
-  const [order] = await db
-    .select()
-    .from(orders)
-    .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId)))
-  if (!order) throw new OrderError('Pedido não encontrado', 404)
-  if (order.fulfillment !== 'DELIVERY') throw new OrderError('Pedido é retirada — sem entrega', 400)
-  if (order.driverId) throw new OrderError('Pedido já tem entregador', 409)
-  if (order.batchId) throw new OrderError('Pedido já está em um pacote', 409)
-  if (order.status === 'PENDING') throw new OrderError('Aceite o pedido antes de solicitar entregador', 409)
-  if (!REQUESTABLE_FOR_DRIVER.includes(order.status)) throw new OrderError('Pedido não está em andamento', 409)
-  // OWN → GENERAL permitido: escalada EXPLÍCITA da loja pro pool geral (decisão: sem fallback automático)
-  if (order.driverRequestedAt && order.driverRequestTarget !== 'OWN') return order
-
-  const [updated] = await db
-    .update(orders)
-    .set({ driverRequestedAt: new Date(), driverRequestTarget: 'GENERAL' })
-    .where(and(eq(orders.id, orderId), isNull(orders.driverId)))
-    .returning()
-  if (!updated) throw new OrderError('Pedido mudou — recarregue', 409)
-
-  if (updated.status === 'READY') {
-    const rows = await db
-      .update(orders)
-      .set({ status: 'AWAITING_DRIVER' })
-      .where(and(eq(orders.id, orderId), eq(orders.status, 'READY'), isNull(orders.driverId)))
-      .returning()
-    if (rows.length > 0) {
-      await addEvent(db, orderId, 'AWAITING_DRIVER', 'SYSTEM', null, 'aguardando entregador')
-      return rows[0]!
+async function setDriverRequestTarget(
+  db: Db,
+  storeId: string,
+  orderId: string,
+  target: DriverRequestTarget,
+  requestedDriverId?: string,
+) {
+  return db.transaction(async (tx) => {
+    const [order] = await tx.select().from(orders).where(and(
+      eq(orders.id, orderId), eq(orders.storeId, storeId),
+    )).for('update')
+    if (!order) throw new OrderError('Pedido não encontrado', 404)
+    if (order.fulfillment !== 'DELIVERY') throw new OrderError('Pedido é retirada — sem entrega', 400)
+    if (order.driverId) throw new OrderError('Pedido já tem entregador', 409)
+    if (order.batchId) throw new OrderError('Pedido já está em um pacote', 409)
+    if (!REQUESTABLE_FOR_DRIVER.includes(order.status)) {
+      throw new OrderError(order.status === 'PENDING' ? 'Aceite o pedido antes de solicitar entregador' : 'Pedido não está em andamento', 409)
     }
-  }
-  return updated
+    if (order.driverRequestTarget === 'GENERAL' && target !== 'GENERAL') {
+      throw new OrderError('Pedido já foi enviado ao pool geral', 409)
+    }
+    if (target === 'GENERAL' && order.driverRequestTarget === 'GENERAL') return order
+    if (target === 'SPECIFIC') {
+      if (!requestedDriverId) throw new OrderError('Escolha o entregador', 400)
+      const [active] = await tx.select({ id: driverShifts.id }).from(driverShifts).where(and(
+        eq(driverShifts.storeId, storeId),
+        eq(driverShifts.driverUserId, requestedDriverId),
+        eq(driverShifts.status, 'ACTIVE'),
+      )).limit(1)
+      if (!active) throw new OrderError('Entregador não está em turno nesta loja', 409)
+    }
+    const [updated] = await tx.update(orders).set({
+      driverRequestedAt: new Date(),
+      driverRequestTarget: target,
+      requestedDriverId: target === 'SPECIFIC' ? requestedDriverId : null,
+      driverRequestRefusedAt: null,
+    }).where(and(eq(orders.id, orderId), isNull(orders.driverId))).returning()
+    if (!updated) throw new OrderError('Pedido mudou — recarregue', 409)
+    if (updated.status !== 'READY') return updated
+    const [awaiting] = await tx.update(orders).set({ status: 'AWAITING_DRIVER' }).where(and(
+      eq(orders.id, orderId), eq(orders.status, 'READY'), isNull(orders.driverId),
+    )).returning()
+    if (!awaiting) throw new OrderError('Pedido mudou — recarregue', 409)
+    await addEvent(tx, orderId, 'AWAITING_DRIVER', 'SYSTEM', null, 'aguardando entregador')
+    return awaiting
+  })
 }
 
-export async function requestDriverOwn(db: Db, storeId: string, orderId: string) {
-  const [order] = await db.select().from(orders)
-    .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId))).limit(1)
-  if (!order) throw new OrderError('Pedido não encontrado', 404)
-  if (order.fulfillment !== 'DELIVERY') throw new OrderError('Pedido é retirada — sem entrega', 400)
-  if (order.driverId) throw new OrderError('Pedido já tem entregador', 409)
-  if (order.batchId) throw new OrderError('Pedido já está em um pacote', 409)
-  if (!REQUESTABLE_FOR_DRIVER.includes(order.status)) {
-    throw new OrderError(order.status === 'PENDING' ? 'Aceite o pedido antes de solicitar entregador' : 'Pedido não está em andamento', 409)
-  }
-  if (order.driverRequestedAt && order.driverRequestTarget !== 'OWN') {
-    throw new OrderError('Pedido já foi enviado ao pool geral', 409)
-  }
-  const now = new Date()
-  const [updated] = await db.update(orders)
-    .set({ driverRequestedAt: now, driverRequestTarget: 'OWN' })
-    .where(and(eq(orders.id, orderId), isNull(orders.driverId)))
-    .returning()
-  if (!updated) throw new OrderError('Pedido mudou — recarregue', 409)
-  if (updated.status === 'READY') {
-    const [awaiting] = await db.update(orders).set({ status: 'AWAITING_DRIVER' })
-      .where(and(eq(orders.id, orderId), eq(orders.status, 'READY'), isNull(orders.driverId)))
-      .returning()
-    if (awaiting) {
-      await addEvent(db, orderId, 'AWAITING_DRIVER', 'SYSTEM', null, 'aguardando entregador próprio')
-      return awaiting
-    }
-  }
-  return updated
+export function requestDriver(db: Db, storeId: string, orderId: string) {
+  return setDriverRequestTarget(db, storeId, orderId, 'GENERAL')
+}
+
+export function requestDriverOwn(db: Db, storeId: string, orderId: string) {
+  return setDriverRequestTarget(db, storeId, orderId, 'OWN')
+}
+
+export function requestDriverSpecific(db: Db, storeId: string, orderId: string, driverUserId: string) {
+  return setDriverRequestTarget(db, storeId, orderId, 'SPECIFIC', driverUserId)
 }
 
 export async function listAvailableDriverTokens(db: Db): Promise<string[]> {
   const rows = await db
     .select({ fcmToken: drivers.fcmToken })
     .from(drivers)
-    .where(and(eq(drivers.isAvailable, true), isNotNull(drivers.fcmToken)))
+    .leftJoin(driverShifts, and(
+      eq(driverShifts.driverUserId, drivers.userId),
+      eq(driverShifts.status, 'ACTIVE'),
+    ))
+    .where(and(eq(drivers.isAvailable, true), isNotNull(drivers.fcmToken), isNull(driverShifts.id)))
   return rows.map((r) => r.fcmToken!).filter(Boolean)
+}
+
+export async function listShiftDriverTokens(db: Db, storeId: string, driverUserId?: string): Promise<string[]> {
+  const filters = [
+    eq(driverShifts.storeId, storeId),
+    eq(driverShifts.status, 'ACTIVE'),
+    isNotNull(drivers.fcmToken),
+  ]
+  if (driverUserId) filters.push(eq(driverShifts.driverUserId, driverUserId))
+  const rows = await db.select({ fcmToken: drivers.fcmToken }).from(driverShifts)
+    .innerJoin(drivers, eq(drivers.userId, driverShifts.driverUserId))
+    .where(and(...filters))
+  return rows.map((row) => row.fcmToken!).filter(Boolean)
 }
 
 export async function storeUpdateOrderStatus(

@@ -18,7 +18,9 @@ type OrderRow = {
   driverId: string | null
   batchId: string | null
   driverRequestedAt: string | null
-  driverRequestTarget: 'GENERAL' | 'OWN' | null
+  driverRequestTarget: 'GENERAL' | 'OWN' | 'SPECIFIC' | null
+  requestedDriverId: string | null
+  driverRequestRefusedAt: string | null
   paymentMethod: PaymentMethod
   changeForCents: number | null
   totalCents: number
@@ -37,7 +39,11 @@ type Batch = {
   status: BatchStatus
   count: number
   feeTotalCents: number
+  target: 'GENERAL' | 'OWN' | 'SPECIFIC'
+  requestedDriverId: string | null
+  refusedAt: string | null
 }
+type ActiveShift = { id: string; driverUserId: string; driverName: string }
 type Detail = OrderRow & {
   subtotalCents: number
   deliveryFeeCents: number | null
@@ -62,6 +68,7 @@ const amendQty = ref<Record<string, number>>({})
 const amendNote = ref('')
 const selected = ref<Set<string>>(new Set())
 const batches = ref<Batch[]>([])
+const shifts = ref<ActiveShift[]>([])
 let timer: ReturnType<typeof setInterval> | undefined
 let knownPending = new Set<string>()
 let firstLoad = true
@@ -85,10 +92,11 @@ function beep() {
 
 async function load() {
   try {
-    const [a, d, b] = await Promise.all([
+    const [a, d, b, s] = await Promise.all([
       api<OrderRow[]>('/store/me/orders?scope=active'),
       api<OrderRow[]>('/store/me/orders?scope=done'),
       api<Batch[]>('/store/me/batches'),
+      api<ActiveShift[]>('/store/me/shifts'),
     ])
     const pendingIds = new Set(a.filter((o) => o.status === 'PENDING').map((o) => o.id))
     if (!firstLoad && [...pendingIds].some((id) => !knownPending.has(id))) beep()
@@ -97,6 +105,7 @@ async function load() {
     active.value = a
     done.value = d
     batches.value = b
+    shifts.value = s
     selected.value = new Set([...selected.value].filter((id) => a.some((o) => eligibleForBatch(o) && o.id === id)))
     if (detail.value) {
       try {
@@ -171,6 +180,27 @@ async function requestOwn(o: OrderRow) {
   catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
 }
 
+async function requestSpecific(o: OrderRow, driverUserId: string) {
+  if (!driverUserId) return
+  error.value = ''
+  try {
+    await api(`/store/me/orders/${o.id}/request-specific`, {
+      method: 'POST', body: JSON.stringify({ driverUserId }),
+    })
+    await load()
+  } catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
+
+function canChooseTarget(o: OrderRow) {
+  return o.fulfillment === 'DELIVERY' && !o.driverId && !o.batchId
+    && o.driverRequestTarget !== 'GENERAL'
+    && ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER'].includes(o.status)
+}
+
+function requestedName(o: OrderRow) {
+  return shifts.value.find((shift) => shift.driverUserId === o.requestedDriverId)?.driverName ?? 'entregador'
+}
+
 function eligibleForBatch(o: OrderRow) {
   return o.fulfillment === 'DELIVERY'
     && !o.driverId
@@ -196,10 +226,12 @@ async function createBatch() {
   }
 }
 
-async function broadcastBatch(id: string) {
+async function broadcastBatch(id: string, target: 'GENERAL' | 'OWN' | 'SPECIFIC', driverUserId?: string) {
   error.value = ''
   try {
-    await api(`/store/me/batches/${id}/broadcast`, { method: 'POST' })
+    await api(`/store/me/batches/${id}/broadcast`, {
+      method: 'POST', body: JSON.stringify({ target, ...(driverUserId ? { driverUserId } : {}) }),
+    })
     await load()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
@@ -308,9 +340,15 @@ const groups = computed(() => {
       </div>
       <ul v-if="batches.length" class="mt-3 space-y-2 text-sm">
         <li v-for="batch in batches" :key="batch.id" class="flex flex-wrap items-center justify-between gap-2 rounded bg-gray-50 p-2">
-          <span>📦 {{ batch.count }} entregas · {{ formatBRL(batch.feeTotalCents) }} · {{ BATCH_STATUS_LABELS[batch.status] }}</span>
-          <span class="flex gap-2">
-            <button v-if="batch.status === 'OPEN'" class="rounded bg-black px-2 py-1 text-white" @click="broadcastBatch(batch.id)">Enviar pra entregadores</button>
+          <span>📦 {{ batch.count }} entregas · {{ formatBRL(batch.feeTotalCents) }} · {{ BATCH_STATUS_LABELS[batch.status] }}<span v-if="batch.refusedAt" class="ml-2 text-red-600">❌ recusado — escolha outro destino</span></span>
+          <span class="flex flex-wrap gap-2">
+            <template v-if="batch.status === 'OPEN' || (batch.status === 'PENDING' && batch.target !== 'GENERAL')">
+              <button class="rounded border px-2 py-1" @click="broadcastBatch(batch.id, 'GENERAL')">Pool geral</button>
+              <button class="rounded border border-blue-500 px-2 py-1 text-blue-700" @click="broadcastBatch(batch.id, 'OWN')">Meus entregadores</button>
+              <select v-if="shifts.length" class="rounded border px-2 py-1" value="" @change="broadcastBatch(batch.id, 'SPECIFIC', ($event.target as HTMLSelectElement).value)">
+                <option value="" disabled>Entregador específico…</option><option v-for="shift in shifts" :key="shift.id" :value="shift.driverUserId">{{ shift.driverName }}</option>
+              </select>
+            </template>
             <button
               v-if="batch.status === 'OPEN' || batch.status === 'PENDING'"
               class="rounded border border-red-400 px-2 py-1 text-red-600"
@@ -352,25 +390,18 @@ const groups = computed(() => {
             <button v-for="a in actionsFor(o)" :key="a.to" class="rounded bg-black px-2 py-1 text-white" @click="setStatus(o, a.to)">
               {{ a.label }}
             </button>
-            <button
-              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && !o.batchId && !o.driverRequestedAt && ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER'].includes(o.status)"
-              class="rounded border px-2 py-1"
-              @click="requestDriver(o)"
-            >🛵 Solicitar entregador</button>
-            <button
-              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && !o.batchId && !o.driverRequestedAt && ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER'].includes(o.status)"
-              class="rounded border border-blue-500 px-2 py-1 text-blue-700"
-              @click="requestOwn(o)"
-            >🏪 Chamar meus entregadores</button>
-            <span v-else-if="o.fulfillment === 'DELIVERY' && !o.driverId && o.driverRequestedAt" class="rounded bg-blue-100 px-2 py-1 text-xs">
-              aguardando {{ o.driverRequestTarget === 'OWN' ? 'entregador próprio' : 'entregador' }}...
-            </span>
-            <button
-              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && o.driverRequestedAt && o.driverRequestTarget === 'OWN'"
-              class="rounded border px-2 py-1"
-              @click="requestDriver(o)"
-            >🛵 Enviar ao pool geral</button>
-            <span v-else-if="o.driverId && o.status === 'OUT_FOR_DELIVERY'" class="rounded bg-green-100 px-2 py-1 text-xs">
+            <span v-if="o.driverRequestRefusedAt" class="rounded bg-red-100 px-2 py-1 text-xs text-red-700">❌ {{ requestedName(o) }} recusou — escolha outro destino</span>
+            <span v-else-if="!o.driverId && o.driverRequestTarget === 'SPECIFIC'" class="rounded bg-blue-100 px-2 py-1 text-xs">aguardando {{ requestedName(o) }}…</span>
+            <span v-else-if="!o.driverId && o.driverRequestTarget === 'OWN'" class="rounded bg-blue-100 px-2 py-1 text-xs">aguardando entregador próprio…</span>
+            <span v-else-if="!o.driverId && o.driverRequestTarget === 'GENERAL'" class="rounded bg-blue-100 px-2 py-1 text-xs">aguardando pool geral…</span>
+            <template v-if="canChooseTarget(o)">
+              <button class="rounded border px-2 py-1" @click="requestDriver(o)">🛵 Pool geral</button>
+              <button class="rounded border border-blue-500 px-2 py-1 text-blue-700" @click="requestOwn(o)">🏪 Meus entregadores</button>
+              <select v-if="shifts.length" class="rounded border px-2 py-1" value="" @change="requestSpecific(o, ($event.target as HTMLSelectElement).value)">
+                <option value="" disabled>Enviar para…</option><option v-for="shift in shifts" :key="shift.id" :value="shift.driverUserId">{{ shift.driverName }}</option>
+              </select>
+            </template>
+            <span v-if="o.driverId && o.status === 'OUT_FOR_DELIVERY'" class="rounded bg-green-100 px-2 py-1 text-xs">
               entregue ao entregador
             </span>
             <span v-else-if="o.driverId" class="rounded bg-green-100 px-2 py-1 text-xs">entregador a caminho</span>

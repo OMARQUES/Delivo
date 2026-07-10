@@ -2,18 +2,16 @@
 
 | Item | Origem | Dono futuro |
 |---|---|---|
-| Dispatch próprio específico + confirmação explícita antes de fallback ao pool geral | Plano ④a | Plano ④b |
 | GPS do início do turno confia no device; detecção de mock/root ainda não existe | Plano ④a | Plano 9 (Capacitor/anti-fraude) |
 | Falha de entrega própria + devolução + eventual meia-taxa não fazem parte do ledger atual | Emenda pós-Plano ④a | Fluxo de devolução |
 | Data operacional do turno usa `America/Sao_Paulo`; lojas em outros fusos exigirão timezone por loja | Review Plano ④a | Antes de expansão multi-fuso |
 | Escala avançada com valor e horário diferentes por dia exige termos financeiros por item da agenda e editor próprio | Plano ④a-2 | Evolução futura de escalas |
-| Pacote: só broadcast (sem escolher entregador específico) — específico depende do Plano ④ (entregadores próprios) | Plano ③ | Plano ④ |
 | Pacote: coleta exige TODOS os pedidos READY (sem coleta parcial) | Plano ③ | Se lojas pedirem coleta parcial |
 | `orders.batchId` sem FK declarada (integridade no service, segue padrão de `driverId`) | Plano ③ | Hardening/deploy |
 | apps/driver duplica lib/api.ts + stores/auth.ts do web (cópia deliberada) — extrair pra package shared quando doer | Plano Dispatch T8 | Oportunista |
 | FCM: 1 token por entregador (último dispositivo vence); sem retry/cleanup de tokens inválidos | Plano Dispatch T13 | Plano Capacitor |
 | Re-broadcast automático (3-5min) + alerta à loja (10min sem aceite) não implementados — broadcast é a lista viva + FCM one-shot | Plano Dispatch | Plano 8/hardening (cron existe, falta canal loja) |
-| Entregador próprio específico (atribuição direta sem broadcast) fora do ④a | Spec §7.2 | Plano ④b |
+| Ofertas/contrapropostas de valor para entregas continuam fora do dispatch direcionado | Plano ④b | Plano ④c |
 | DELIVERY_FAILED: frete do entregador mantido = regra do ledger (Plano 8); resolution/suporte manual | Spec §5.7 | Plano Financeiro |
 | `updatedAt` via `$onUpdate` é ORM-level; raw SQL bypassa. Avaliar trigger `moddatetime` | Review Task 4 | Plano Financeiro (ledger) |
 | `/docs` + `/openapi.json` expostos sem gate | Review Task 3 | Task 9 (deploy prod) |

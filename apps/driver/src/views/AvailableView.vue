@@ -15,6 +15,8 @@ type Available = {
   storeLat: number
   storeLng: number
   perDeliveryCents?: number
+  driverRequestTarget?: 'OWN' | 'SPECIFIC'
+  requestedDriverId?: string | null
 }
 
 type AvailableBatch = {
@@ -23,6 +25,9 @@ type AvailableBatch = {
   feeTotalCents: number
   storeName: string
   storeAddressText: string
+  target?: 'GENERAL' | 'OWN' | 'SPECIFIC'
+  direct?: boolean
+  estimatedExtraCents?: number
 }
 
 const router = useRouter()
@@ -61,7 +66,7 @@ async function load() {
     inShift.value = Boolean(shift)
     const [rows, packageRows] = await Promise.all([
       api<Available[]>(shift ? '/driver/shift-deliveries' : '/driver/available'),
-      shift ? Promise.resolve([] as AvailableBatch[]) : api<AvailableBatch[]>('/driver/batches'),
+      api<AvailableBatch[]>(shift ? '/driver/shift-batches' : '/driver/batches'),
     ])
     const ids = new Set([...rows.map((r) => `order:${r.orderId}`), ...packageRows.map((b) => `batch:${b.batchId}`)])
     if (available.value && !firstLoad && [...ids].some((id) => !known.has(id))) beep()
@@ -107,6 +112,16 @@ async function acceptBatch(batch: AvailableBatch) {
     accepting.value = ''
   }
 }
+
+async function refuseOrder(orderId: string) {
+  try { await api(`/driver/orders/${orderId}/refuse-direct`, { method: 'POST' }); await load() }
+  catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
+
+async function refuseTargetBatch(batchId: string) {
+  try { await api(`/driver/batches/${batchId}/refuse`, { method: 'POST' }); await load() }
+  catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
 </script>
 
 <template>
@@ -123,11 +138,12 @@ async function acceptBatch(batch: AvailableBatch) {
         <div class="flex items-center justify-between">
           <div>
             <p class="font-semibold">📦 Pacote — {{ batch.count }} entregas</p>
+            <p v-if="batch.direct" class="text-xs font-semibold text-blue-700">📍 Direcionado a você</p>
             <p class="text-xs text-gray-500">{{ batch.storeName }} · coleta: {{ batch.storeAddressText }}</p>
           </div>
           <div class="text-right">
-            <p class="font-bold">{{ formatBRL(batch.feeTotalCents) }}</p>
-            <p class="text-xs text-gray-500">frete total</p>
+            <p class="font-bold">{{ formatBRL(inShift ? (batch.estimatedExtraCents ?? 0) : batch.feeTotalCents) }}</p>
+            <p class="text-xs text-gray-500">{{ inShift ? 'extra estimado' : 'frete total' }}</p>
           </div>
         </div>
         <button
@@ -135,6 +151,7 @@ async function acceptBatch(batch: AvailableBatch) {
           class="mt-2 w-full rounded bg-black p-2 font-semibold text-white disabled:opacity-50"
           @click="acceptBatch(batch)"
         >{{ accepting === batch.batchId ? 'Aceitando...' : 'Aceitar pacote' }}</button>
+        <button v-if="batch.direct" class="mt-2 w-full rounded border border-red-400 p-2 text-red-600" @click="refuseTargetBatch(batch.batchId)">Recusar pacote</button>
       </li>
     </ul>
     <ul class="mt-3 space-y-2">
@@ -142,6 +159,7 @@ async function acceptBatch(batch: AvailableBatch) {
         <div class="flex items-center justify-between">
           <div>
             <p class="font-semibold">{{ o.storeName }}</p>
+            <p v-if="o.driverRequestTarget === 'SPECIFIC'" class="text-xs font-semibold text-blue-700">📍 Direcionado a você</p>
             <p class="text-xs text-gray-500">Coleta: {{ o.storeAddressText }}</p>
             <p class="text-xs text-gray-400">Endereço de entrega liberado após aceitar</p>
             <p v-if="o.distanceKm" class="text-xs text-gray-500">~{{ o.distanceKm.toFixed(1) }} km até o cliente</p>
@@ -158,6 +176,7 @@ async function acceptBatch(batch: AvailableBatch) {
         >
           {{ accepting === o.orderId ? 'Aceitando...' : 'Aceitar entrega' }}
         </button>
+        <button v-if="o.driverRequestTarget === 'SPECIFIC'" class="mt-2 w-full rounded border border-red-400 p-2 text-red-600" @click="refuseOrder(o.orderId)">Recusar</button>
       </li>
     </ul>
   </main>

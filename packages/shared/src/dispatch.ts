@@ -28,7 +28,7 @@ export type ShiftStatus = (typeof SHIFT_STATUSES)[number]
 export const SHIFT_CLOSED_BY = ['DRIVER', 'STORE', 'SYSTEM'] as const
 export type ShiftClosedBy = (typeof SHIFT_CLOSED_BY)[number]
 
-export const DRIVER_REQUEST_TARGETS = ['GENERAL', 'OWN'] as const
+export const DRIVER_REQUEST_TARGETS = ['GENERAL', 'OWN', 'SPECIFIC'] as const
 export type DriverRequestTarget = (typeof DRIVER_REQUEST_TARGETS)[number]
 
 /** Raio máximo, em km, para iniciar um turno. */

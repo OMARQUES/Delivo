@@ -14,6 +14,7 @@ import {
   listAvailableDeliveries,
   listDriverDeliveries,
   listShiftDeliveries,
+  refuseDirectDelivery,
   releaseDelivery,
   setAvailability,
   setDriverPixKey,
@@ -24,6 +25,8 @@ import {
   acceptBatch,
   collectBatch,
   listAvailableBatches,
+  listShiftBatches,
+  refuseBatch,
   releaseBatch,
 } from '../services/batch.service'
 import {
@@ -99,9 +102,28 @@ driverRoutes.openapi(createRoute({
 }), async (c) => c.json(await listShiftDeliveries(c.get('db'), c.get('auth')!.sub), 200))
 
 driverRoutes.openapi(createRoute({
+  method: 'get', path: '/driver/shift-batches',
+  responses: { 200: { description: 'Pacotes do turno', content: { 'application/json': { schema: z.array(Out) } } } },
+}), async (c) => c.json(await listShiftBatches(c.get('db'), c.get('auth')!.sub), 200))
+
+driverRoutes.openapi(createRoute({
   method: 'post', path: '/driver/orders/{id}/accept-shift', request: { params: IdParam },
   responses: { 200: { description: 'Entrega do turno aceita', content: { 'application/json': { schema: Out } } } },
 }), async (c) => c.json(await acceptShiftDelivery(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/orders/{id}/refuse-direct', request: { params: IdParam },
+  responses: { 200: { description: 'Direcionamento recusado', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await refuseDirectDelivery(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/batches/{id}/refuse', request: { params: IdParam },
+  responses: { 200: { description: 'Pacote recusado', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await refuseBatch(
   c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
 ).catch(rethrow), 200))
 

@@ -37,3 +37,13 @@ export const AdjustActiveShiftSchema = z.object({
   (value) => value.dailyRateCents != null || value.perDeliveryCents != null || value.applyRetroactive === true,
   'Informe um novo valor ou solicite o ajuste retroativo',
 )
+
+export const SpecificDriverRequestSchema = z.object({ driverUserId: z.uuid() })
+
+export const BatchBroadcastSchema = z.object({
+  target: z.enum(['GENERAL', 'OWN', 'SPECIFIC']).default('GENERAL'),
+  driverUserId: z.uuid().optional(),
+}).refine(
+  (value) => value.target !== 'SPECIFIC' || value.driverUserId != null,
+  'Escolha o entregador específico',
+)

@@ -2,7 +2,7 @@ import type { Context } from 'hono'
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
 import { eq } from 'drizzle-orm'
-import { AmendmentProposalSchema, StatusUpdateSchema } from '@delivery/shared/schemas'
+import { AmendmentProposalSchema, BatchBroadcastSchema, SpecificDriverRequestSchema, StatusUpdateSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import { stores } from '../db/schema'
 import type { AppContext } from '../env'
@@ -10,7 +10,10 @@ import { sendPushToTokens } from '../lib/fcm'
 import { createPaymentProvider } from '../lib/mercadopago'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.service'
-import { listAvailableDriverTokens, requestDriver, requestDriverOwn, storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
+import {
+  listAvailableDriverTokens, listShiftDriverTokens, requestDriver, requestDriverOwn,
+  requestDriverSpecific, storeResolveCancelRequest, storeUpdateOrderStatus,
+} from '../services/order-status.service'
 import { getStoreByOwner } from '../services/store.service'
 import { AmendmentError, proposeAmendment, withdrawAmendment } from '../services/amendment.service'
 import { BatchError, broadcastBatch, cancelBatch, createBatch, listStoreBatches } from '../services/batch.service'
@@ -36,6 +39,25 @@ const Out = z.object({ id: z.string() }).passthrough()
 const IdParam = z.object({ id: z.uuid() })
 const BatchBody = z.object({ orderIds: z.array(z.uuid()).min(2).max(30) })
 
+async function pushForTarget(
+  c: Context<AppContext>,
+  storeId: string,
+  target: 'GENERAL' | 'OWN' | 'SPECIFIC',
+  driverUserId: string | undefined,
+  data: Record<string, string>,
+) {
+  const db = c.get('db')
+  const [store] = await db.select({ name: stores.name }).from(stores).where(eq(stores.id, storeId))
+  const tokens = target === 'GENERAL'
+    ? await listAvailableDriverTokens(db)
+    : await listShiftDriverTokens(db, storeId, target === 'SPECIFIC' ? driverUserId : undefined)
+  const push = sendPushToTokens(
+    c.env.FIREBASE_PROJECT_ID, c.env.FIREBASE_SERVICE_ACCOUNT, tokens,
+    { title: target === 'SPECIFIC' ? 'Entrega direcionada a você 📍' : 'Nova entrega disponível! 🛵', body: store?.name ?? 'Uma loja', data },
+  )
+  try { c.executionCtx.waitUntil(push) } catch { await push }
+}
+
 storeOrderRoutes.openapi(
   createRoute({
     method: 'get',
@@ -52,9 +74,27 @@ storeOrderRoutes.openapi(
     request: { params: IdParam },
     responses: { 200: { description: 'Entregadores próprios solicitados', content: { 'application/json': { schema: Out } } } },
   }),
-  async (c) => c.json(await requestDriverOwn(
-    c.get('db'), await ownStoreId(c), c.req.valid('param').id,
-  ).catch(rethrow), 200),
+  async (c) => {
+    const storeId = await ownStoreId(c)
+    const order = await requestDriverOwn(c.get('db'), storeId, c.req.valid('param').id).catch(rethrow)
+    await pushForTarget(c, storeId, 'OWN', undefined, { orderId: order.id })
+    return c.json(order, 200)
+  },
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post', path: '/store/me/orders/{id}/request-specific',
+    request: { params: IdParam, body: { content: { 'application/json': { schema: SpecificDriverRequestSchema } } } },
+    responses: { 200: { description: 'Pedido direcionado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => {
+    const storeId = await ownStoreId(c)
+    const { driverUserId } = c.req.valid('json')
+    const order = await requestDriverSpecific(c.get('db'), storeId, c.req.valid('param').id, driverUserId).catch(rethrow)
+    await pushForTarget(c, storeId, 'SPECIFIC', driverUserId, { orderId: order.id })
+    return c.json(order, 200)
+  },
 )
 
 storeOrderRoutes.openapi(
@@ -77,10 +117,16 @@ storeOrderRoutes.openapi(
     request: { params: IdParam },
     responses: { 200: { description: 'Pacote ofertado', content: { 'application/json': { schema: Out } } } },
   }),
-  async (c) => c.json(
-    await broadcastBatch(c.get('db'), await ownStoreId(c), c.req.valid('param').id).catch(rethrow),
-    200,
-  ),
+  async (c) => {
+    const parsed = BatchBroadcastSchema.safeParse(await c.req.json().catch(() => ({})))
+    if (!parsed.success) throw new HTTPException(400, { message: parsed.error.issues[0]?.message ?? 'Destino inválido' })
+    const storeId = await ownStoreId(c)
+    const batch = await broadcastBatch(c.get('db'), storeId, c.req.valid('param').id, {
+      target: parsed.data.target, requestedDriverId: parsed.data.driverUserId,
+    }).catch(rethrow)
+    await pushForTarget(c, storeId, parsed.data.target, parsed.data.driverUserId, { batchId: batch.id })
+    return c.json(batch, 200)
+  },
 )
 
 storeOrderRoutes.openapi(
@@ -180,19 +226,7 @@ storeOrderRoutes.openapi(
   async (c) => {
     const db = c.get('db')
     const order = await requestDriver(db, await ownStoreId(c), c.req.valid('param').id).catch(rethrow)
-    const [store] = await db.select({ name: stores.name }).from(stores).where(eq(stores.id, order.storeId))
-    const tokens = await listAvailableDriverTokens(db)
-    const push = sendPushToTokens(
-      c.env.FIREBASE_PROJECT_ID,
-      c.env.FIREBASE_SERVICE_ACCOUNT,
-      tokens,
-      { title: 'Nova entrega disponível! 🛵', body: store?.name ?? 'Uma loja', data: { orderId: order.id } },
-    )
-    try {
-      c.executionCtx.waitUntil(push)
-    } catch {
-      await push
-    }
+    await pushForTarget(c, order.storeId, 'GENERAL', undefined, { orderId: order.id })
     return c.json(order, 200)
   },
 )

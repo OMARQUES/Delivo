@@ -9,7 +9,9 @@ import { acceptDelivery, completeDelivery, listAvailableDeliveries, setAvailabil
 import { createOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
-import { deliveryBatches, ledgerEntries, orderEvents, orders, users } from '../src/db/schema'
+import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
+import { startShift } from '../src/services/shift.service'
+import { deliveryBatches, driverShifts, ledgerEntries, orderEvents, orders, users } from '../src/db/schema'
 import {
   BatchError,
   acceptBatch,
@@ -18,7 +20,9 @@ import {
   collectBatch,
   createBatch,
   listAvailableBatches,
+  listShiftBatches,
   listStoreBatches,
+  refuseBatch,
   releaseBatch,
 } from '../src/services/batch.service'
 
@@ -165,12 +169,50 @@ describe('store-side batches', () => {
     const pending = await broadcastBatch(testDb, storeId, batch.id)
     expect(pending.status).toBe('PENDING')
     expect((await testDb.select().from(orders).where(inArray(orders.id, ids))).every((o) => o.driverRequestedAt)).toBe(true)
-    await expect(broadcastBatch(testDb, storeId, batch.id)).rejects.toMatchObject({ status: 409 })
+    await expect(broadcastBatch(testDb, storeId, batch.id)).resolves.toMatchObject({ status: 'PENDING', target: 'GENERAL' })
 
     const cancelled = await cancelBatch(testDb, storeId, batch.id)
     expect(cancelled.status).toBe('CANCELLED')
     expect((await testDb.select().from(orders).where(inArray(orders.id, ids))).every((o) => !o.batchId && !o.driverRequestedAt)).toBe(true)
     await expect(cancelBatch(testDb, otherStoreId, batch.id)).rejects.toMatchObject({ status: 404 })
+  })
+
+  it('direciona pacote a próprios/específico e aceite em turno grava shiftId', async () => {
+    for (const [id, phone] of [[driver1, '44911111111'], [driver2, '44922222222']] as const) {
+      const link = await inviteDriver(testDb, storeId, phone, { dailyRateCents: 5_000, perDeliveryCents: 600, schedule: [] })
+      await confirmLink(testDb, id, link.id)
+      await startShift(testDb, id, storeId, { lat: -23.55, lng: -51.9 })
+    }
+    const { batch, ids } = await makeBatch()
+    await broadcastBatch(testDb, storeId, batch.id, { target: 'SPECIFIC', requestedDriverId: driver1 })
+    expect(await listShiftBatches(testDb, driver2)).toHaveLength(0)
+    expect(await listShiftBatches(testDb, driver1)).toMatchObject([
+      { batchId: batch.id, direct: true, estimatedExtraCents: 1_800 },
+    ])
+    await expect(refuseBatch(testDb, driver2, batch.id)).rejects.toMatchObject({ status: 409 })
+    await refuseBatch(testDb, driver1, batch.id)
+    expect(await listShiftBatches(testDb, driver1)).toHaveLength(0)
+
+    await broadcastBatch(testDb, storeId, batch.id, { target: 'OWN' })
+    const accepted = await acceptBatch(testDb, driver2, batch.id)
+    expect(accepted.driverId).toBe(driver2)
+    const [shift] = await testDb.select().from(driverShifts).where(eq(driverShifts.driverUserId, driver2))
+    expect((await testDb.select().from(orders).where(inArray(orders.id, ids))).every((order) => order.shiftId === shift!.id)).toBe(true)
+
+    await releaseBatch(testDb, driver2, batch.id)
+    expect((await testDb.select().from(orders).where(inArray(orders.id, ids))).every((order) => order.shiftId == null)).toBe(true)
+
+    await acceptBatch(testDb, driver1, batch.id)
+    for (const id of ids) {
+      await storeUpdateOrderStatus(testDb, storeId, id, 'PREPARING', customerId)
+      await storeUpdateOrderStatus(testDb, storeId, id, 'READY', customerId)
+    }
+    await collectBatch(testDb, driver1, batch.id)
+    for (const id of ids) await completeDelivery(testDb, driver1, id)
+    const entries = await testDb.select().from(ledgerEntries).where(inArray(ledgerEntries.orderId, ids))
+    expect(entries.filter((entry) => entry.type === 'DRIVER_PER_DELIVERY_CREDIT')).toHaveLength(3)
+    expect(entries.filter((entry) => entry.type === 'STORE_PER_DELIVERY_DEBIT')).toHaveLength(3)
+    expect(entries.filter((entry) => entry.type === 'DRIVER_DELIVERY_CREDIT')).toHaveLength(0)
   })
 })
 
@@ -231,7 +273,10 @@ describe('driver-side batches', () => {
       expect.arrayContaining([expect.objectContaining({ status: 'OUT_FOR_DELIVERY', actorRole: 'DRIVER' })]),
     )
     for (const id of ids) await completeDelivery(testDb, driver1, id)
-    expect(await testDb.select().from(ledgerEntries).where(inArray(ledgerEntries.orderId, ids))).toHaveLength(6)
+    const ledger = await testDb.select().from(ledgerEntries).where(inArray(ledgerEntries.orderId, ids))
+    expect(ledger).toHaveLength(6)
+    expect(ledger.filter((entry) => entry.type === 'DRIVER_DELIVERY_CREDIT')).toHaveLength(3)
+    expect(ledger.filter((entry) => entry.type === 'DRIVER_PER_DELIVERY_CREDIT')).toHaveLength(0)
   })
 
   it('a cancelled order leaves the package and the remaining READY order can be collected', async () => {

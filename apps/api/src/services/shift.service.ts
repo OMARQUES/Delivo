@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { haversineKm, SHIFT_START_RADIUS_KM } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { driverShifts, orders, storeDrivers, stores, users, type DriverSchedule } from '../db/schema'
@@ -50,16 +50,27 @@ export async function startShift(db: Db, driverUserId: string, storeId: string, 
 
   const now = new Date()
   try {
-    const [shift] = await db.insert(driverShifts).values({
-      storeId,
-      driverUserId,
-      dailyRateCents: link.dailyRateCents,
-      perDeliveryCents: link.perDeliveryCents,
-      workDate: saoPauloParts(now).date,
-      scheduledEndAt: scheduledEnd(link.schedule, now),
-      startedAt: now,
-    }).returning()
-    return shift!
+    return await db.transaction(async (tx) => {
+      // Mesmo lock usado pelos aceites GENERAL: impede iniciar turno e pegar o
+      // pool simultaneamente.
+      await tx.select({ id: users.id }).from(users).where(eq(users.id, driverUserId)).for('update')
+      const [generalAssignment] = await tx.select({ id: orders.id }).from(orders).where(and(
+        eq(orders.driverId, driverUserId),
+        isNull(orders.shiftId),
+        inArray(orders.status, ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER', 'OUT_FOR_DELIVERY']),
+      )).limit(1)
+      if (generalAssignment) throw new ShiftError('Finalize as entregas do pool geral antes de iniciar o turno', 409)
+      const [shift] = await tx.insert(driverShifts).values({
+        storeId,
+        driverUserId,
+        dailyRateCents: link.dailyRateCents,
+        perDeliveryCents: link.perDeliveryCents,
+        workDate: saoPauloParts(now).date,
+        scheduledEndAt: scheduledEnd(link.schedule, now),
+        startedAt: now,
+      }).returning()
+      return shift!
+    })
   } catch (error) {
     if (isUniqueViolation(error)) throw new ShiftError('Já existe um turno ativo ou um turno nesta loja hoje', 409)
     throw error
