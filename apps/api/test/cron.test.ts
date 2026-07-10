@@ -110,4 +110,16 @@ describe('cancelStalePendingOrders', () => {
     expect((await getCustomerOrder(testDb, customerId, fresh.id))!.status).toBe('PENDING')
     expect((await getCustomerOrder(testDb, customerId, accepted.id))!.status).toBe('ACCEPTED')
   })
+
+  it('does not cancel AWAITING_PAYMENT orders in the PENDING timeout job', async () => {
+    const { order: awaiting } = await createOrder(testDb, customerId, checkout())
+    await testDb.execute(sql`
+      update orders
+      set created_at = now() - interval '40 minutes', status = 'AWAITING_PAYMENT', payment_method = 'PIX_ONLINE'
+      where id = ${awaiting.id}
+    `)
+    const n = await cancelStalePendingOrders(testDb, 30)
+    expect(n).toBe(0)
+    expect((await getCustomerOrder(testDb, customerId, awaiting.id))!.status).toBe('AWAITING_PAYMENT')
+  })
 })

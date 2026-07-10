@@ -91,7 +91,15 @@ orderRoutes.openapi(
     responses: { 200: { description: 'Cancelado', content: { 'application/json': { schema: Out } } } },
   }),
   async (c) =>
-    c.json(await customerCancelOrder(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200),
+    c.json(
+      await customerCancelOrder(
+        c.get('db'),
+        c.get('auth')!.sub,
+        c.req.valid('param').id,
+        createPaymentProvider(c.env),
+      ).catch(rethrow),
+      200,
+    ),
 )
 
 orderRoutes.openapi(
