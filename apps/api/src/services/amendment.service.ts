@@ -152,16 +152,19 @@ export async function rejectAmendment(db: Db, provider: PaymentProvider | null, 
   const pending = await getPendingAmendment(db, orderId)
   if (!pending) throw new AmendmentError('Sem alteração pendente', 409)
 
-  const claimed = await db.update(orderAmendments)
-    .set({ status: 'REJECTED', resolvedAt: new Date() })
-    .where(and(eq(orderAmendments.id, pending.id), eq(orderAmendments.status, 'PROPOSED')))
-    .returning()
-  if (claimed.length === 0) throw new AmendmentError('Alteração não está mais pendente', 409)
+  // mesma atomicidade do approve: claim + cancelamento na mesma tx
+  const rows = await db.transaction(async (tx) => {
+    const claimed = await tx.update(orderAmendments)
+      .set({ status: 'REJECTED', resolvedAt: new Date() })
+      .where(and(eq(orderAmendments.id, pending.id), eq(orderAmendments.status, 'PROPOSED')))
+      .returning()
+    if (claimed.length === 0) throw new AmendmentError('Alteração não está mais pendente', 409)
 
-  const rows = await db.update(orders)
-    .set({ status: 'CANCELLED', cancelReason: 'Cliente recusou a alteração proposta' })
-    .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
-    .returning()
+    return tx.update(orders)
+      .set({ status: 'CANCELLED', cancelReason: 'Cliente recusou a alteração proposta' })
+      .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
+      .returning()
+  })
   if (rows.length > 0) {
     await addEvent(db, orderId, 'CANCELLED', 'CUSTOMER', customerId, 'recusou alteração')
     await refundOrderPaymentIfAny(db, provider, orderId)
