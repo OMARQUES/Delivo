@@ -17,6 +17,7 @@ import { orderRoutes } from './routes/orders'
 import { storeCatalogRoutes } from './routes/store-catalog'
 import { storeMeRoutes } from './routes/store-me'
 import { storeOrderRoutes } from './routes/store-orders'
+import { storeDriverRoutes } from './routes/store-drivers'
 import { publicStoreRoutes } from './routes/stores-public'
 import { webhookRoutes } from './routes/webhooks'
 
@@ -49,6 +50,7 @@ app.route('/', adminDriverRoutes)
 app.route('/', adminStoreRoutes)
 app.route('/', storeMeRoutes)
 app.route('/', storeOrderRoutes)
+app.route('/', storeDriverRoutes)
 app.route('/', storeCatalogRoutes)
 app.route('/', menuPublicRoutes)
 app.route('/', publicStoreRoutes)

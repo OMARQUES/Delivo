@@ -18,6 +18,7 @@ type OrderRow = {
   driverId: string | null
   batchId: string | null
   driverRequestedAt: string | null
+  driverRequestTarget: 'GENERAL' | 'OWN' | null
   paymentMethod: PaymentMethod
   changeForCents: number | null
   totalCents: number
@@ -162,6 +163,12 @@ async function requestDriver(o: OrderRow) {
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
   }
+}
+
+async function requestOwn(o: OrderRow) {
+  error.value = ''
+  try { await api(`/store/me/orders/${o.id}/request-own`, { method: 'POST' }); await load() }
+  catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
 }
 
 function eligibleForBatch(o: OrderRow) {
@@ -350,9 +357,19 @@ const groups = computed(() => {
               class="rounded border px-2 py-1"
               @click="requestDriver(o)"
             >🛵 Solicitar entregador</button>
+            <button
+              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && !o.batchId && !o.driverRequestedAt && ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER'].includes(o.status)"
+              class="rounded border border-blue-500 px-2 py-1 text-blue-700"
+              @click="requestOwn(o)"
+            >🏪 Chamar meus entregadores</button>
             <span v-else-if="o.fulfillment === 'DELIVERY' && !o.driverId && o.driverRequestedAt" class="rounded bg-blue-100 px-2 py-1 text-xs">
-              aguardando entregador...
+              aguardando {{ o.driverRequestTarget === 'OWN' ? 'entregador próprio' : 'entregador' }}...
             </span>
+            <button
+              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && o.driverRequestedAt && o.driverRequestTarget === 'OWN'"
+              class="rounded border px-2 py-1"
+              @click="requestDriver(o)"
+            >🛵 Enviar ao pool geral</button>
             <span v-else-if="o.driverId && o.status === 'OUT_FOR_DELIVERY'" class="rounded bg-green-100 px-2 py-1 text-xs">
               entregue ao entregador
             </span>

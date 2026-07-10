@@ -14,6 +14,7 @@ type Available = {
   storeAddressText: string
   storeLat: number
   storeLng: number
+  perDeliveryCents?: number
 }
 
 type AvailableBatch = {
@@ -30,6 +31,7 @@ const batches = ref<AvailableBatch[]>([])
 const error = ref('')
 const accepting = ref('')
 const available = ref(true)
+const inShift = ref(false)
 let timer: ReturnType<typeof setInterval> | undefined
 let known = new Set<string>()
 let firstLoad = true
@@ -55,9 +57,11 @@ async function load() {
   try {
     const me = await api<{ isAvailable: boolean }>('/driver/me')
     available.value = me.isAvailable
+    const shift = await api<{ id: string } | null>('/driver/shifts/active')
+    inShift.value = Boolean(shift)
     const [rows, packageRows] = await Promise.all([
-      api<Available[]>('/driver/available'),
-      api<AvailableBatch[]>('/driver/batches'),
+      api<Available[]>(shift ? '/driver/shift-deliveries' : '/driver/available'),
+      shift ? Promise.resolve([] as AvailableBatch[]) : api<AvailableBatch[]>('/driver/batches'),
     ])
     const ids = new Set([...rows.map((r) => `order:${r.orderId}`), ...packageRows.map((b) => `batch:${b.batchId}`)])
     if (available.value && !firstLoad && [...ids].some((id) => !known.has(id))) beep()
@@ -80,7 +84,7 @@ async function accept(o: Available) {
   accepting.value = o.orderId
   error.value = ''
   try {
-    await api(`/driver/orders/${o.orderId}/accept`, { method: 'POST' })
+    await api(`/driver/orders/${o.orderId}/${inShift.value ? 'accept-shift' : 'accept'}`, { method: 'POST' })
     await router.push('/entregas')
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
@@ -108,6 +112,7 @@ async function acceptBatch(batch: AvailableBatch) {
 <template>
   <main class="mx-auto max-w-lg p-4">
     <h1 class="text-xl font-bold">Entregas disponíveis</h1>
+    <p v-if="inShift" class="mt-1 text-sm text-blue-700">Mostrando somente pedidos da loja do turno.</p>
     <p v-if="!available" class="mt-2 rounded bg-yellow-100 p-2 text-sm text-yellow-800">
       Você está indisponível — ative no topo para receber entregas
     </p>
@@ -142,8 +147,8 @@ async function acceptBatch(batch: AvailableBatch) {
             <p v-if="o.distanceKm" class="text-xs text-gray-500">~{{ o.distanceKm.toFixed(1) }} km até o cliente</p>
           </div>
           <div class="text-right">
-            <p class="font-bold">{{ o.deliveryFeeCents != null ? formatBRL(o.deliveryFeeCents) : '-' }}</p>
-            <p class="text-xs text-gray-500">frete</p>
+            <p class="font-bold">{{ formatBRL(inShift ? (o.perDeliveryCents ?? 0) : (o.deliveryFeeCents ?? 0)) }}</p>
+            <p class="text-xs text-gray-500">{{ inShift ? 'extra' : 'frete' }}</p>
           </div>
         </div>
         <button

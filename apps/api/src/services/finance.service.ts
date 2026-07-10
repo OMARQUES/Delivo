@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import type { LedgerEntryType } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { ledgerEntries, orders, stores } from '../db/schema'
+import { driverShifts, ledgerEntries, orders, stores } from '../db/schema'
 
 type LedgerInput = {
   party: 'STORE' | 'DRIVER'
@@ -9,7 +9,7 @@ type LedgerInput = {
   amountCents: number
   description: string
   uniqueKey: string
-  orderId: string
+  orderId: string | null
   storeId?: string | null
   driverId?: string | null
 }
@@ -20,7 +20,9 @@ function commissionCents(subtotalCents: number, commissionBps: number) {
   return Math.round((subtotalCents * commissionBps) / 10_000)
 }
 
-async function insertEntries(db: Db, entries: LedgerInput[]) {
+type LedgerWriter = Pick<Db, 'insert'>
+
+async function insertEntries(db: LedgerWriter, entries: LedgerInput[]) {
   for (const entry of entries) {
     await db.insert(ledgerEntries).values(entry).onConflictDoNothing()
   }
@@ -34,11 +36,19 @@ export async function recordOrderLedger(db: Db, orderId: string) {
   const [store] = await db.select({ commissionBps: stores.commissionBps }).from(stores).where(eq(stores.id, order.storeId)).limit(1)
   const commission = commissionCents(order.subtotalCents, store?.commissionBps ?? 0)
   const deliveryFee = order.deliveryFeeCents ?? 0
+  const [loadedShift] = order.shiftId
+    ? await db.select().from(driverShifts).where(eq(driverShifts.id, order.shiftId)).limit(1)
+    : []
+  const shift = loadedShift
+    && loadedShift.storeId === order.storeId
+    && loadedShift.driverUserId === order.driverId
+    ? loadedShift
+    : null
   const entries: LedgerInput[] = []
 
   if (order.status === 'DELIVERED') {
     if (ONLINE.has(order.paymentMethod)) {
-      const storeCredit = order.subtotalCents - commission + (order.driverId ? 0 : deliveryFee)
+      const storeCredit = order.subtotalCents - commission + (order.driverId && !shift ? 0 : deliveryFee)
       if (storeCredit > 0) {
         entries.push({
           party: 'STORE',
@@ -62,7 +72,7 @@ export async function recordOrderLedger(db: Db, orderId: string) {
           storeId: order.storeId,
         })
       }
-      if (order.driverId && deliveryFee > 0) {
+      if (order.driverId && !shift && deliveryFee > 0) {
         entries.push({
           party: 'STORE',
           type: 'STORE_DRIVER_FEE_DEBIT',
@@ -76,7 +86,7 @@ export async function recordOrderLedger(db: Db, orderId: string) {
     }
   }
 
-  if (order.driverId && deliveryFee > 0) {
+  if (order.driverId && !shift && deliveryFee > 0) {
     entries.push({
       party: 'DRIVER',
       type: 'DRIVER_DELIVERY_CREDIT',
@@ -88,6 +98,56 @@ export async function recordOrderLedger(db: Db, orderId: string) {
     })
   }
 
+  if (order.status === 'DELIVERED' && shift && order.driverId && shift.perDeliveryCents > 0) {
+    entries.push(
+      {
+        party: 'DRIVER',
+        type: 'DRIVER_PER_DELIVERY_CREDIT',
+        amountCents: shift.perDeliveryCents,
+        description: 'Extra por entrega',
+        uniqueKey: `${order.id}:driver-per-delivery`,
+        orderId: order.id,
+        driverId: order.driverId,
+      },
+      {
+        party: 'STORE',
+        type: 'STORE_PER_DELIVERY_DEBIT',
+        amountCents: -shift.perDeliveryCents,
+        description: 'Extra por entrega (entregador fixo)',
+        uniqueKey: `${order.id}:store-per-delivery`,
+        orderId: order.id,
+        storeId: order.storeId,
+      },
+    )
+  }
+
   await insertEntries(db, entries)
   return db.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, order.id))
+}
+
+export async function recordShiftDaily(
+  db: LedgerWriter,
+  shift: { id: string; storeId: string; driverUserId: string; dailyRateCents: number },
+) {
+  if (shift.dailyRateCents <= 0) return
+  await insertEntries(db, [
+    {
+      party: 'DRIVER',
+      type: 'DRIVER_DAILY_RATE_CREDIT',
+      amountCents: shift.dailyRateCents,
+      description: 'Diária do turno',
+      uniqueKey: `${shift.id}:driver-daily`,
+      orderId: null,
+      driverId: shift.driverUserId,
+    },
+    {
+      party: 'STORE',
+      type: 'STORE_DAILY_RATE_DEBIT',
+      amountCents: -shift.dailyRateCents,
+      description: 'Diária do entregador',
+      uniqueKey: `${shift.id}:store-daily`,
+      orderId: null,
+      storeId: shift.storeId,
+    },
+  ])
 }

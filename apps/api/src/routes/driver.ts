@@ -1,17 +1,19 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
-import { AvailabilitySchema, DeliveryFailSchema, FcmTokenSchema } from '@delivery/shared/schemas'
+import { AvailabilitySchema, DeliveryFailSchema, FcmTokenSchema, StartShiftSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import {
   DispatchError,
   acceptDelivery,
+  acceptShiftDelivery,
   collectDelivery,
   completeDelivery,
   ensureDriverProfile,
   failDelivery,
   listAvailableDeliveries,
   listDriverDeliveries,
+  listShiftDeliveries,
   releaseDelivery,
   setAvailability,
   setDriverPixKey,
@@ -24,6 +26,8 @@ import {
   listAvailableBatches,
   releaseBatch,
 } from '../services/batch.service'
+import { confirmLink, listDriverLinks, StoreDriverError } from '../services/store-driver.service'
+import { endShift, getActiveShift, ShiftError, startShift } from '../services/shift.service'
 
 export const driverRoutes = createRouter()
 
@@ -32,11 +36,58 @@ driverRoutes.use('/driver/*', authMiddleware, requireRole('DRIVER'))
 function rethrow(e: unknown): never {
   if (e instanceof DispatchError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof BatchError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof StoreDriverError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof ShiftError) throw new HTTPException(e.status, { message: e.message })
   throw e
 }
 
 const Out = z.object({}).passthrough()
 const IdParam = z.object({ id: z.uuid() })
+
+driverRoutes.openapi(createRoute({
+  method: 'get', path: '/driver/links',
+  responses: { 200: { description: 'Vínculos com lojas', content: { 'application/json': { schema: z.array(Out) } } } },
+}), async (c) => c.json(await listDriverLinks(c.get('db'), c.get('auth')!.sub), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/links/{id}/confirm', request: { params: IdParam },
+  responses: { 200: { description: 'Vínculo confirmado', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await confirmLink(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'get', path: '/driver/shifts/active',
+  responses: { 200: { description: 'Turno ativo', content: { 'application/json': { schema: Out.nullable() } } } },
+}), async (c) => c.json(await getActiveShift(c.get('db'), c.get('auth')!.sub), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/shifts', request: {
+    body: { content: { 'application/json': { schema: StartShiftSchema } } },
+  }, responses: { 201: { description: 'Turno iniciado', content: { 'application/json': { schema: Out } } } },
+}), async (c) => {
+  const { storeId, lat, lng } = c.req.valid('json')
+  return c.json(await startShift(c.get('db'), c.get('auth')!.sub, storeId, { lat, lng }).catch(rethrow), 201)
+})
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/shifts/{id}/end', request: { params: IdParam },
+  responses: { 200: { description: 'Turno encerrado', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await endShift(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'get', path: '/driver/shift-deliveries',
+  responses: { 200: { description: 'Entregas do turno', content: { 'application/json': { schema: z.array(Out) } } } },
+}), async (c) => c.json(await listShiftDeliveries(c.get('db'), c.get('auth')!.sub), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/orders/{id}/accept-shift', request: { params: IdParam },
+  responses: { 200: { description: 'Entrega do turno aceita', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await acceptShiftDelivery(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+).catch(rethrow), 200))
 
 driverRoutes.openapi(
   createRoute({

@@ -24,6 +24,8 @@ pnpm dev:driver  # http://localhost:5174
 
 Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`. Admin cria lojas em `/admin/lojas` e aprova entregadores em `/admin/entregadores`. Cardápio da loja em `/loja/cardapio`; import CSV: `POST /admin/stores/:id/catalog/import` (text/csv). Fluxo de pedido completo: cliente pede, loja gerencia em `/loja/pedidos`, solicita entregador, e o app driver aceita/coleta/entrega.
 
+Entregadores próprios: a loja convida por telefone em `/loja/entregadores`; o entregador confirma em “Minhas lojas”, inicia o turno próximo à loja e passa a receber somente o broadcast daquela loja. Diária e extra por entrega são congelados no início do turno e contabilizados no ledger.
+
 ## Verificação
 
 ```bash
@@ -65,6 +67,7 @@ Backend usa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `PUBLIC_API_URL` em `apps/a
 8. ✅ Financeiro — ledger imutável, fatura de comissão, payout manual por período, extratos loja/entregador, comissão por loja definida pelo admin (`/admin/lojas`, em %)
 - ✅ Controle da Loja — pausar/repreçar produto e opção ao vivo (sem replace-all), no cardápio da loja
 - ✅ Pacote de Entregas — loja agrupa pedidos (1 coleta, vários destinos) e oferta ao pool; entregador coleta 1x e quebra em entregas individuais
+- ✅ Entregadores Próprios (④a) — vínculo, turno com geofence, dispatch exclusivo e diária + extra por entrega
 9. Capacitor — build Android driver, FCM nativo
 10. Admin & Relatórios — gestão, import CSV, faturamento, mini-ERP
 11. Design & Identidade Visual — marca/nome definitivo, design system, refatoração UI/UX das telas existentes

@@ -1,7 +1,7 @@
 import {
   doublePrecision, integer, pgEnum, pgTable, real, text, timestamp, uniqueIndex, uuid, index,
 } from 'drizzle-orm/pg-core'
-import { ORDER_STATUSES } from '@delivery/shared/constants'
+import { DRIVER_REQUEST_TARGETS, ORDER_STATUSES } from '@delivery/shared/constants'
 import { stores } from './stores'
 import { users } from './users'
 import { products } from './catalog'
@@ -9,6 +9,7 @@ import { products } from './catalog'
 export const orderStatus = pgEnum('order_status', ORDER_STATUSES)
 export const fulfillmentType = pgEnum('fulfillment_type', ['DELIVERY', 'PICKUP'])
 export const paymentMethod = pgEnum('payment_method', ['CASH', 'CARD_MACHINE', 'PIX_ONLINE', 'CARD_ONLINE'])
+export const driverRequestTarget = pgEnum('driver_request_target', DRIVER_REQUEST_TARGETS)
 
 export const customerAddresses = pgTable('customer_addresses', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -52,8 +53,12 @@ export const orders = pgTable(
     driverId: uuid('driver_id'),
     /** Plano ③: pacote de entregas (null = pedido avulso). */
     batchId: uuid('batch_id'),
+    /** Turno do entregador próprio; null para freelance/entrega da loja. */
+    shiftId: uuid('shift_id'),
     /** loja solicitou entregador (broadcast ativo enquanto driverId null) */
     driverRequestedAt: timestamp('driver_requested_at', { withTimezone: true }),
+    /** Separa de forma segura o pool geral do broadcast aos próprios. */
+    driverRequestTarget: driverRequestTarget('driver_request_target'),
     driverAssignedAt: timestamp('driver_assigned_at', { withTimezone: true }),
     /** DELIVERY_FAILED: motivo (enum em shared) */
     failReason: text('fail_reason'),
@@ -66,6 +71,7 @@ export const orders = pgTable(
     index('orders_store_status_idx').on(t.storeId, t.status),
     index('orders_customer_idx').on(t.customerId, t.createdAt),
     index('orders_batch_idx').on(t.batchId),
+    index('orders_shift_idx').on(t.shiftId),
   ],
 )
 

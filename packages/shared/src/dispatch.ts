@@ -18,3 +18,18 @@ export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {
   COLLECTED: 'Coletado',
   CANCELLED: 'Cancelado',
 }
+
+export const STORE_DRIVER_STATUSES = ['INVITED', 'CONFIRMED', 'REMOVED'] as const
+export type StoreDriverStatus = (typeof STORE_DRIVER_STATUSES)[number]
+
+export const SHIFT_STATUSES = ['ACTIVE', 'CLOSED'] as const
+export type ShiftStatus = (typeof SHIFT_STATUSES)[number]
+
+export const SHIFT_CLOSED_BY = ['DRIVER', 'STORE', 'SYSTEM'] as const
+export type ShiftClosedBy = (typeof SHIFT_CLOSED_BY)[number]
+
+export const DRIVER_REQUEST_TARGETS = ['GENERAL', 'OWN'] as const
+export type DriverRequestTarget = (typeof DRIVER_REQUEST_TARGETS)[number]
+
+/** Raio máximo, em km, para iniciar um turno. */
+export const SHIFT_START_RADIUS_KM = 0.5

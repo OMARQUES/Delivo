@@ -10,7 +10,7 @@ import { sendPushToTokens } from '../lib/fcm'
 import { createPaymentProvider } from '../lib/mercadopago'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.service'
-import { listAvailableDriverTokens, requestDriver, storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
+import { listAvailableDriverTokens, requestDriver, requestDriverOwn, storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
 import { getStoreByOwner } from '../services/store.service'
 import { AmendmentError, proposeAmendment, withdrawAmendment } from '../services/amendment.service'
 import { BatchError, broadcastBatch, cancelBatch, createBatch, listStoreBatches } from '../services/batch.service'
@@ -43,6 +43,18 @@ storeOrderRoutes.openapi(
     responses: { 200: { description: 'Pacotes ativos', content: { 'application/json': { schema: z.array(Out) } } } },
   }),
   async (c) => c.json(await listStoreBatches(c.get('db'), await ownStoreId(c)), 200),
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/store/me/orders/{id}/request-own',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Entregadores próprios solicitados', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await requestDriverOwn(
+    c.get('db'), await ownStoreId(c), c.req.valid('param').id,
+  ).catch(rethrow), 200),
 )
 
 storeOrderRoutes.openapi(

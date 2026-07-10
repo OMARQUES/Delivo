@@ -3,6 +3,7 @@ import type { OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { deliveryBatches, orderEvents, orders, stores } from '../db/schema'
 import { ensureDriverProfile } from './dispatch.service'
+import { getActiveShift } from './shift.service'
 
 export class BatchError extends Error {
   constructor(
@@ -58,7 +59,7 @@ export async function broadcastBatch(db: Db, storeId: string, batchId: string) {
       .where(and(eq(deliveryBatches.id, batchId), eq(deliveryBatches.status, 'OPEN')))
       .returning()
     if (!updated) throw new BatchError('Pacote mudou — recarregue', 409)
-    await tx.update(orders).set({ driverRequestedAt: now }).where(eq(orders.batchId, batchId))
+    await tx.update(orders).set({ driverRequestedAt: now, driverRequestTarget: 'GENERAL' }).where(eq(orders.batchId, batchId))
     return updated
   })
 }
@@ -74,7 +75,7 @@ export async function cancelBatch(db: Db, storeId: string, batchId: string) {
     }
 
     await tx.update(orders)
-      .set({ batchId: null, driverRequestedAt: null })
+      .set({ batchId: null, driverRequestedAt: null, driverRequestTarget: null })
       .where(eq(orders.batchId, batchId))
     const [updated] = await tx.update(deliveryBatches)
       .set({ status: 'CANCELLED', updatedAt: new Date() })
@@ -114,6 +115,7 @@ export async function listStoreBatches(db: Db, storeId: string) {
 export async function listAvailableBatches(db: Db, driverUserId: string) {
   const profile = await ensureDriverProfile(db, driverUserId)
   if (!profile.isAvailable) return []
+  if (await getActiveShift(db, driverUserId)) return []
   const batches = await db.select({
     batch: deliveryBatches,
     storeName: stores.name,
@@ -147,6 +149,7 @@ export async function listAvailableBatches(db: Db, driverUserId: string) {
 export async function acceptBatch(db: Db, driverUserId: string, batchId: string) {
   const profile = await ensureDriverProfile(db, driverUserId)
   if (!profile.isAvailable) throw new BatchError('Fique disponível para aceitar pacotes', 409)
+  if (await getActiveShift(db, driverUserId)) throw new BatchError('Encerre o turno antes de aceitar pacotes', 409)
 
   return db.transaction(async (tx) => {
     const now = new Date()

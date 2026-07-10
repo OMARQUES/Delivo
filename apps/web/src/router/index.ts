@@ -38,6 +38,11 @@ export const router = createRouter({
           name: 'store-finance',
           component: () => import('../views/store/StoreFinanceView.vue'),
         },
+        {
+          path: 'entregadores',
+          name: 'store-drivers',
+          component: () => import('../views/store/StoreDriversView.vue'),
+        },
       ],
     },
     {

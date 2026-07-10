@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm'
 import type { DeliveryFailInput } from '@delivery/shared/schemas'
 import type { OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { drivers, orderItems, orders, stores, users } from '../db/schema'
+import { driverShifts, drivers, orderItems, orders, stores, users } from '../db/schema'
 import { addEvent } from './order-status.service'
 import { recordOrderLedger } from './finance.service'
 
@@ -45,6 +45,9 @@ export async function setDriverPixKey(db: Db, userId: string, pixKey: string | n
 export async function listAvailableDeliveries(db: Db, driverUserId: string) {
   const profile = await ensureDriverProfile(db, driverUserId)
   if (!profile.isAvailable) return []
+  const [activeShift] = await db.select({ id: driverShifts.id }).from(driverShifts)
+    .where(and(eq(driverShifts.driverUserId, driverUserId), eq(driverShifts.status, 'ACTIVE'))).limit(1)
+  if (activeShift) return []
   return db
     .select({
       orderId: orders.id,
@@ -61,6 +64,7 @@ export async function listAvailableDeliveries(db: Db, driverUserId: string) {
     .innerJoin(stores, eq(orders.storeId, stores.id))
     .where(and(
       isNotNull(orders.driverRequestedAt),
+      eq(orders.driverRequestTarget, 'GENERAL'),
       isNull(orders.driverId),
       isNull(orders.batchId),
       eq(orders.fulfillment, 'DELIVERY'),
@@ -110,6 +114,9 @@ async function driverOrderDetail(db: Db, driverUserId: string, orderId: string) 
 
 export async function acceptDelivery(db: Db, driverUserId: string, orderId: string) {
   await ensureDriverProfile(db, driverUserId)
+  const [activeShift] = await db.select({ id: driverShifts.id }).from(driverShifts)
+    .where(and(eq(driverShifts.driverUserId, driverUserId), eq(driverShifts.status, 'ACTIVE'))).limit(1)
+  if (activeShift) throw new DispatchError('Encerre o turno antes de aceitar pedidos do pool geral', 409)
   const rows = await db
     .update(orders)
     .set({ driverId: driverUserId, driverAssignedAt: new Date() })
@@ -118,6 +125,7 @@ export async function acceptDelivery(db: Db, driverUserId: string, orderId: stri
       isNull(orders.driverId),
       isNull(orders.batchId),
       isNotNull(orders.driverRequestedAt),
+      eq(orders.driverRequestTarget, 'GENERAL'),
       eq(orders.fulfillment, 'DELIVERY'),
       inArray(orders.status, ACCEPTABLE),
     ))
@@ -130,7 +138,7 @@ export async function acceptDelivery(db: Db, driverUserId: string, orderId: stri
 export async function releaseDelivery(db: Db, driverUserId: string, orderId: string) {
   const rows = await db
     .update(orders)
-    .set({ driverId: null, driverAssignedAt: null })
+    .set({ driverId: null, driverAssignedAt: null, shiftId: null })
     .where(and(
       eq(orders.id, orderId),
       eq(orders.driverId, driverUserId),
@@ -141,6 +149,63 @@ export async function releaseDelivery(db: Db, driverUserId: string, orderId: str
   if (rows.length === 0) throw new DispatchError('Não é possível liberar esta entrega', 409)
   await addEvent(db, orderId, rows[0]!.status, 'DRIVER', driverUserId, 'entregador liberou a entrega')
   return rows[0]!
+}
+
+export async function listShiftDeliveries(db: Db, driverUserId: string) {
+  const [shift] = await db.select().from(driverShifts).where(and(
+    eq(driverShifts.driverUserId, driverUserId),
+    eq(driverShifts.status, 'ACTIVE'),
+  )).limit(1)
+  if (!shift) return []
+  return db.select({
+    orderId: orders.id,
+    status: orders.status,
+    deliveryFeeCents: orders.deliveryFeeCents,
+    perDeliveryCents: driverShifts.perDeliveryCents,
+    distanceKm: orders.distanceKm,
+    createdAt: orders.createdAt,
+    storeName: stores.name,
+    storeAddressText: stores.addressText,
+    storeLat: stores.lat,
+    storeLng: stores.lng,
+  }).from(orders)
+    .innerJoin(stores, eq(orders.storeId, stores.id))
+    .innerJoin(driverShifts, eq(driverShifts.id, shift.id))
+    .where(and(
+      eq(orders.storeId, shift.storeId),
+      eq(orders.driverRequestTarget, 'OWN'),
+      isNotNull(orders.driverRequestedAt),
+      isNull(orders.driverId),
+      isNull(orders.batchId),
+      eq(orders.fulfillment, 'DELIVERY'),
+      inArray(orders.status, ACCEPTABLE),
+    ))
+    .orderBy(desc(orders.createdAt)).limit(50)
+}
+
+export async function acceptShiftDelivery(db: Db, driverUserId: string, orderId: string) {
+  const [shift] = await db.select().from(driverShifts).where(and(
+    eq(driverShifts.driverUserId, driverUserId),
+    eq(driverShifts.status, 'ACTIVE'),
+  )).limit(1)
+  if (!shift) throw new DispatchError('Inicie um turno para aceitar esta entrega', 409)
+  const rows = await db.update(orders).set({
+    driverId: driverUserId,
+    shiftId: shift.id,
+    driverAssignedAt: new Date(),
+  }).where(and(
+    eq(orders.id, orderId),
+    eq(orders.storeId, shift.storeId),
+    eq(orders.driverRequestTarget, 'OWN'),
+    isNull(orders.driverId),
+    isNull(orders.batchId),
+    isNotNull(orders.driverRequestedAt),
+    eq(orders.fulfillment, 'DELIVERY'),
+    inArray(orders.status, ACCEPTABLE),
+  )).returning({ id: orders.id, status: orders.status })
+  if (!rows[0]) throw new DispatchError('Pedido já foi pego ou não está disponível para este turno', 409)
+  await addEvent(db, orderId, rows[0].status, 'DRIVER', driverUserId, 'entregador próprio aceitou a entrega')
+  return driverOrderDetail(db, driverUserId, orderId)
 }
 
 export async function collectDelivery(db: Db, driverUserId: string, orderId: string) {

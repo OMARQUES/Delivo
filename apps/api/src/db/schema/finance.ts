@@ -17,7 +17,7 @@ export const ledgerEntries = pgTable(
     amountCents: integer('amount_cents').notNull(),
     description: text('description').notNull(),
     uniqueKey: text('unique_key').notNull(),
-    orderId: uuid('order_id').notNull().references(() => orders.id, { onDelete: 'restrict' }),
+    orderId: uuid('order_id').references(() => orders.id, { onDelete: 'restrict' }),
     storeId: uuid('store_id').references(() => stores.id, { onDelete: 'restrict' }),
     driverId: uuid('driver_id').references(() => users.id, { onDelete: 'restrict' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
