@@ -1,5 +1,11 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
-import type { CategoryInput, ProductInput, ProductUpdateInput, OptionsTreeInput } from '@delivery/shared/schemas'
+import type {
+  CategoryInput,
+  OptionUpdateInput,
+  OptionsTreeInput,
+  ProductInput,
+  ProductUpdateInput,
+} from '@delivery/shared/schemas'
 import { parseCatalogCsv } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import {
@@ -72,6 +78,26 @@ export async function updateProduct(db: Db, storeId: string, id: string, input: 
     .returning()
   if (!row) throw new CatalogError('Produto não encontrado', 404)
   return row
+}
+
+export async function updateOption(db: Db, storeId: string, optionId: string, input: OptionUpdateInput) {
+  if (input.isAvailable === undefined && input.priceCents === undefined)
+    throw new CatalogError('Nada para atualizar', 400)
+
+  const [owned] = await db
+    .select({ id: options.id })
+    .from(options)
+    .innerJoin(optionGroups, eq(optionGroups.id, options.groupId))
+    .innerJoin(products, eq(products.id, optionGroups.productId))
+    .where(and(eq(options.id, optionId), eq(products.storeId, storeId)))
+  if (!owned) throw new CatalogError('Opção não encontrada', 404)
+
+  const patch: Partial<{ isAvailable: boolean; priceCents: number | null }> = {}
+  if (input.isAvailable !== undefined) patch.isAvailable = input.isAvailable
+  if (input.priceCents !== undefined) patch.priceCents = input.priceCents
+
+  const [row] = await db.update(options).set(patch).where(eq(options.id, optionId)).returning()
+  return row!
 }
 
 export async function deleteProduct(db: Db, storeId: string, id: string) {
