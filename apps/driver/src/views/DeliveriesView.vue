@@ -32,6 +32,7 @@ type Delivery = {
   customerPhone: string | null
   note: string | null
   createdAt: string
+  batchId: string | null
 }
 
 const active = ref<Delivery[]>([])
@@ -71,6 +72,16 @@ async function act(o: Delivery, action: 'collect' | 'deliver' | 'release') {
   }
 }
 
+async function actBatch(batchId: string, action: 'collect' | 'release') {
+  error.value = ''
+  try {
+    await api(`/driver/batches/${batchId}/${action}`, { method: 'POST' })
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+  }
+}
+
 async function submitFail() {
   if (!failFor.value) return
   try {
@@ -100,7 +111,24 @@ function paymentLine(o: Delivery) {
   return `Receber: ${formatBRL(o.totalCents)} (${how})`
 }
 
-const toCollect = computed(() => active.value.filter((o) => !inRoute(o)))
+const batchPickups = computed(() => {
+  const grouped = new Map<string, Delivery[]>()
+  for (const delivery of active.value) {
+    if (!inRoute(delivery) && delivery.batchId) {
+      const group = grouped.get(delivery.batchId) ?? []
+      group.push(delivery)
+      grouped.set(delivery.batchId, group)
+    }
+  }
+  return [...grouped.entries()].map(([batchId, deliveries]) => ({
+    batchId,
+    deliveries,
+    storeName: deliveries[0]!.storeName,
+    storeAddressText: deliveries[0]!.storeAddressText,
+    ready: deliveries.every((delivery) => delivery.status === 'READY'),
+  }))
+})
+const toCollect = computed(() => active.value.filter((o) => !inRoute(o) && !o.batchId))
 const toDeliver = computed(() => active.value.filter(inRoute))
 </script>
 
@@ -109,8 +137,25 @@ const toDeliver = computed(() => active.value.filter(inRoute))
     <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
 
     <section>
-      <h2 class="font-bold">Coletar na loja ({{ toCollect.length }})</h2>
+      <h2 class="font-bold">Coletar na loja ({{ toCollect.length }} avulsa(s), {{ batchPickups.length }} pacote(s))</h2>
       <ul class="mt-2 space-y-2">
+        <li v-for="batch in batchPickups" :key="batch.batchId" class="rounded border border-blue-300 bg-blue-50 p-3">
+          <p class="font-semibold">📦 Pacote — {{ batch.deliveries.length }} entregas</p>
+          <p class="text-xs text-gray-500">{{ batch.storeName }} · coleta: {{ batch.storeAddressText }}</p>
+          <p class="text-xs text-gray-500">
+            {{ batch.ready ? 'Todos os pedidos estão prontos.' : 'Aguardando todos os pedidos ficarem prontos.' }}
+          </p>
+          <div class="mt-2 flex flex-wrap gap-2 text-sm">
+            <a :href="waze(batch.deliveries[0]!.storeLat, batch.deliveries[0]!.storeLng)" target="_blank" class="rounded border px-2 py-1 underline">Waze loja</a>
+            <a :href="`https://wa.me/55${batch.deliveries[0]!.storePhone}`" target="_blank" class="rounded border px-2 py-1 underline">WhatsApp loja</a>
+            <button
+              :disabled="!batch.ready"
+              class="rounded bg-black px-2 py-1 text-white disabled:opacity-40"
+              @click="actBatch(batch.batchId, 'collect')"
+            >Coletei tudo</button>
+            <button class="rounded border border-red-400 px-2 py-1 text-red-600" @click="actBatch(batch.batchId, 'release')">Liberar pacote</button>
+          </div>
+        </li>
         <li v-for="o in toCollect" :key="o.id" class="rounded border p-3">
           <p class="font-semibold">{{ o.storeName }}</p>
           <p class="text-xs text-gray-500">Coleta: {{ o.storeAddressText }} · {{ ORDER_STATUS_LABELS[o.status] }}</p>

@@ -16,8 +16,17 @@ type Available = {
   storeLng: number
 }
 
+type AvailableBatch = {
+  batchId: string
+  count: number
+  feeTotalCents: number
+  storeName: string
+  storeAddressText: string
+}
+
 const router = useRouter()
 const list = ref<Available[]>([])
+const batches = ref<AvailableBatch[]>([])
 const error = ref('')
 const accepting = ref('')
 const available = ref(true)
@@ -46,12 +55,16 @@ async function load() {
   try {
     const me = await api<{ isAvailable: boolean }>('/driver/me')
     available.value = me.isAvailable
-    const rows = await api<Available[]>('/driver/available')
-    const ids = new Set(rows.map((r) => r.orderId))
+    const [rows, packageRows] = await Promise.all([
+      api<Available[]>('/driver/available'),
+      api<AvailableBatch[]>('/driver/batches'),
+    ])
+    const ids = new Set([...rows.map((r) => `order:${r.orderId}`), ...packageRows.map((b) => `batch:${b.batchId}`)])
     if (available.value && !firstLoad && [...ids].some((id) => !known.has(id))) beep()
     known = ids
     firstLoad = false
     list.value = rows
+    batches.value = packageRows
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
   }
@@ -76,6 +89,20 @@ async function accept(o: Available) {
     accepting.value = ''
   }
 }
+
+async function acceptBatch(batch: AvailableBatch) {
+  accepting.value = batch.batchId
+  error.value = ''
+  try {
+    await api(`/driver/batches/${batch.batchId}/accept`, { method: 'POST' })
+    await router.push('/entregas')
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+    await load()
+  } finally {
+    accepting.value = ''
+  }
+}
 </script>
 
 <template>
@@ -85,7 +112,26 @@ async function accept(o: Available) {
       Você está indisponível — ative no topo para receber entregas
     </p>
     <p v-if="error" class="mt-1 text-sm text-red-600">{{ error }}</p>
-    <p v-if="list.length === 0" class="mt-4 text-gray-500">Nenhuma entrega no momento. Avisamos quando pintar!</p>
+    <p v-if="list.length === 0 && batches.length === 0" class="mt-4 text-gray-500">Nenhuma entrega no momento. Avisamos quando pintar!</p>
+    <ul class="mt-3 space-y-2">
+      <li v-for="batch in batches" :key="batch.batchId" class="rounded border border-blue-300 bg-blue-50 p-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="font-semibold">📦 Pacote — {{ batch.count }} entregas</p>
+            <p class="text-xs text-gray-500">{{ batch.storeName }} · coleta: {{ batch.storeAddressText }}</p>
+          </div>
+          <div class="text-right">
+            <p class="font-bold">{{ formatBRL(batch.feeTotalCents) }}</p>
+            <p class="text-xs text-gray-500">frete total</p>
+          </div>
+        </div>
+        <button
+          :disabled="accepting === batch.batchId"
+          class="mt-2 w-full rounded bg-black p-2 font-semibold text-white disabled:opacity-50"
+          @click="acceptBatch(batch)"
+        >{{ accepting === batch.batchId ? 'Aceitando...' : 'Aceitar pacote' }}</button>
+      </li>
+    </ul>
     <ul class="mt-3 space-y-2">
       <li v-for="o in list" :key="o.orderId" class="rounded border p-3">
         <div class="flex items-center justify-between">

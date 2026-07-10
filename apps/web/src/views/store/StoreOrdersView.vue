@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { formatBRL, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type OrderStatus, type PaymentMethod } from '@delivery/shared/constants'
+import {
+  BATCH_STATUS_LABELS,
+  formatBRL,
+  ORDER_STATUS_LABELS,
+  PAYMENT_METHOD_LABELS,
+  type BatchStatus,
+  type OrderStatus,
+  type PaymentMethod,
+} from '@delivery/shared/constants'
 import { api } from '../../lib/api'
 
 type OrderRow = {
@@ -8,6 +16,7 @@ type OrderRow = {
   status: OrderStatus
   fulfillment: 'DELIVERY' | 'PICKUP'
   driverId: string | null
+  batchId: string | null
   driverRequestedAt: string | null
   paymentMethod: PaymentMethod
   changeForCents: number | null
@@ -21,6 +30,12 @@ type OrderRow = {
   addressText: string | null
   note: string | null
   taxId: string | null
+}
+type Batch = {
+  id: string
+  status: BatchStatus
+  count: number
+  feeTotalCents: number
 }
 type Detail = OrderRow & {
   subtotalCents: number
@@ -44,6 +59,8 @@ const error = ref('')
 const amending = ref(false)
 const amendQty = ref<Record<string, number>>({})
 const amendNote = ref('')
+const selected = ref<Set<string>>(new Set())
+const batches = ref<Batch[]>([])
 let timer: ReturnType<typeof setInterval> | undefined
 let knownPending = new Set<string>()
 let firstLoad = true
@@ -67,9 +84,10 @@ function beep() {
 
 async function load() {
   try {
-    const [a, d] = await Promise.all([
+    const [a, d, b] = await Promise.all([
       api<OrderRow[]>('/store/me/orders?scope=active'),
       api<OrderRow[]>('/store/me/orders?scope=done'),
+      api<Batch[]>('/store/me/batches'),
     ])
     const pendingIds = new Set(a.filter((o) => o.status === 'PENDING').map((o) => o.id))
     if (!firstLoad && [...pendingIds].some((id) => !knownPending.has(id))) beep()
@@ -77,6 +95,8 @@ async function load() {
     firstLoad = false
     active.value = a
     done.value = d
+    batches.value = b
+    selected.value = new Set([...selected.value].filter((id) => a.some((o) => eligibleForBatch(o) && o.id === id)))
     if (detail.value) {
       try {
         detail.value = await api<Detail>(`/store/me/orders/${detail.value.id}`)
@@ -138,6 +158,51 @@ async function requestDriver(o: OrderRow) {
   error.value = ''
   try {
     await api(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+  }
+}
+
+function eligibleForBatch(o: OrderRow) {
+  return o.fulfillment === 'DELIVERY'
+    && !o.driverId
+    && !o.batchId
+    && ['ACCEPTED', 'PREPARING', 'READY'].includes(o.status)
+}
+
+function toggleSelect(id: string) {
+  const next = new Set(selected.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selected.value = next
+}
+
+async function createBatch() {
+  error.value = ''
+  try {
+    await api('/store/me/batches', { method: 'POST', body: JSON.stringify({ orderIds: [...selected.value] }) })
+    selected.value = new Set()
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+  }
+}
+
+async function broadcastBatch(id: string) {
+  error.value = ''
+  try {
+    await api(`/store/me/batches/${id}/broadcast`, { method: 'POST' })
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erro'
+  }
+}
+
+async function cancelBatch(id: string) {
+  error.value = ''
+  try {
+    await api(`/store/me/batches/${id}`, { method: 'DELETE' })
     await load()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
@@ -222,6 +287,33 @@ const groups = computed(() => {
     <h1 class="text-xl font-bold">Pedidos</h1>
     <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
 
+    <section class="mt-4 rounded border border-dashed p-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 class="font-semibold">Pacote de entregas</h2>
+          <p class="text-xs text-gray-500">Uma coleta para vários pedidos da mesma loja.</p>
+        </div>
+        <button
+          :disabled="selected.size < 2"
+          class="rounded bg-black px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+          @click="createBatch"
+        >Criar pacote ({{ selected.size }})</button>
+      </div>
+      <ul v-if="batches.length" class="mt-3 space-y-2 text-sm">
+        <li v-for="batch in batches" :key="batch.id" class="flex flex-wrap items-center justify-between gap-2 rounded bg-gray-50 p-2">
+          <span>📦 {{ batch.count }} entregas · {{ formatBRL(batch.feeTotalCents) }} · {{ BATCH_STATUS_LABELS[batch.status] }}</span>
+          <span class="flex gap-2">
+            <button v-if="batch.status === 'OPEN'" class="rounded bg-black px-2 py-1 text-white" @click="broadcastBatch(batch.id)">Enviar pra entregadores</button>
+            <button
+              v-if="batch.status === 'OPEN' || batch.status === 'PENDING'"
+              class="rounded border border-red-400 px-2 py-1 text-red-600"
+              @click="cancelBatch(batch.id)"
+            >Cancelar</button>
+          </span>
+        </li>
+      </ul>
+    </section>
+
     <section v-for="(list, status) in groups" :key="status" class="mt-4">
       <h2 class="font-semibold">{{ ORDER_STATUS_LABELS[status as OrderStatus] }} ({{ list.length }})</h2>
       <ul class="mt-1 space-y-2">
@@ -240,6 +332,10 @@ const groups = computed(() => {
             </span>
             <span class="font-semibold">{{ formatBRL(o.totalCents) }}</span>
           </div>
+          <label v-if="eligibleForBatch(o)" class="mt-2 flex cursor-pointer items-center gap-2 text-sm">
+            <input :checked="selected.has(o.id)" type="checkbox" @change="toggleSelect(o.id)" />
+            Incluir no pacote
+          </label>
           <p v-if="o.cancelRequestedAt" class="mt-1 rounded bg-yellow-100 p-1 text-xs">
             Cliente pediu cancelamento{{ o.cancelRequestNote ? `: "${o.cancelRequestNote}"` : '' }}
             <button class="ml-2 underline" @click="resolveCancel(o, true)">Aprovar</button>
@@ -250,7 +346,7 @@ const groups = computed(() => {
               {{ a.label }}
             </button>
             <button
-              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && !o.driverRequestedAt && ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER'].includes(o.status)"
+              v-if="o.fulfillment === 'DELIVERY' && !o.driverId && !o.batchId && !o.driverRequestedAt && ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER'].includes(o.status)"
               class="rounded border px-2 py-1"
               @click="requestDriver(o)"
             >🛵 Solicitar entregador</button>
