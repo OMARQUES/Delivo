@@ -25,6 +25,8 @@ export const stores = pgTable(
     /** chave do objeto no R2 (logos/<uuid>) */
     logoKey: text('logo_key'),
     pixKey: text('pix_key'),
+    /** basis points: 1000 = 10%; default 0 evita cobrança sem acordo */
+    commissionBps: integer('commission_bps').notNull().default(0),
     deliveryFeeMode: deliveryFeeMode('delivery_fee_mode').notNull().default('FIXED'),
     deliveryFixedFeeCents: integer('delivery_fixed_fee_cents'),
     deliveryMinFeeCents: integer('delivery_min_fee_cents'),
