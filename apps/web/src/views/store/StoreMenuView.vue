@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { formatBRL } from '@delivery/shared/constants'
 import { api } from '../../lib/api'
 
-type Product = { id: string; name: string; basePriceCents: number; isAvailable: boolean; sortIndex: number }
+type Option = { id: string; name: string; priceCents: number | null; isAvailable: boolean }
+type Group = { id: string; name: string; type: string; options: Option[] }
+type Product = {
+  id: string
+  name: string
+  basePriceCents: number
+  isAvailable: boolean
+  sortIndex: number
+  groups?: Group[]
+}
 type Category = { id: string; name: string; sortIndex: number; products: Product[] }
 
 const catalog = ref<Category[]>([])
@@ -38,6 +46,30 @@ const removeCategory = (c: Category) =>
   run(() => api(`/store/me/categories/${c.id}`, { method: 'DELETE' }))
 const toggleProduct = (p: Product) =>
   run(() => api(`/store/me/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ isAvailable: !p.isAvailable }) }))
+const saveProductPrice = (p: Product, reaisStr: string) => {
+  const reais = Number(reaisStr.replace(',', '.'))
+  if (reaisStr.trim() === '' || !Number.isFinite(reais) || reais < 0) {
+    error.value = 'Preço inválido'
+    return
+  }
+  return run(() => api(`/store/me/products/${p.id}`, {
+    method: 'PATCH', body: JSON.stringify({ basePriceCents: Math.round(reais * 100) }),
+  }))
+}
+const toggleOption = (option: Option) =>
+  run(() => api(`/store/me/options/${option.id}`, {
+    method: 'PATCH', body: JSON.stringify({ isAvailable: !option.isAvailable }),
+  }))
+const saveOptionPrice = (option: Option, reaisStr: string) => {
+  const reais = Number(reaisStr.replace(',', '.'))
+  if (reaisStr.trim() === '' || !Number.isFinite(reais) || reais < 0) {
+    error.value = 'Preço inválido'
+    return
+  }
+  return run(() => api(`/store/me/options/${option.id}`, {
+    method: 'PATCH', body: JSON.stringify({ priceCents: Math.round(reais * 100) }),
+  }))
+}
 const removeProduct = (p: Product) =>
   run(() => api(`/store/me/products/${p.id}`, { method: 'DELETE' }))
 
@@ -84,16 +116,59 @@ function swapProduct(c: Category, i: number, j: number) {
         </span>
       </header>
       <ul class="divide-y">
-        <li v-for="p in c.products" :key="p.id" class="flex items-center justify-between p-2" :class="!p.isAvailable && 'opacity-50'">
-          <RouterLink :to="`/loja/cardapio/produto/${p.id}`" class="flex-1">
-            {{ p.name }} <span class="text-sm text-gray-500">{{ formatBRL(p.basePriceCents) }}</span>
-          </RouterLink>
+        <li v-for="p in c.products" :key="p.id" class="flex flex-wrap items-center justify-between p-2" :class="!p.isAvailable && 'opacity-50'">
+          <div class="flex flex-1 items-center gap-2">
+            <RouterLink :to="`/loja/cardapio/produto/${p.id}`" class="flex-1">{{ p.name }}</RouterLink>
+            <span class="text-xs text-gray-500">R$</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              :value="(p.basePriceCents / 100).toFixed(2)"
+              class="w-20 rounded border p-1 text-sm"
+              aria-label="Preço do produto em reais"
+              @change="saveProductPrice(p, ($event.target as HTMLInputElement).value)"
+            />
+          </div>
           <span class="flex gap-2 text-sm">
             <button :disabled="c.products.indexOf(p) === 0" @click="swapProduct(c, c.products.indexOf(p), c.products.indexOf(p) - 1)">↑</button>
             <button :disabled="c.products.indexOf(p) === c.products.length - 1" @click="swapProduct(c, c.products.indexOf(p), c.products.indexOf(p) + 1)">↓</button>
             <button @click="toggleProduct(p)">{{ p.isAvailable ? 'pausar' : 'ativar' }}</button>
             <button class="text-red-600" @click="removeProduct(p)">excluir</button>
           </span>
+          <details v-if="p.groups && p.groups.length" class="mt-1 w-full">
+            <summary class="cursor-pointer text-xs text-gray-500">
+              Opções ({{ p.groups.reduce((total, group) => total + group.options.length, 0) }})
+            </summary>
+            <div v-for="group in p.groups" :key="group.id" class="mt-1 pl-2">
+              <p class="text-xs font-semibold text-gray-600">{{ group.name }}</p>
+              <ul class="divide-y">
+                <li
+                  v-for="option in group.options"
+                  :key="option.id"
+                  class="flex items-center gap-2 py-1 text-sm"
+                  :class="!option.isAvailable && 'opacity-50'"
+                >
+                  <span class="flex-1">{{ option.name }}</span>
+                  <template v-if="option.priceCents !== null">
+                    <span class="text-xs text-gray-500">R$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      :value="(option.priceCents / 100).toFixed(2)"
+                      class="w-20 rounded border p-1 text-xs"
+                      aria-label="Preço da opção em reais"
+                      @change="saveOptionPrice(option, ($event.target as HTMLInputElement).value)"
+                    />
+                  </template>
+                  <button class="rounded border px-2 py-0.5 text-xs" @click="toggleOption(option)">
+                    {{ option.isAvailable ? 'pausar' : 'ativar' }}
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </details>
         </li>
         <li v-if="c.products.length === 0" class="p-2 text-sm text-gray-400">Sem produtos</li>
       </ul>
