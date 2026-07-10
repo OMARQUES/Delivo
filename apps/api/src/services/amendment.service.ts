@@ -63,7 +63,7 @@ export async function proposeAmendment(
   const newTotalCents = newSubtotalCents + (order.deliveryFeeCents ?? 0)
   const refundCents = order.totalCents - newTotalCents
 
-  return db.transaction(async (tx) => {
+  const amendment = await db.transaction(async (tx) => {
     const [amendment] = await tx.insert(orderAmendments).values({
       orderId,
       proposedByUserId,
@@ -86,6 +86,7 @@ export async function proposeAmendment(
     }
     return amendment!
   })
+  return (await getPendingAmendment(db, amendment.orderId)) ?? { ...amendment, items: [] }
 }
 
 export async function withdrawAmendment(db: Db, storeId: string, orderId: string) {

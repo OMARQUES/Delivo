@@ -21,6 +21,7 @@ import { type PaymentProvider, PaymentProviderError } from '../lib/payment-provi
 import { getAddress } from './address.service'
 import { getMenuProductsByIds } from './catalog.service'
 import { addEvent } from './order-events'
+import { getPendingAmendment } from './amendment.service'
 import { createPixPaymentForOrder, getOrderPayment, PaymentError, recordCardPayment } from './payment.service'
 
 export class OrderError extends Error {
@@ -324,12 +325,14 @@ export async function getCustomerOrder(db: Db, customerId: string, orderId: stri
     driverName = d?.name?.split(' ')[0] ?? null
   }
   const payment = await getOrderPayment(db, order.id)
+  const amendment = await getPendingAmendment(db, order.id)
   return {
     ...detail,
     storeName: store?.name ?? '',
     storePhone: store?.phone ?? null,
     storeSlug: store?.slug ?? '',
     driverName,
+    amendment,
     payment: payment && order.status === 'AWAITING_PAYMENT' && payment.qrCode
       ? { qrCode: payment.qrCode, qrCodeBase64: payment.qrCodeBase64, expiresAt: payment.expiresAt?.toISOString() ?? null }
       : null,
@@ -393,7 +396,8 @@ export async function getStoreOrder(db: Db, storeId: string, orderId: string) {
     driverName = d?.name ?? null
     driverPhone = d?.phone ?? null
   }
-  return { ...detail, customerName: customer?.name ?? '', customerPhone: customer?.phone ?? null, driverName, driverPhone }
+  const amendment = await getPendingAmendment(db, order.id)
+  return { ...detail, customerName: customer?.name ?? '', customerPhone: customer?.phone ?? null, driverName, driverPhone, amendment }
 }
 
 export async function withDetail(db: Db, order: typeof orders.$inferSelect) {

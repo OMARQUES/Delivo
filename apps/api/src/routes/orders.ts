@@ -17,6 +17,7 @@ import {
 } from '../services/order.service'
 import { customerCancelOrder, customerRequestCancel } from '../services/order-status.service'
 import { PaymentError } from '../services/payment.service'
+import { AmendmentError, approveAmendment, rejectAmendment } from '../services/amendment.service'
 
 export const orderRoutes = createRouter()
 
@@ -24,6 +25,7 @@ orderRoutes.use('/orders/*', authMiddleware)
 orderRoutes.use('/orders', authMiddleware)
 
 function rethrow(e: unknown): never {
+  if (e instanceof AmendmentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof OrderError || e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof PaymentProviderError)
     throw new HTTPException(e.status === 402 ? 402 : 503, {
@@ -87,6 +89,34 @@ orderRoutes.openapi(
     if (!order) throw new HTTPException(404, { message: 'Pedido não encontrado' })
     return c.json(order, 200)
   },
+)
+
+orderRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/orders/{id}/amendments/current/approve',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Alteração aprovada', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) =>
+    c.json(
+      await approveAmendment(c.get('db'), createPaymentProvider(c.env), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
+      200,
+    ),
+)
+
+orderRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/orders/{id}/amendments/current/reject',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Alteração recusada', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) =>
+    c.json(
+      await rejectAmendment(c.get('db'), createPaymentProvider(c.env), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
+      200,
+    ),
 )
 
 orderRoutes.openapi(

@@ -15,6 +15,7 @@ import * as mp from '../src/lib/mercadopago'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
+import { proposeAmendment } from '../src/services/amendment.service'
 import { createOrder, listCustomerOrders } from '../src/services/order.service'
 import { requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
@@ -261,6 +262,53 @@ describe('GET /orders + /orders/:id', () => {
     await acceptDelivery(testDb, driverUserId, o.id)
     const detail = await req(`/orders/${o.id}`)
     expect(((await detail.json()) as { driverName: string | null }).driverName).toBe('Duda')
+  })
+})
+
+describe('customer amendment routes', () => {
+  it('approve applies new totals and clears the pending amendment', async () => {
+    const { order: o } = await createOrder(testDb, customerId, checkout())
+    await storeUpdateOrderStatus(testDb, storeId, o.id, 'ACCEPTED', customerId)
+    const detail = (await (await req(`/orders/${o.id}`)).json()) as { items: { id: string }[] }
+    await proposeAmendment(testDb, storeId, customerId, o.id, {
+      items: [{ orderItemId: detail.items[0]!.id, newQuantity: 1 }],
+    })
+
+    const res = await req(`/orders/${o.id}/amendments/current/approve`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { status: string }
+    expect(body.status).toBe('APPROVED')
+    const after = (await (await req(`/orders/${o.id}`)).json()) as { totalCents: number; amendment: unknown | null }
+    expect(after.totalCents).toBe(6200)
+    expect(after.amendment).toBeNull()
+  })
+
+  it('reject cancels the order', async () => {
+    const { order: o } = await createOrder(testDb, customerId, checkout())
+    await storeUpdateOrderStatus(testDb, storeId, o.id, 'ACCEPTED', customerId)
+    const detail = (await (await req(`/orders/${o.id}`)).json()) as { items: { id: string }[] }
+    await proposeAmendment(testDb, storeId, customerId, o.id, {
+      items: [{ orderItemId: detail.items[0]!.id, newQuantity: 1 }],
+    })
+
+    const res = await req(`/orders/${o.id}/amendments/current/reject`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const after = (await (await req(`/orders/${o.id}`)).json()) as { status: string; cancelReason: string | null }
+    expect(after.status).toBe('CANCELLED')
+    expect(after.cancelReason).toBe('Cliente recusou a alteração proposta')
+  })
+
+  it('foreign customer cannot approve another order', async () => {
+    const { order: o } = await createOrder(testDb, customerId, checkout())
+    await storeUpdateOrderStatus(testDb, storeId, o.id, 'ACCEPTED', customerId)
+    const detail = (await (await req(`/orders/${o.id}`)).json()) as { items: { id: string }[] }
+    await proposeAmendment(testDb, storeId, customerId, o.id, {
+      items: [{ orderItemId: detail.items[0]!.id, newQuantity: 1 }],
+    })
+    const other = await registerUser(testDb, { ...ana, phone: '44911112222' }, 'test-secret')
+
+    const res = await req(`/orders/${o.id}/amendments/current/approve`, { method: 'POST' }, other.accessToken!)
+    expect(res.status).toBe(404)
   })
 })
 

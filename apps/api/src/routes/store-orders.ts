@@ -2,7 +2,7 @@ import type { Context } from 'hono'
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
 import { eq } from 'drizzle-orm'
-import { StatusUpdateSchema } from '@delivery/shared/schemas'
+import { AmendmentProposalSchema, StatusUpdateSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import { stores } from '../db/schema'
 import type { AppContext } from '../env'
@@ -12,12 +12,14 @@ import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.service'
 import { listAvailableDriverTokens, requestDriver, storeResolveCancelRequest, storeUpdateOrderStatus } from '../services/order-status.service'
 import { getStoreByOwner } from '../services/store.service'
+import { AmendmentError, proposeAmendment, withdrawAmendment } from '../services/amendment.service'
 
 export const storeOrderRoutes = createRouter()
 
 storeOrderRoutes.use('/store/*', authMiddleware, requireRole('STORE'))
 
 function rethrow(e: unknown): never {
+  if (e instanceof AmendmentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof OrderError) throw new HTTPException(e.status, { message: e.message })
   throw e
 }
@@ -53,6 +55,34 @@ storeOrderRoutes.openapi(
     if (!order) throw new HTTPException(404, { message: 'Pedido não encontrado' })
     return c.json(order, 200)
   },
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/store/me/orders/{id}/amendments',
+    request: { params: IdParam, body: { content: { 'application/json': { schema: AmendmentProposalSchema } } } },
+    responses: { 201: { description: 'Alteração proposta', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) =>
+    c.json(
+      await proposeAmendment(c.get('db'), await ownStoreId(c), c.get('auth')!.sub, c.req.valid('param').id, c.req.valid('json')).catch(rethrow),
+      201,
+    ),
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'delete',
+    path: '/store/me/orders/{id}/amendments/current',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Alteração retirada', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) =>
+    c.json(
+      await withdrawAmendment(c.get('db'), await ownStoreId(c), c.req.valid('param').id).catch(rethrow),
+      200,
+    ),
 )
 
 storeOrderRoutes.openapi(

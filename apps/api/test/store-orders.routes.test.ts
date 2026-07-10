@@ -176,6 +176,58 @@ describe('GET /store/me/orders/:id driver info', () => {
   })
 })
 
+describe('store amendment routes', () => {
+  it('proposes reduction and exposes pending amendment on detail', async () => {
+    const { order: o } = await createOrder(testDb, customerId, checkout())
+    await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
+    const detailBefore = (await (await req(`/store/me/orders/${o.id}`)).json()) as { items: { id: string }[] }
+
+    const res = await req(`/store/me/orders/${o.id}/amendments`, {
+      method: 'POST',
+      body: JSON.stringify({
+        note: 'acabou metade',
+        items: [{ orderItemId: detailBefore.items[0]!.id, newQuantity: 1 }],
+      }),
+    })
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { status: string; refundCents: number; items: { oldQuantity: number; newQuantity: number }[] }
+    expect(body.status).toBe('PROPOSED')
+    expect(body.refundCents).toBe(5800)
+    expect(body.items[0]).toMatchObject({ oldQuantity: 2, newQuantity: 1 })
+
+    const detailAfter = (await (await req(`/store/me/orders/${o.id}`)).json()) as { amendment: { id: string; note: string } | null }
+    expect(detailAfter.amendment?.note).toBe('acabou metade')
+  })
+
+  it('withdraws the pending proposal and clears details', async () => {
+    const { order: o } = await createOrder(testDb, customerId, checkout())
+    await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
+    const detail = (await (await req(`/store/me/orders/${o.id}`)).json()) as { items: { id: string }[] }
+    await req(`/store/me/orders/${o.id}/amendments`, {
+      method: 'POST',
+      body: JSON.stringify({ items: [{ orderItemId: detail.items[0]!.id, newQuantity: 1 }] }),
+    })
+
+    const res = await req(`/store/me/orders/${o.id}/amendments/current`, { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    const after = (await (await req(`/store/me/orders/${o.id}`)).json()) as { amendment: unknown | null }
+    expect(after.amendment).toBeNull()
+  })
+
+  it('blocks status advance while proposal is pending', async () => {
+    const { order: o } = await createOrder(testDb, customerId, checkout())
+    await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
+    const detail = (await (await req(`/store/me/orders/${o.id}`)).json()) as { items: { id: string }[] }
+    await req(`/store/me/orders/${o.id}/amendments`, {
+      method: 'POST',
+      body: JSON.stringify({ items: [{ orderItemId: detail.items[0]!.id, newQuantity: 1 }] }),
+    })
+
+    const blocked = await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'PREPARING' }) })
+    expect(blocked.status).toBe(409)
+  })
+})
+
 describe('PATCH /store/me/orders/:id/status', () => {
   it('walks the happy path with events; blocks invalid transition and AWAITING_DRIVER', async () => {
     const { order: o } = await createOrder(testDb, customerId, checkout())
