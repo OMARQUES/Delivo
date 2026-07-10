@@ -17,13 +17,16 @@ import {
   stores,
   users,
 } from '../db/schema'
+import type { PaymentProvider } from '../lib/payment-provider'
 import { getAddress } from './address.service'
 import { getMenuProductsByIds } from './catalog.service'
+import { addEvent } from './order-events'
+import { createPixPaymentForOrder, getOrderPayment, PaymentError, recordCardPayment } from './payment.service'
 
 export class OrderError extends Error {
   constructor(
     message: string,
-    public status: 400 | 403 | 404 | 409 = 400,
+    public status: 400 | 403 | 404 | 409 | 503 = 400,
   ) {
     super(message)
   }
@@ -150,25 +153,53 @@ async function findByIdempotency(db: Db, customerId: string, key: string) {
   return row ?? null
 }
 
-export async function createOrder(db: Db, customerId: string, input: CheckoutInput) {
-  if (input.paymentMethod === 'PIX_ONLINE') {
-    throw new OrderError('Pagamento online em breve — use dinheiro ou maquininha', 400)
+export type CreateOrderResult = {
+  order: typeof orders.$inferSelect
+  /** presente só em PIX_ONLINE — dados pra tela de pagamento */
+  payment: { qrCode: string; qrCodeBase64: string; expiresAt: string } | null
+}
+
+async function resultFromExisting(db: Db, order: typeof orders.$inferSelect): Promise<CreateOrderResult> {
+  if (order.status === 'AWAITING_PAYMENT') {
+    const p = await getOrderPayment(db, order.id)
+    if (p?.qrCode) {
+      return {
+        order,
+        payment: { qrCode: p.qrCode, qrCodeBase64: p.qrCodeBase64!, expiresAt: p.expiresAt!.toISOString() },
+      }
+    }
+  }
+  return { order, payment: null }
+}
+
+export async function createOrder(
+  db: Db,
+  customerId: string,
+  input: CheckoutInput,
+  paymentCtx?: { provider: PaymentProvider | null; payerEmail: string; publicApiUrl: string | null },
+): Promise<CreateOrderResult> {
+  const isOnline = input.paymentMethod === 'PIX_ONLINE' || input.paymentMethod === 'CARD_ONLINE'
+  if (isOnline && !paymentCtx?.provider) {
+    throw new OrderError('Pagamento online indisponível no momento — use dinheiro ou maquininha', 503)
   }
 
   const existing = await findByIdempotency(db, customerId, input.idempotencyKey)
-  if (existing) return existing
+  if (existing) return resultFromExisting(db, existing)
 
   const quote = await quoteOrder(db, customerId, input)
   if (quote.problems.length > 0) throw new OrderError(quote.problems.join('; '), 409)
   if (quote.items.length === 0) throw new OrderError('Nenhum item válido', 400)
 
+  let order: typeof orders.$inferSelect
   try {
-    return await db.transaction(async (tx) => {
+    order = await db.transaction(async (tx) => {
+      const initialStatus = isOnline ? 'AWAITING_PAYMENT' : 'PENDING'
       const [order] = await tx
         .insert(orders)
         .values({
           storeId: quote.storeId,
           customerId,
+          status: initialStatus,
           fulfillment: input.fulfillment,
           paymentMethod: input.paymentMethod,
           changeForCents: input.paymentMethod === 'CASH' ? (input.changeForCents ?? null) : null,
@@ -211,7 +242,7 @@ export async function createOrder(db: Db, customerId: string, input: CheckoutInp
 
       await tx.insert(orderEvents).values({
         orderId: order.id,
-        status: 'PENDING',
+        status: initialStatus,
         actorRole: 'CUSTOMER',
         actorId: customerId,
       })
@@ -220,10 +251,42 @@ export async function createOrder(db: Db, customerId: string, input: CheckoutInp
   } catch (e) {
     if (isUniqueViolation(e)) {
       const raced = await findByIdempotency(db, customerId, input.idempotencyKey)
-      if (raced) return raced
+      if (raced) return resultFromExisting(db, raced)
     }
     throw e
   }
+
+  if (input.paymentMethod === 'PIX_ONLINE') {
+    const payment = await createPixPaymentForOrder(db, paymentCtx!.provider!, order, paymentCtx!.payerEmail, paymentCtx!.publicApiUrl)
+    return {
+      order,
+      payment: { qrCode: payment.qrCode!, qrCodeBase64: payment.qrCodeBase64!, expiresAt: payment.expiresAt!.toISOString() },
+    }
+  }
+
+  if (input.paymentMethod === 'CARD_ONLINE') {
+    const result = await paymentCtx!.provider!.createCardPayment({
+      orderId: order.id,
+      amountCents: order.totalCents,
+      description: 'Pedido Delivo',
+      payerEmail: paymentCtx!.payerEmail,
+      cardToken: input.cardToken!,
+      cardPaymentMethodId: input.cardPaymentMethodId!,
+      installments: input.installments ?? 1,
+    })
+    await recordCardPayment(db, order.id, order.totalCents, result.providerPaymentId, result.status === 'APPROVED')
+    if (result.status === 'APPROVED') {
+      await db.update(orders).set({ status: 'PENDING' }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
+      await addEvent(db, order.id, 'PENDING', 'SYSTEM', null, 'pagamento confirmado (cartão)')
+      const [paid] = await db.select().from(orders).where(eq(orders.id, order.id))
+      return { order: paid!, payment: null }
+    }
+    await db.update(orders).set({ status: 'CANCELLED', cancelReason: 'Cartão recusado' }).where(eq(orders.id, order.id))
+    await addEvent(db, order.id, 'CANCELLED', 'SYSTEM', null, `cartão recusado: ${result.statusDetail}`)
+    throw new PaymentError('Cartão recusado — verifique os dados ou tente outro método', 402)
+  }
+
+  return { order, payment: null }
 }
 
 export async function listCustomerOrders(db: Db, customerId: string) {

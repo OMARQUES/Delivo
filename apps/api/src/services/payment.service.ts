@@ -3,7 +3,7 @@ import { PIX_EXPIRATION_MINUTES } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { orders, payments } from '../db/schema'
 import type { PaymentProvider } from '../lib/payment-provider'
-import { addEvent } from './order-status.service'
+import { addEvent } from './order-events'
 
 export class PaymentError extends Error {
   constructor(

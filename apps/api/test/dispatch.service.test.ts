@@ -73,7 +73,7 @@ beforeEach(async () => {
 afterAll(closeTestDb)
 
 async function makeRequestedOrder() {
-  const order = await createOrder(testDb, customerId, {
+  const { order } = await createOrder(testDb, customerId, {
     storeSlug: 'pizzaria',
     fulfillment: 'DELIVERY',
     addressId,
@@ -119,7 +119,7 @@ describe('listAvailableDeliveries', () => {
   })
 
   it('rejects requestDriver on a PENDING order (must accept first)', async () => {
-    const order = await createOrder(testDb, customerId, {
+    const { order } = await createOrder(testDb, customerId, {
       storeSlug: 'pizzaria',
       fulfillment: 'DELIVERY',
       addressId,
@@ -131,7 +131,7 @@ describe('listAvailableDeliveries', () => {
   })
 
   it('hides orders not requested, already assigned, or PICKUP', async () => {
-    const notRequested = await createOrder(testDb, customerId, {
+    const { order: notRequested } = await createOrder(testDb, customerId, {
       storeSlug: 'pizzaria',
       fulfillment: 'DELIVERY',
       addressId,

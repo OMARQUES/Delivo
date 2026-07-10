@@ -10,6 +10,8 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { orders, users } from '../src/db/schema'
+import type { CardPaymentResult } from '../src/lib/payment-provider'
+import * as mp from '../src/lib/mercadopago'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
@@ -132,10 +134,80 @@ describe('POST /orders/quote + POST /orders', () => {
     expect(((await q.json()) as { totalCents: number }).totalCents).toBe(12000)
     const c1 = await req('/orders', { method: 'POST', body: JSON.stringify(body) })
     expect(c1.status).toBe(201)
-    const o1 = (await c1.json()) as { id: string }
+    const o1 = (await c1.json()) as { order: { id: string } }
     const c2 = await req('/orders', { method: 'POST', body: JSON.stringify(body) })
     expect(c2.status).toBe(201)
-    expect(((await c2.json()) as { id: string }).id).toBe(o1.id)
+    expect(((await c2.json()) as { order: { id: string } }).order.id).toBe(o1.order.id)
+  })
+
+  it('PIX_ONLINE: order born AWAITING_PAYMENT, response has QR; replay returns same QR', async () => {
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
+      createPixPayment: async (i) => ({
+        providerPaymentId: 'mp-pix-1',
+        status: 'PENDING',
+        qrCode: 'copia',
+        qrCodeBase64: 'b64',
+        ticketUrl: null,
+        expiresAt: i.expiresAt,
+      }),
+      createCardPayment: async () => { throw new Error('not used') },
+      getPayment: async () => ({ providerPaymentId: 'x', status: 'PENDING' }),
+      refundPayment: async () => {},
+      cancelPayment: async () => {},
+    })
+    const body = checkout({ paymentMethod: 'PIX_ONLINE' })
+    const res = await req('/orders', { method: 'POST', body: JSON.stringify(body) }, customerToken)
+    expect(res.status).toBe(201)
+    const r = (await res.json()) as { order: { status: string }; payment: { qrCode: string } }
+    expect(r.order.status).toBe('AWAITING_PAYMENT')
+    expect(r.payment.qrCode).toBe('copia')
+    const replay = await req('/orders', { method: 'POST', body: JSON.stringify(body) }, customerToken)
+    expect(((await replay.json()) as { payment: { qrCode: string } }).payment.qrCode).toBe('copia')
+    vi.restoreAllMocks()
+  })
+
+  it('CARD_ONLINE approved -> order PENDING direct; rejected -> 402 + order CANCELLED', async () => {
+    const approve = vi.fn(async (): Promise<CardPaymentResult> => ({
+      providerPaymentId: 'mp-c1',
+      status: 'APPROVED',
+      statusDetail: 'accredited',
+    }))
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
+      createPixPayment: async () => { throw new Error('not used') },
+      createCardPayment: approve,
+      getPayment: async () => ({ providerPaymentId: 'x', status: 'APPROVED' }),
+      refundPayment: async () => {},
+      cancelPayment: async () => {},
+    })
+    const ok = await req('/orders', {
+      method: 'POST',
+      body: JSON.stringify(checkout({
+        paymentMethod: 'CARD_ONLINE',
+        cardToken: 'tok_12345678',
+        cardPaymentMethodId: 'master',
+        installments: 1,
+      })),
+    }, customerToken)
+    expect(ok.status).toBe(201)
+    expect(((await ok.json()) as { order: { status: string } }).order.status).toBe('PENDING')
+
+    approve.mockResolvedValueOnce({ providerPaymentId: 'mp-c2', status: 'REJECTED', statusDetail: 'cc_rejected' })
+    const bad = await req('/orders', {
+      method: 'POST',
+      body: JSON.stringify(checkout({
+        paymentMethod: 'CARD_ONLINE',
+        cardToken: 'tok_87654321',
+        cardPaymentMethodId: 'visa',
+        installments: 1,
+      })),
+    }, customerToken)
+    expect(bad.status).toBe(402)
+    vi.restoreAllMocks()
+  })
+
+  it('online payment without provider configured -> 503', async () => {
+    const res = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({ paymentMethod: 'PIX_ONLINE' })) }, customerToken)
+    expect(res.status).toBe(503)
   })
 
   it('409 with problems; 401 anon', async () => {
@@ -148,7 +220,7 @@ describe('POST /orders/quote + POST /orders', () => {
 
 describe('GET /orders + /orders/:id', () => {
   it('lists own orders; detail includes items/events; 404 others order', async () => {
-    const created = await createOrder(testDb, customerId, checkout())
+    const { order: created } = await createOrder(testDb, customerId, checkout())
     const list = await req('/orders')
     expect(((await list.json()) as unknown[]).length).toBe(1)
     const detail = await req(`/orders/${created.id}`)
@@ -160,7 +232,7 @@ describe('GET /orders + /orders/:id', () => {
   })
 
   it('customer tracking shows driver first name once assigned', async () => {
-    const o = await createOrder(testDb, customerId, checkout())
+    const { order: o } = await createOrder(testDb, customerId, checkout())
     await storeUpdateOrderStatus(testDb, storeId, o.id, 'ACCEPTED', customerId)
     await requestDriver(testDb, storeId, o.id)
     const { acceptDelivery } = await import('../src/services/dispatch.service')
@@ -172,9 +244,9 @@ describe('GET /orders + /orders/:id', () => {
 
 describe('cancel flows', () => {
   it('PENDING: direct cancel 200; after ACCEPTED: cancel 409 but cancel-request 200', async () => {
-    const o = await createOrder(testDb, customerId, checkout())
+    const { order: o } = await createOrder(testDb, customerId, checkout())
     expect((await req(`/orders/${o.id}/cancel`, { method: 'POST' })).status).toBe(200)
-    const o2 = await createOrder(testDb, customerId, checkout())
+    const { order: o2 } = await createOrder(testDb, customerId, checkout())
     await testDb.update(orders).set({ status: 'ACCEPTED' }).where(eq(orders.id, o2.id))
     expect((await req(`/orders/${o2.id}/cancel`, { method: 'POST' })).status).toBe(409)
     const cr = await req(`/orders/${o2.id}/cancel-request`, {

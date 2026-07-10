@@ -1,19 +1,11 @@
 import { and, eq, inArray, isNotNull, isNull, lt } from 'drizzle-orm'
 import { canTransition, type OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { drivers, orderEvents, orders } from '../db/schema'
+import { drivers, orders } from '../db/schema'
 import { OrderError } from './order.service'
+import { addEvent } from './order-events'
 
-export async function addEvent(
-  db: Db,
-  orderId: string,
-  status: OrderStatus,
-  actorRole: string,
-  actorId: string | null,
-  note?: string,
-) {
-  await db.insert(orderEvents).values({ orderId, status, actorRole, actorId, note: note ?? null })
-}
+export { addEvent } from './order-events'
 
 /** Cliente cancela direto — só PENDING. */
 export async function customerCancelOrder(db: Db, customerId: string, orderId: string) {

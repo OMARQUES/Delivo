@@ -142,7 +142,7 @@ describe('GET /store/me/orders', () => {
 
 describe('GET /store/me/orders/:id driver info', () => {
   it('store order payloads include driver name/phone once assigned', async () => {
-    const o = await createOrder(testDb, customerId, checkout())
+    const { order: o } = await createOrder(testDb, customerId, checkout())
     await storeUpdateOrderStatus(testDb, storeId, o.id, 'ACCEPTED', customerId)
     await requestDriver(testDb, storeId, o.id)
     const { acceptDelivery } = await import('../src/services/dispatch.service')
@@ -156,7 +156,7 @@ describe('GET /store/me/orders/:id driver info', () => {
 
 describe('PATCH /store/me/orders/:id/status', () => {
   it('walks the happy path with events; blocks invalid transition and AWAITING_DRIVER', async () => {
-    const o = await createOrder(testDb, customerId, checkout())
+    const { order: o } = await createOrder(testDb, customerId, checkout())
     for (const to of ['ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'DELIVERED']) {
       const r = await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })
       expect(r.status).toBe(200)
@@ -164,14 +164,14 @@ describe('PATCH /store/me/orders/:id/status', () => {
     const detail = await req(`/store/me/orders/${o.id}`)
     const body = (await detail.json()) as { events: unknown[] }
     expect(body.events.length).toBe(6)
-    const o2 = await createOrder(testDb, customerId, checkout())
+    const { order: o2 } = await createOrder(testDb, customerId, checkout())
     expect((await req(`/store/me/orders/${o2.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'DELIVERED' }) })).status).toBe(409)
     expect((await req(`/store/me/orders/${o2.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'AWAITING_DRIVER' }) })).status).toBe(400)
     expect((await req(`/store/me/orders/${o2.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'CANCELLED' }) })).status).toBe(400)
   })
 
   it('pickup: READY -> DELIVERED direct', async () => {
-    const o = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
+    const { order: o } = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
     for (const to of ['ACCEPTED', 'PREPARING', 'READY', 'DELIVERED']) {
       expect((await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })).status).toBe(200)
     }
@@ -180,7 +180,7 @@ describe('PATCH /store/me/orders/:id/status', () => {
 
 describe('POST /store/me/orders/:id/request-driver', () => {
   it('requests driver; idempotent; READY order flips to AWAITING_DRIVER', async () => {
-    const o = await createOrder(testDb, customerId, checkout())
+    const { order: o } = await createOrder(testDb, customerId, checkout())
     await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
     const r1 = await req(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
     expect(r1.status).toBe(200)
@@ -194,12 +194,12 @@ describe('POST /store/me/orders/:id/request-driver', () => {
   })
 
   it('rejects pickup orders and orders with driver', async () => {
-    const p = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
+    const { order: p } = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
     expect((await req(`/store/me/orders/${p.id}/request-driver`, { method: 'POST' })).status).toBe(400)
   })
 
   it('rejects request-driver on a PENDING order (must accept first)', async () => {
-    const o = await createOrder(testDb, customerId, checkout())
+    const { order: o } = await createOrder(testDb, customerId, checkout())
     const r = await req(`/store/me/orders/${o.id}/request-driver`, { method: 'POST' })
     expect(r.status).toBe(409)
     expect(((await r.json()) as { error: string }).error).toContain('Aceite o pedido')
@@ -208,14 +208,14 @@ describe('POST /store/me/orders/:id/request-driver', () => {
 
 describe('cancel-request resolution', () => {
   it('approve cancels; deny clears request', async () => {
-    const o = await createOrder(testDb, customerId, checkout())
+    const { order: o } = await createOrder(testDb, customerId, checkout())
     await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
     await customerRequestCancel(testDb, customerId, o.id, 'mudei de ideia')
     const ap = await req(`/store/me/orders/${o.id}/cancel-request/approve`, { method: 'POST' })
     expect(ap.status).toBe(200)
     expect(((await ap.json()) as { status: string }).status).toBe('CANCELLED')
 
-    const o2 = await createOrder(testDb, customerId, checkout())
+    const { order: o2 } = await createOrder(testDb, customerId, checkout())
     await req(`/store/me/orders/${o2.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
     await customerRequestCancel(testDb, customerId, o2.id)
     const dn = await req(`/store/me/orders/${o2.id}/cancel-request/deny`, { method: 'POST' })
@@ -223,7 +223,7 @@ describe('cancel-request resolution', () => {
   })
 
   it('direct CANCELLED clears a pending cancel-request', async () => {
-    const o = await createOrder(testDb, customerId, checkout())
+    const { order: o } = await createOrder(testDb, customerId, checkout())
     await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
     await customerRequestCancel(testDb, customerId, o.id, 'mudei de ideia')
     const res = await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'CANCELLED', reason: 'sem estoque' }) })

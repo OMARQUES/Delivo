@@ -96,10 +96,10 @@ function checkout(overrides: Record<string, unknown> = {}) {
 
 describe('cancelStalePendingOrders', () => {
   it('cancels only PENDING older than cutoff, adds SYSTEM event', async () => {
-    const fresh = await createOrder(testDb, customerId, checkout())
-    const stale = await createOrder(testDb, customerId, checkout())
+    const { order: fresh } = await createOrder(testDb, customerId, checkout())
+    const { order: stale } = await createOrder(testDb, customerId, checkout())
     await testDb.execute(sql`update orders set created_at = now() - interval '31 minutes' where id = ${stale.id}`)
-    const accepted = await createOrder(testDb, customerId, checkout())
+    const { order: accepted } = await createOrder(testDb, customerId, checkout())
     await testDb.execute(sql`update orders set created_at = now() - interval '31 minutes', status = 'ACCEPTED' where id = ${accepted.id}`)
 
     const n = await cancelStalePendingOrders(testDb, 30)

@@ -90,7 +90,7 @@ function checkout(overrides: Record<string, unknown> = {}) {
 }
 
 async function makeAwaitingPaymentOrder() {
-  const cash = await createOrder(testDb, customerId, checkout())
+  const { order: cash } = await createOrder(testDb, customerId, checkout())
   await testDb.execute(sql`update orders set status='AWAITING_PAYMENT', payment_method='PIX_ONLINE' where id=${cash.id}`)
   const [row] = await testDb.select().from(orders).where(eq(orders.id, cash.id))
   return row!
@@ -151,7 +151,7 @@ describe('refundOrderPaymentIfAny', () => {
     expect(provider.refundPayment).toHaveBeenCalledWith('mp-1')
     expect((await getOrderPayment(testDb, order.id))!.status).toBe('REFUNDED')
 
-    const cash = await createOrder(testDb, customerId, checkout())
+    const { order: cash } = await createOrder(testDb, customerId, checkout())
     expect(await refundOrderPaymentIfAny(testDb, provider, cash.id)).toBe(false)
   })
 

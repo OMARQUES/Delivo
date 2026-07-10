@@ -76,7 +76,7 @@ beforeEach(async () => {
 afterAll(closeTestDb)
 
 async function makeRequestedOrder() {
-  const order = await createOrder(testDb, customerId, {
+  const { order } = await createOrder(testDb, customerId, {
     storeSlug: 'pizzaria',
     fulfillment: 'DELIVERY',
     addressId,

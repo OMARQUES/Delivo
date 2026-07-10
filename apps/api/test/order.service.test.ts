@@ -138,7 +138,7 @@ describe('quoteOrder', () => {
 
 describe('createOrder', () => {
   it('creates PENDING with snapshot items/options + event', async () => {
-    const order = await createOrder(testDb, customerId, checkout())
+    const { order } = await createOrder(testDb, customerId, checkout())
     expect(order.status).toBe('PENDING')
     expect(order.totalCents).toBe(12000)
     const detail = await getCustomerOrder(testDb, customerId, order.id)
@@ -152,8 +152,8 @@ describe('createOrder', () => {
 
   it('idempotency: same key returns same order; concurrent burst creates exactly 1', async () => {
     const input = checkout()
-    const a = await createOrder(testDb, customerId, input)
-    const b = await createOrder(testDb, customerId, input)
+    const { order: a } = await createOrder(testDb, customerId, input)
+    const { order: b } = await createOrder(testDb, customerId, input)
     expect(b.id).toBe(a.id)
     const input2 = checkout()
     const burst = await Promise.allSettled([
@@ -162,15 +162,15 @@ describe('createOrder', () => {
     ])
     const okIds = burst
       .filter((r) => r.status === 'fulfilled')
-      .map((r) => (r as PromiseFulfilledResult<{ id: string }>).value.id)
+      .map((r) => (r as PromiseFulfilledResult<{ order: { id: string } }>).value.order.id)
     expect(new Set(okIds).size).toBe(1)
     const list = await listCustomerOrders(testDb, customerId)
     expect(list).toHaveLength(2)
   })
 
-  it('rejects: problems present, PIX_ONLINE, unknown store', async () => {
+  it('rejects: problems present, online payment without provider, unknown store', async () => {
     await expect(createOrder(testDb, customerId, checkout({ storeSlug: 'nope' }))).rejects.toThrow(OrderError)
-    await expect(createOrder(testDb, customerId, checkout({ paymentMethod: 'PIX_ONLINE' }))).rejects.toThrow('em breve')
+    await expect(createOrder(testDb, customerId, checkout({ paymentMethod: 'PIX_ONLINE' }))).rejects.toMatchObject({ status: 503 })
     await updateStore(testDb, storeId, { isPaused: true })
     await expect(createOrder(testDb, customerId, checkout())).rejects.toThrow(OrderError)
   })
