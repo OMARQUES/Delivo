@@ -50,3 +50,4 @@
 | Webhook exige URL pública (PUBLIC_API_URL) — em dev usar tunnel (cloudflared) ou confirmar via reconsulta; produção resolve no deploy CF | Plano 7 | Deploy prod |
 | Cartão: MVP 1x sem parcelamento; sem 3DS challenge flow | Plano 7 | Se recusas indicarem necessidade |
 | Tracking não tem botão "regenerar PIX" após expirar — cliente refaz o pedido | Plano 7 | UX futura |
+| Alertas do driver: avaliar FCM-only (push-to-sync: refetch em push/focus/online, toast global via store de eventos, notificationclick no SW, guard permissão↔disponibilidade, polling lento 60-120s de segurança ou remoção total) — SUJEITO a validação de necessidade em testes reais no Capacitor; WebSocket descartado (FCM já é push persistente) | Discussão pós-Plano 7 | Plano 9 (Capacitor) |
