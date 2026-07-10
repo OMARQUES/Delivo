@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { CategorySchema, ProductSchema, ProductUpdateSchema, OptionsTreeSchema } from './catalog.schema'
+import {
+  CategorySchema,
+  OptionUpdateSchema,
+  OptionsTreeSchema,
+  ProductSchema,
+  ProductUpdateSchema,
+} from './catalog.schema'
 
 describe('CategorySchema', () => {
   it('accepts name, rejects empty/long', () => {
@@ -64,5 +70,24 @@ describe('ProductUpdateSchema', () => {
   })
   it('explicit isAvailable passes through', () => {
     expect(ProductUpdateSchema.parse({ isAvailable: false })).toEqual({ isAvailable: false })
+  })
+})
+
+describe('OptionUpdateSchema', () => {
+  it('aceita só isAvailable', () => {
+    expect(OptionUpdateSchema.safeParse({ isAvailable: false }).success).toBe(true)
+  })
+
+  it('aceita só priceCents (inclusive null)', () => {
+    expect(OptionUpdateSchema.safeParse({ priceCents: 500 }).success).toBe(true)
+    expect(OptionUpdateSchema.safeParse({ priceCents: null }).success).toBe(true)
+  })
+
+  it('rejeita objeto vazio', () => {
+    expect(OptionUpdateSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('rejeita preço negativo', () => {
+    expect(OptionUpdateSchema.safeParse({ priceCents: -1 }).success).toBe(false)
   })
 })

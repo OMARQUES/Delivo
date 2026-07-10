@@ -50,3 +50,13 @@ export const OptionsTreeSchema = z
   .refine((gs) => gs.filter((g) => g.type === 'VARIATION').length <= 1, 'Máximo 1 grupo VARIATION')
   .refine((gs) => gs.filter((g) => g.type === 'FLAVOR').length <= 1, 'Máximo 1 grupo FLAVOR')
 export type OptionsTreeInput = z.infer<typeof OptionsTreeSchema>
+
+export const OptionUpdateSchema = z
+  .object({
+    isAvailable: z.boolean().optional(),
+    priceCents: Cents.nullable().optional(),
+  })
+  .refine((value) => value.isAvailable !== undefined || value.priceCents !== undefined, {
+    message: 'Informe isAvailable e/ou priceCents',
+  })
+export type OptionUpdateInput = z.infer<typeof OptionUpdateSchema>
