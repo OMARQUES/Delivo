@@ -4,7 +4,7 @@ import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-
 import { createStoreWithOwner } from '../src/services/store.service'
 import {
   CatalogError, createCategory, deleteCategory, deleteProduct, createProduct,
-  updateProduct, replaceProductOptions, getStoreCatalog, getPublicMenu,
+  updateOption, updateProduct, replaceProductOptions, getStoreCatalog, getPublicMenu,
   searchProducts, importCsvCatalog, setProductPhoto,
 } from '../src/services/catalog.service'
 
@@ -125,6 +125,34 @@ describe('getPublicMenu', () => {
     const menu = await getPublicMenu(testDb, 'pizzaria-do-joao')
     expect(menu!.categories[0]!.products[0]!.name).toBe('Pizza')
     expect(await getPublicMenu(testDb, 'nao-existe')).toBeNull()
+  })
+
+  it('omite produtos e opções pausados, incluindo categorias vazias', async () => {
+    const product = await makeProduct()
+    await replaceProductOptions(testDb, storeId, product.id, [
+      { name: 'Extras', type: 'ADDON', minSelect: 0, maxSelect: 2,
+        options: [
+          { name: 'Catupiry', priceCents: 500, isAvailable: true },
+          { name: 'Borda', priceCents: 800, isAvailable: true },
+        ] },
+    ])
+    const storeCatalog = await getStoreCatalog(testDb, storeId)
+    const catupiry = storeCatalog[0]!.products[0]!.groups[0]!.options[0]!
+    await updateOption(testDb, storeId, catupiry.id, { isAvailable: false })
+
+    const hiddenCategory = await createCategory(testDb, storeId, { name: 'Ocultos' })
+    const hiddenProduct = await createProduct(testDb, storeId, {
+      categoryId: hiddenCategory.id,
+      name: 'Produto pausado',
+      basePriceCents: 1000,
+      isAvailable: true,
+    })
+    await updateProduct(testDb, storeId, hiddenProduct.id, { isAvailable: false })
+
+    const menu = await getPublicMenu(testDb, 'pizzaria-do-joao')
+    expect(menu!.categories).toHaveLength(1)
+    expect(menu!.categories[0]!.products.map((item) => item.id)).toEqual([product.id])
+    expect(menu!.categories[0]!.products[0]!.groups[0]!.options.map((option) => option.name)).toEqual(['Borda'])
   })
 })
 

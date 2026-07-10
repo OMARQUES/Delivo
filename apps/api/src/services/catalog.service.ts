@@ -278,7 +278,22 @@ export async function getPublicMenu(db: Db, slug: string) {
     .where(sql`lower(${stores.slug}) = ${slug.toLowerCase()} and ${stores.isActive} = true`)
   if (!store) return null
   const categories = await getStoreCatalog(db, store.id)
-  return { categories: categories.filter((c) => c.products.length > 0) }
+  return {
+    categories: categories
+      .map((category) => ({
+        ...category,
+        products: category.products
+          .filter((product) => product.isAvailable)
+          .map((product) => ({
+            ...product,
+            groups: product.groups.map((group) => ({
+              ...group,
+              options: group.options.filter((option) => option.isAvailable),
+            })),
+          })),
+      }))
+      .filter((category) => category.products.length > 0),
+  }
 }
 
 // ---------- busca global ----------
