@@ -10,11 +10,15 @@ const router = useRouter()
 const isAvailable = ref(false)
 const saving = ref(false)
 const showPushButton = ref(pushConfigured())
+const pixKey = ref('')
+const pixMsg = ref('')
+const savingPix = ref(false)
 
 onMounted(async () => {
   try {
-    const me = await api<{ isAvailable: boolean }>('/driver/me')
+    const me = await api<{ isAvailable: boolean; pixKey?: string | null }>('/driver/me')
     isAvailable.value = me.isAvailable
+    pixKey.value = me.pixKey ?? ''
   } catch {
     // token invalido: guard resolve na proxima navegacao.
   }
@@ -36,6 +40,19 @@ async function toggle() {
 async function onEnablePush() {
   const r = await enablePush()
   if (r === 'ok') showPushButton.value = false
+}
+
+async function savePixKey() {
+  savingPix.value = true
+  pixMsg.value = ''
+  try {
+    await api('/driver/me/pix-key', { method: 'PATCH', body: JSON.stringify({ pixKey: pixKey.value || null }) })
+    pixMsg.value = 'Salvo!'
+  } catch (e) {
+    pixMsg.value = e instanceof Error ? e.message : 'Erro'
+  } finally {
+    savingPix.value = false
+  }
 }
 
 async function logout() {
@@ -64,6 +81,14 @@ async function logout() {
         <button class="text-sm underline" @click="logout">Sair</button>
       </div>
     </header>
+    <details class="border-b p-3 text-sm">
+      <summary class="cursor-pointer text-gray-600">Minha chave PIX (recebimento do frete)</summary>
+      <div class="mt-2 flex gap-2">
+        <input v-model="pixKey" placeholder="Chave PIX" class="flex-1 rounded border p-2" />
+        <button class="rounded bg-black px-3 text-white" :disabled="savingPix" @click="savePixKey">Salvar</button>
+      </div>
+      <p v-if="pixMsg" class="mt-1 text-xs" :class="pixMsg === 'Salvo!' ? 'text-green-700' : 'text-red-600'">{{ pixMsg }}</p>
+    </details>
     <RouterView />
   </div>
 </template>

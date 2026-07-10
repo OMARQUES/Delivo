@@ -142,6 +142,13 @@ function printOrder() {
   window.print()
 }
 
+function paymentLabel(o: { paymentMethod: string; changeForCents: number | null }) {
+  if (o.paymentMethod === 'CASH') return `Dinheiro${o.changeForCents ? ` (troco p/ ${formatBRL(o.changeForCents)})` : ''}`
+  if (o.paymentMethod === 'CARD_MACHINE') return 'Maquininha'
+  if (o.paymentMethod === 'PIX_ONLINE') return '✅ PIX pago'
+  return '✅ Cartão pago'
+}
+
 const wa = (phone: string | null) => (phone ? `https://wa.me/55${phone}` : null)
 const dt = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 const groups = computed(() => {
@@ -167,7 +174,7 @@ const groups = computed(() => {
               <a v-if="wa(o.customerPhone)" :href="wa(o.customerPhone)!" target="_blank" class="ml-2 underline">WhatsApp</a>
               <span class="block text-xs text-gray-500">
                 {{ dt(o.createdAt) }} · {{ o.fulfillment === 'PICKUP' ? 'Retirada' : 'Entrega' }} ·
-                {{ o.paymentMethod === 'CASH' ? `Dinheiro${o.changeForCents ? ` (troco p/ ${formatBRL(o.changeForCents)})` : ''}` : 'Maquininha' }}
+                {{ paymentLabel(o) }}
               </span>
               <span v-if="o.addressText" class="block text-xs text-gray-500">{{ o.addressText }}</span>
               <span v-if="o.note" class="block text-xs italic">Obs: {{ o.note }}</span>
@@ -222,8 +229,7 @@ const groups = computed(() => {
       <h2 class="text-lg font-bold">Pedido — {{ detail.customerName }}</h2>
       <p class="text-sm text-gray-600">
         {{ detail.fulfillment === 'PICKUP' ? 'Retirada' : `Entrega: ${detail.addressText}` }} ·
-        {{ detail.paymentMethod === 'CASH' ? 'Dinheiro' : 'Maquininha' }}
-        <template v-if="detail.changeForCents"> · troco p/ {{ formatBRL(detail.changeForCents) }}</template>
+        {{ paymentLabel(detail) }}
       </p>
       <p v-if="detail.taxId" class="text-sm text-gray-600">CPF/CNPJ na nota: {{ detail.taxId }}</p>
       <p v-if="detail.driverName" class="text-sm text-gray-600">

@@ -13,7 +13,7 @@ type Store = {
   deliveryPerKmCents: number | null; deliveryMaxKm: number | null
   minOrderCents: number | null
   deliveryEtaMinutes: [number, number] | null; pickupEtaMinutes: [number, number] | null
-  isPaused: boolean; openingHours: Hours[]
+  isPaused: boolean; openingHours: Hours[]; pixKey: string | null
 }
 
 const DOWS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -116,6 +116,17 @@ async function uploadLogo(ev: Event) {
         <input v-model.number="form.deliveryMaxKm" type="number" step="0.5" class="w-full rounded border p-2" placeholder="Raio máx (km, opcional)" />
       </template>
       <input :value="form.minOrderCents != null ? form.minOrderCents / 100 : ''" type="number" class="w-full rounded border p-2" placeholder="Pedido mínimo (R$, opcional)" @input="setCents('minOrderCents', $event)" />
+    </section>
+
+    <section class="space-y-2">
+      <h2 class="font-semibold">Repasse (PIX)</h2>
+      <input
+        :value="form.pixKey ?? ''"
+        placeholder="Sua chave PIX (CPF/CNPJ, email, telefone ou aleatória)"
+        class="w-full rounded border p-2"
+        @input="(e) => (form.pixKey = (e.target as HTMLInputElement).value || null)"
+      />
+      <p class="text-xs text-gray-500">Usada pela plataforma para repassar suas vendas online (semanal).</p>
     </section>
 
     <section class="space-y-2">
