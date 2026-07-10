@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { formatBRL } from '@delivery/shared/constants'
 import MapPicker from '../components/MapPicker.vue'
 import { api } from '../lib/api'
+import { cardConfigured, mountCardBrick, type CardFormData } from '../lib/mp-brick'
 import { useCartStore } from '../stores/cart'
 
 type Address = { id: string; label: string | null; addressText: string; reference: string | null; lat: number; lng: number }
@@ -15,20 +16,23 @@ const cart = useCartStore()
 const fulfillment = ref<'DELIVERY' | 'PICKUP'>('DELIVERY')
 const addresses = ref<Address[]>([])
 const addressId = ref('')
-const paymentMethod = ref<'CASH' | 'CARD_MACHINE' | 'PIX_ONLINE'>('CASH')
+const paymentMethod = ref<'CASH' | 'CARD_MACHINE' | 'PIX_ONLINE' | 'CARD_ONLINE'>('CASH')
 const changeFor = ref('')
+const cardAvailable = cardConfigured()
+const cardData = ref<CardFormData | null>(null)
 const taxId = ref('')
 const note = ref('')
 const quote = ref<Quote | null>(null)
 const error = ref('')
 const submitting = ref(false)
 const idempotencyKey = crypto.randomUUID()
+let destroyBrick: (() => void) | null = null
 
 const showNewAddress = ref(false)
 const newAddr = reactive({ label: '', addressText: '', reference: '', lat: -23.55, lng: -51.93 })
 
 function checkoutBody() {
-  return {
+  const body = {
     storeSlug: cart.storeSlug,
     fulfillment: fulfillment.value,
     addressId: fulfillment.value === 'DELIVERY' ? addressId.value || undefined : undefined,
@@ -46,6 +50,29 @@ function checkoutBody() {
     })),
     idempotencyKey,
   }
+  if (paymentMethod.value === 'CARD_ONLINE') {
+    return {
+      ...body,
+      cardToken: cardData.value?.token,
+      cardPaymentMethodId: cardData.value?.payment_method_id,
+      installments: 1,
+    }
+  }
+  return body
+}
+
+function destroyCardBrick() {
+  destroyBrick?.()
+  destroyBrick = null
+}
+
+async function mountBrickIfReady() {
+  if (paymentMethod.value !== 'CARD_ONLINE' || !quote.value || quote.value.problems.length > 0) return
+  await nextTick()
+  destroyBrick = await mountCardBrick('mp-card-brick', quote.value.totalCents / 100, async (data) => {
+    cardData.value = data
+    await submit()
+  })
 }
 
 async function loadAddresses() {
@@ -74,6 +101,12 @@ onMounted(async () => {
   await refreshQuote()
 })
 watch([fulfillment, addressId], refreshQuote)
+watch([paymentMethod, quote], async () => {
+  destroyCardBrick()
+  cardData.value = null
+  await mountBrickIfReady()
+})
+onBeforeUnmount(destroyCardBrick)
 
 async function saveNewAddress() {
   error.value = ''
@@ -100,6 +133,10 @@ const canSubmit = computed(() => Boolean(quote.value && quote.value.problems.len
 
 async function submit() {
   if (!canSubmit.value) return
+  if (paymentMethod.value === 'CARD_ONLINE' && !cardData.value) {
+    error.value = 'Preencha os dados do cartão'
+    return
+  }
   submitting.value = true
   error.value = ''
   try {
@@ -111,6 +148,11 @@ async function submit() {
     await router.replace(`/pedido/${r.order.id}`)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro ao enviar pedido'
+    if (paymentMethod.value === 'CARD_ONLINE') {
+      cardData.value = null
+      destroyCardBrick()
+      await mountBrickIfReady()
+    }
   } finally {
     submitting.value = false
   }
@@ -165,6 +207,10 @@ async function submit() {
       <input v-if="paymentMethod === 'CASH'" v-model="changeFor" placeholder="Troco para quanto? (R$, opcional)" class="w-full rounded border p-2" />
       <label class="flex items-center gap-2"><input v-model="paymentMethod" type="radio" value="CARD_MACHINE" /> Maquininha (cartão)</label>
       <label class="flex items-center gap-2"><input v-model="paymentMethod" type="radio" value="PIX_ONLINE" /> PIX (pague agora)</label>
+      <label v-if="cardAvailable" class="flex items-center gap-2">
+        <input v-model="paymentMethod" type="radio" value="CARD_ONLINE" /> Cartão de crédito (online)
+      </label>
+      <div v-show="paymentMethod === 'CARD_ONLINE'" id="mp-card-brick" class="mt-2"></div>
     </section>
 
     <input v-model="taxId" placeholder="CPF/CNPJ na nota (opcional)" class="w-full rounded border p-2" />
@@ -180,7 +226,12 @@ async function submit() {
     </section>
 
     <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
-    <button :disabled="!canSubmit" class="w-full rounded bg-black p-3 font-semibold text-white disabled:opacity-50" @click="submit">
+    <button
+      v-if="paymentMethod !== 'CARD_ONLINE'"
+      :disabled="!canSubmit"
+      class="w-full rounded bg-black p-3 font-semibold text-white disabled:opacity-50"
+      @click="submit"
+    >
       {{ submitting ? 'Enviando…' : 'Confirmar pedido' }}
     </button>
   </main>
