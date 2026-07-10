@@ -44,6 +44,9 @@ export interface PaymentProvider {
   /** Estorno TOTAL. Idempotente no gateway. */
   refundPayment(providerPaymentId: string): Promise<void>
 
+  /** Estorno PARCIAL (amount em centavos). Idempotente por (payment, amount). */
+  refundPartial(providerPaymentId: string, amountCents: number): Promise<void>
+
   /** Cancela pagamento pendente (PIX expirado). Best-effort. */
   cancelPayment(providerPaymentId: string): Promise<void>
 }

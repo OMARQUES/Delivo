@@ -108,6 +108,14 @@ export class MercadoPagoProvider implements PaymentProvider {
     })
   }
 
+  async refundPartial(providerPaymentId: string, amountCents: number): Promise<void> {
+    await this.request(`/v1/payments/${providerPaymentId}/refunds`, {
+      method: 'POST',
+      body: JSON.stringify({ amount: centsToReais(amountCents) }),
+      idempotencyKey: `refund-${providerPaymentId}-${amountCents}`,
+    })
+  }
+
   async cancelPayment(providerPaymentId: string): Promise<void> {
     try {
       await this.request(`/v1/payments/${providerPaymentId}`, {

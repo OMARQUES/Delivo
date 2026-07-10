@@ -47,6 +47,7 @@ function fakeProvider(overrides: Partial<PaymentProvider> = {}): PaymentProvider
     createCardPayment: vi.fn(async () => ({ providerPaymentId: 'mp-c', status: 'APPROVED' as const, statusDetail: 'accredited' })),
     getPayment: vi.fn(async (id) => ({ providerPaymentId: id, status: 'APPROVED' as const })),
     refundPayment: vi.fn(async () => {}),
+    refundPartial: vi.fn(async () => {}),
     cancelPayment: vi.fn(async () => {}),
     ...overrides,
   }

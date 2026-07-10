@@ -153,6 +153,7 @@ describe('POST /orders/quote + POST /orders', () => {
       createCardPayment: async () => { throw new Error('not used') },
       getPayment: async () => ({ providerPaymentId: 'x', status: 'PENDING' }),
       refundPayment: async () => {},
+      refundPartial: async () => {},
       cancelPayment: async () => {},
     })
     const body = checkout({ paymentMethod: 'PIX_ONLINE' })
@@ -179,6 +180,7 @@ describe('POST /orders/quote + POST /orders', () => {
       createCardPayment: approve,
       getPayment: async () => ({ providerPaymentId: 'x', status: 'APPROVED' }),
       refundPayment: async () => {},
+      refundPartial: async () => {},
       cancelPayment: async () => {},
     })
     const ok = await req('/orders', {
@@ -213,6 +215,7 @@ describe('POST /orders/quote + POST /orders', () => {
       createCardPayment: async () => { throw new Error('not used') },
       getPayment: async () => ({ providerPaymentId: 'x', status: 'PENDING' }),
       refundPayment: async () => {},
+      refundPartial: async () => {},
       cancelPayment: async () => {},
     })
     const res = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({ paymentMethod: 'PIX_ONLINE' })) }, customerToken)

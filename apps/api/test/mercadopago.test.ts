@@ -110,4 +110,13 @@ describe('getPayment / refund / cancel', () => {
     expect(url).toBe('https://api.mercadopago.com/v1/payments/999')
     expect(init.method).toBe('PUT')
   })
+
+  it('refundPartial POSTs amount in reais with idempotency key', async () => {
+    const fn = mockFetch(201, { id: 1 })
+    await provider.refundPartial('999', 450)
+    const [url, init] = fn.mock.calls[0]! as unknown as [string, RequestInit]
+    expect(url).toBe('https://api.mercadopago.com/v1/payments/999/refunds')
+    expect(JSON.parse(String(init.body)).amount).toBe(4.5)
+    expect((init.headers as Record<string, string>)['X-Idempotency-Key']).toBe('refund-999-450')
+  })
 })
