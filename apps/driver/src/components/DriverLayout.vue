@@ -106,6 +106,7 @@ async function logout() {
         <RouterLink to="/entregas" class="underline">Minhas entregas</RouterLink>
         <RouterLink to="/financeiro" class="underline">Ganhos</RouterLink>
         <RouterLink to="/lojas" class="underline">Minhas lojas</RouterLink>
+        <RouterLink to="/perfil" class="underline">Meus dados</RouterLink>
       </nav>
       <div class="flex items-center gap-2">
         <button v-if="showPushButton" class="text-sm underline" @click="onEnablePush">🔔 Ativar alertas</button>

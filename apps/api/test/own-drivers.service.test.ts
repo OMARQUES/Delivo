@@ -7,7 +7,7 @@ import { createStoreWithOwner, updateStore } from '../src/services/store.service
 import { createAddress } from '../src/services/address.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
-import { confirmLink, inviteDriver, updateLinkTerms } from '../src/services/store-driver.service'
+import { confirmLink, inviteDriver, removeLink, updateLinkTerms } from '../src/services/store-driver.service'
 import { endShift, startShift } from '../src/services/shift.service'
 import { requestDriver, requestDriverOwn, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import {
@@ -106,6 +106,18 @@ describe('entregadores próprios', () => {
     expect((await testDb.select().from(driverShifts).where(eq(driverShifts.id, shift.id)))[0]).toMatchObject({ status: 'CLOSED', closedBy: 'DRIVER' })
     await expect(endShift(testDb, driverId, shift.id)).rejects.toThrow('não encontrado')
     expect(await testDb.select().from(ledgerEntries).where(isNull(ledgerEntries.orderId))).toHaveLength(2)
+  })
+
+  it('reconvidar após remover reativa o vínculo (não dá 409)', async () => {
+    const first = await inviteDriver(testDb, storeId, '44 91111-1111', { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [] })
+    await removeLink(testDb, storeId, first.id)
+    // reinvite com valores novos → reativa o MESMO registro como INVITED
+    const again = await inviteDriver(testDb, storeId, '44 91111-1111', { dailyRateCents: 9_000, perDeliveryCents: 900, schedule: [] })
+    expect(again.id).toBe(first.id)
+    expect(again).toMatchObject({ status: 'INVITED', dailyRateCents: 9_000, perDeliveryCents: 900 })
+    // vínculo ativo → reinvite dá 409
+    await expect(inviteDriver(testDb, storeId, '44 91111-1111', { dailyRateCents: 1, perDeliveryCents: 1, schedule: [] }))
+      .rejects.toMatchObject({ status: 409 })
   })
 
   it('loja escala OWN → pool geral explicitamente (sem fallback automático)', async () => {

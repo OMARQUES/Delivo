@@ -31,6 +31,18 @@ export async function inviteDriver(db: Db, storeId: string, phone: string, terms
   if (driver.role !== 'DRIVER' || driver.status !== 'ACTIVE') {
     throw new StoreDriverError('A conta informada não é de um entregador ativo', 400)
   }
+  // Vínculo é único por (loja, entregador) mesmo quando REMOVED — reconvidar reativa o mesmo registro.
+  const [existing] = await db.select().from(storeDrivers)
+    .where(and(eq(storeDrivers.storeId, storeId), eq(storeDrivers.driverUserId, driver.id)))
+    .limit(1)
+  if (existing) {
+    if (existing.status !== 'REMOVED') throw new StoreDriverError('Entregador já vinculado à loja', 409)
+    const [revived] = await db.update(storeDrivers)
+      .set({ status: 'INVITED', ...terms, updatedAt: new Date() })
+      .where(eq(storeDrivers.id, existing.id))
+      .returning()
+    return revived!
+  }
   try {
     const [link] = await db.insert(storeDrivers).values({
       storeId,
