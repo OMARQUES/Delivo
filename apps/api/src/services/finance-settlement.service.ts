@@ -1,4 +1,4 @@
-import { and, eq, gte, lt } from 'drizzle-orm'
+import { and, desc, eq, gte, lt } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import {
   driverPayoutItems,
@@ -8,6 +8,8 @@ import {
   storeInvoices,
   storePayoutItems,
   storePayouts,
+  stores,
+  users,
 } from '../db/schema'
 
 type PeriodInput = {
@@ -214,4 +216,84 @@ export async function markDriverPayoutPaid(db: Db, id: string) {
     .returning()
   if (!row) throw new FinanceError('Repasse do entregador não encontrado', 404)
   return row
+}
+
+export async function listAdminFinance(db: Db) {
+  const invoices = await db
+    .select({
+      id: storeInvoices.id,
+      storeId: storeInvoices.storeId,
+      storeName: stores.name,
+      periodStart: storeInvoices.periodStart,
+      periodEnd: storeInvoices.periodEnd,
+      status: storeInvoices.status,
+      totalCents: storeInvoices.totalCents,
+      paidAt: storeInvoices.paidAt,
+      createdAt: storeInvoices.createdAt,
+    })
+    .from(storeInvoices)
+    .innerJoin(stores, eq(stores.id, storeInvoices.storeId))
+    .orderBy(desc(storeInvoices.createdAt))
+    .limit(100)
+  const storePayoutRows = await db
+    .select({
+      id: storePayouts.id,
+      storeId: storePayouts.storeId,
+      storeName: stores.name,
+      periodStart: storePayouts.periodStart,
+      periodEnd: storePayouts.periodEnd,
+      status: storePayouts.status,
+      totalCents: storePayouts.totalCents,
+      paidAt: storePayouts.paidAt,
+      createdAt: storePayouts.createdAt,
+    })
+    .from(storePayouts)
+    .innerJoin(stores, eq(stores.id, storePayouts.storeId))
+    .orderBy(desc(storePayouts.createdAt))
+    .limit(100)
+  const driverPayoutRows = await db
+    .select({
+      id: driverPayouts.id,
+      driverId: driverPayouts.driverId,
+      driverName: users.name,
+      periodStart: driverPayouts.periodStart,
+      periodEnd: driverPayouts.periodEnd,
+      status: driverPayouts.status,
+      totalCents: driverPayouts.totalCents,
+      paidAt: driverPayouts.paidAt,
+      createdAt: driverPayouts.createdAt,
+    })
+    .from(driverPayouts)
+    .innerJoin(users, eq(users.id, driverPayouts.driverId))
+    .orderBy(desc(driverPayouts.createdAt))
+    .limit(100)
+  return { storeInvoices: invoices, storePayouts: storePayoutRows, driverPayouts: driverPayoutRows }
+}
+
+export async function getStoreFinance(db: Db, storeId: string) {
+  const ledger = await db.select().from(ledgerEntries)
+    .where(eq(ledgerEntries.storeId, storeId))
+    .orderBy(desc(ledgerEntries.createdAt))
+    .limit(100)
+  const invoices = await db.select().from(storeInvoices)
+    .where(eq(storeInvoices.storeId, storeId))
+    .orderBy(desc(storeInvoices.createdAt))
+    .limit(50)
+  const payouts = await db.select().from(storePayouts)
+    .where(eq(storePayouts.storeId, storeId))
+    .orderBy(desc(storePayouts.createdAt))
+    .limit(50)
+  return { ledger, invoices, payouts }
+}
+
+export async function getDriverFinance(db: Db, driverId: string) {
+  const ledger = await db.select().from(ledgerEntries)
+    .where(eq(ledgerEntries.driverId, driverId))
+    .orderBy(desc(ledgerEntries.createdAt))
+    .limit(100)
+  const payouts = await db.select().from(driverPayouts)
+    .where(eq(driverPayouts.driverId, driverId))
+    .orderBy(desc(driverPayouts.createdAt))
+    .limit(50)
+  return { ledger, payouts }
 }
