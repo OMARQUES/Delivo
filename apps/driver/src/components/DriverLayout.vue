@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, provide, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../lib/api'
 import { enablePush, pushConfigured } from '../lib/push'
@@ -27,6 +27,9 @@ async function loadShift() {
   shift.value = active
   links.value = allLinks.filter((link) => link.status === 'CONFIRMED')
 }
+
+// telas filhas (ex.: Minhas lojas) chamam após confirmar convite para a barra atualizar sem F5
+provide('reloadDriverBar', loadShift)
 
 onMounted(async () => {
   try {

@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { inject, onMounted, ref } from 'vue'
 import { formatBRL } from '@delivery/shared/constants'
 import { api } from '../lib/api'
+
+// recarrega a barra de turno do layout (o botão "Iniciar turno" depende dos vínculos confirmados)
+const reloadDriverBar = inject<() => Promise<void> | void>('reloadDriverBar', () => {})
 
 type Link = {
   id: string
@@ -18,7 +21,7 @@ async function load() {
   catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
 }
 async function confirm(id: string) {
-  try { await api(`/driver/links/${id}/confirm`, { method: 'POST' }); await load() }
+  try { await api(`/driver/links/${id}/confirm`, { method: 'POST' }); await load(); await reloadDriverBar() }
   catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
 }
 onMounted(load)
