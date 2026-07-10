@@ -12,7 +12,7 @@ import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.service'
 import {
   listAvailableDriverTokens, listShiftDriverTokens, requestDriver, requestDriverOwn,
-  requestDriverSpecific, storeResolveCancelRequest, storeUpdateOrderStatus,
+  requestDriverSpecific, storeResolveCancelRequest, storeUpdateOrderStatus, withdrawDriverRequest,
 } from '../services/order-status.service'
 import { getStoreByOwner } from '../services/store.service'
 import { AmendmentError, proposeAmendment, withdrawAmendment } from '../services/amendment.service'
@@ -93,6 +93,19 @@ storeOrderRoutes.openapi(
     const { driverUserId } = c.req.valid('json')
     const order = await requestDriverSpecific(c.get('db'), storeId, c.req.valid('param').id, driverUserId).catch(rethrow)
     await pushForTarget(c, storeId, 'SPECIFIC', driverUserId, { orderId: order.id })
+    return c.json(order, 200)
+  },
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post', path: '/store/me/orders/{id}/request-withdraw',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Chamado retirado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => {
+    const storeId = await ownStoreId(c)
+    const order = await withdrawDriverRequest(c.get('db'), storeId, c.req.valid('param').id, c.get('auth')!.sub).catch(rethrow)
     return c.json(order, 200)
   },
 )

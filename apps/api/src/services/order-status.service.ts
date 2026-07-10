@@ -122,6 +122,28 @@ export function requestDriverSpecific(db: Db, storeId: string, orderId: string, 
   return setDriverRequestTarget(db, storeId, orderId, 'SPECIFIC', driverUserId)
 }
 
+/** Loja retira o chamado (qualquer alvo, inclusive pool geral) enquanto ninguém aceitou. AWAITING_DRIVER volta pra READY. */
+export async function withdrawDriverRequest(db: Db, storeId: string, orderId: string, actorId: string) {
+  return db.transaction(async (tx) => {
+    const [order] = await tx.select().from(orders).where(and(
+      eq(orders.id, orderId), eq(orders.storeId, storeId),
+    )).for('update')
+    if (!order) throw new OrderError('Pedido não encontrado', 404)
+    if (order.driverId) throw new OrderError('Um entregador já aceitou — peça pra ele liberar', 409)
+    if (!order.driverRequestedAt) throw new OrderError('Pedido não tem chamado ativo', 409)
+    const [updated] = await tx.update(orders).set({
+      driverRequestedAt: null,
+      driverRequestTarget: null,
+      requestedDriverId: null,
+      driverRequestRefusedAt: null,
+      ...(order.status === 'AWAITING_DRIVER' ? { status: 'READY' as const } : {}),
+    }).where(and(eq(orders.id, orderId), isNull(orders.driverId))).returning()
+    if (!updated) throw new OrderError('Pedido mudou — recarregue', 409)
+    if (order.status === 'AWAITING_DRIVER') await addEvent(tx, orderId, 'READY', 'STORE', actorId, 'chamado de entregador retirado')
+    return updated
+  })
+}
+
 export async function listAvailableDriverTokens(db: Db): Promise<string[]> {
   const rows = await db
     .select({ fcmToken: drivers.fcmToken })

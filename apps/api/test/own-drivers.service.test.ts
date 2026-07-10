@@ -14,7 +14,7 @@ import {
 import { endShift, startShift, updateActiveShift } from '../src/services/shift.service'
 import {
   listAvailableDriverTokens, listShiftDriverTokens, requestDriver, requestDriverOwn,
-  requestDriverSpecific, storeUpdateOrderStatus,
+  requestDriverSpecific, storeUpdateOrderStatus, withdrawDriverRequest,
 } from '../src/services/order-status.service'
 import {
   acceptDelivery, acceptShiftDelivery, collectDelivery, completeDelivery,
@@ -219,6 +219,28 @@ describe('entregadores próprios', () => {
     await acceptDelivery(testDb, freelanceId, order.id)
     // GENERAL não regride pra OWN
     await expect(requestDriverOwn(testDb, storeId, order.id)).rejects.toThrow()
+  })
+
+  it('loja retira o chamado do pool geral (withdraw) e pode redirecionar do zero', async () => {
+    const order = await makeOrder('CASH')
+    await storeUpdateOrderStatus(testDb, storeId, order.id, 'PREPARING', customerId)
+    await storeUpdateOrderStatus(testDb, storeId, order.id, 'READY', customerId)
+    await requestDriver(testDb, storeId, order.id) // READY -> AWAITING_DRIVER
+    expect(await listAvailableDeliveries(testDb, freelanceId)).toHaveLength(1)
+
+    const withdrawn = await withdrawDriverRequest(testDb, storeId, order.id, customerId)
+    expect(withdrawn).toMatchObject({ driverRequestedAt: null, driverRequestTarget: null, status: 'READY' })
+    // some do pool
+    expect(await listAvailableDeliveries(testDb, freelanceId)).toHaveLength(0)
+    // pós-withdraw pode escolher own de novo (não é regressão do GENERAL — chamado foi retirado)
+    const own = await requestDriverOwn(testDb, storeId, order.id)
+    expect(own.driverRequestTarget).toBe('OWN')
+    // sem chamado ativo -> 409; com entregador -> 409
+    await withdrawDriverRequest(testDb, storeId, order.id, customerId)
+    await expect(withdrawDriverRequest(testDb, storeId, order.id, customerId)).rejects.toMatchObject({ status: 409 })
+    await requestDriver(testDb, storeId, order.id)
+    await acceptDelivery(testDb, freelanceId, order.id)
+    await expect(withdrawDriverRequest(testDb, storeId, order.id, customerId)).rejects.toMatchObject({ status: 409 })
   })
 
   it('direciona a um entregador, permite recusa e redirecionamento explícito', async () => {

@@ -180,6 +180,12 @@ async function requestOwn(o: OrderRow) {
   catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
 }
 
+async function withdrawRequest(o: OrderRow) {
+  error.value = ''
+  try { await api(`/store/me/orders/${o.id}/request-withdraw`, { method: 'POST' }); await load() }
+  catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
+
 async function requestSpecific(o: OrderRow, driverUserId: string) {
   if (!driverUserId) return
   error.value = ''
@@ -394,6 +400,11 @@ const groups = computed(() => {
             <span v-else-if="!o.driverId && o.driverRequestTarget === 'SPECIFIC'" class="rounded bg-blue-100 px-2 py-1 text-xs">aguardando {{ requestedName(o) }}…</span>
             <span v-else-if="!o.driverId && o.driverRequestTarget === 'OWN'" class="rounded bg-blue-100 px-2 py-1 text-xs">aguardando entregador próprio…</span>
             <span v-else-if="!o.driverId && o.driverRequestTarget === 'GENERAL'" class="rounded bg-blue-100 px-2 py-1 text-xs">aguardando pool geral…</span>
+            <button
+              v-if="!o.driverId && o.driverRequestedAt"
+              class="rounded border border-red-400 px-2 py-1 text-red-600"
+              @click="withdrawRequest(o)"
+            >Cancelar chamado</button>
             <template v-if="canChooseTarget(o)">
               <button class="rounded border px-2 py-1" @click="requestDriver(o)">🛵 Pool geral</button>
               <button class="rounded border border-blue-500 px-2 py-1 text-blue-700" @click="requestOwn(o)">🏪 Meus entregadores</button>
