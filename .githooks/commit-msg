@@ -1,0 +1,6 @@
+#!/bin/sh
+# Política do projeto: nenhum commit pode ter trailer de coautoria do Claude/Anthropic.
+# Remove qualquer linha "Co-Authored-By: ...claude..." ou "...anthropic..." (case-insensitive).
+msg="$1"
+grep -viE '^[[:space:]]*Co-Authored-By:.*(claude|anthropic)' "$msg" > "$msg.tmp"
+mv "$msg.tmp" "$msg"
