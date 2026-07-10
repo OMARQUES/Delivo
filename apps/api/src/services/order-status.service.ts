@@ -123,6 +123,10 @@ export async function storeUpdateOrderStatus(
   if (!order) throw new OrderError('Pedido não encontrado', 404)
   if (to !== 'CANCELLED' && (await getPendingAmendment(db, orderId)))
     throw new OrderError('Resolva a alteração pendente antes de avançar o pedido', 409)
+  if (order.fulfillment === 'DELIVERY' && to === 'DELIVERED')
+    throw new OrderError('Entrega ao cliente só pode ser finalizada pelo entregador', 409)
+  if (order.fulfillment === 'DELIVERY' && order.driverId && to === 'OUT_FOR_DELIVERY')
+    throw new OrderError('Pedido com entregador deve ser coletado pelo app do entregador', 409)
   if (!canTransition(order.status, to)) throw new OrderError(`Transição inválida: ${order.status} → ${to}`, 409)
 
   const rows = await db

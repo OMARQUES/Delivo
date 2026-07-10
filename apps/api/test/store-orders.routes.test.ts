@@ -229,15 +229,16 @@ describe('store amendment routes', () => {
 })
 
 describe('PATCH /store/me/orders/:id/status', () => {
-  it('walks the happy path with events; blocks invalid transition and AWAITING_DRIVER', async () => {
+  it('walks store prep path; blocks delivery finalization, invalid transition and AWAITING_DRIVER', async () => {
     const { order: o } = await createOrder(testDb, customerId, checkout())
-    for (const to of ['ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'DELIVERED']) {
+    for (const to of ['ACCEPTED', 'PREPARING', 'READY']) {
       const r = await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })
       expect(r.status).toBe(200)
     }
+    expect((await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'DELIVERED' }) })).status).toBe(409)
     const detail = await req(`/store/me/orders/${o.id}`)
     const body = (await detail.json()) as { events: unknown[] }
-    expect(body.events.length).toBe(6)
+    expect(body.events.length).toBe(4)
     const { order: o2 } = await createOrder(testDb, customerId, checkout())
     expect((await req(`/store/me/orders/${o2.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'DELIVERED' }) })).status).toBe(409)
     expect((await req(`/store/me/orders/${o2.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'AWAITING_DRIVER' }) })).status).toBe(400)
@@ -248,6 +249,25 @@ describe('PATCH /store/me/orders/:id/status', () => {
     const { order: o } = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
     for (const to of ['ACCEPTED', 'PREPARING', 'READY', 'DELIVERED']) {
       expect((await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })).status).toBe(200)
+    }
+  })
+
+  it('delivery com entregador: loja não finaliza cliente; pickup continua finalizável', async () => {
+    const { order: o } = await createOrder(testDb, customerId, checkout())
+    await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'ACCEPTED' }) })
+    await requestDriver(testDb, storeId, o.id)
+    const { acceptDelivery, collectDelivery } = await import('../src/services/dispatch.service')
+    await acceptDelivery(testDb, driverUserId, o.id)
+    for (const to of ['PREPARING', 'READY']) {
+      expect((await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })).status).toBe(200)
+    }
+    expect((await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'OUT_FOR_DELIVERY' }) })).status).toBe(409)
+    await collectDelivery(testDb, driverUserId, o.id)
+    expect((await req(`/store/me/orders/${o.id}/status`, { method: 'PATCH', body: JSON.stringify({ to: 'DELIVERED' }) })).status).toBe(409)
+
+    const { order: p } = await createOrder(testDb, customerId, checkout({ fulfillment: 'PICKUP', addressId: undefined }))
+    for (const to of ['ACCEPTED', 'PREPARING', 'READY', 'DELIVERED']) {
+      expect((await req(`/store/me/orders/${p.id}/status`, { method: 'PATCH', body: JSON.stringify({ to }) })).status).toBe(200)
     }
   })
 })

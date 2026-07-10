@@ -108,8 +108,8 @@ const NEXT: Partial<Record<OrderStatus, { to: OrderStatus; label: string }[]>> =
 
 function actionsFor(o: OrderRow) {
   return (NEXT[o.status] ?? []).filter((a) => {
-    if (a.to === 'OUT_FOR_DELIVERY' && o.fulfillment === 'PICKUP') return false
-    if (a.to === 'DELIVERED' && o.status === 'READY' && o.fulfillment === 'DELIVERY') return false
+    if (a.to === 'OUT_FOR_DELIVERY' && (o.fulfillment === 'PICKUP' || Boolean(o.driverId))) return false
+    if (a.to === 'DELIVERED' && o.fulfillment === 'DELIVERY') return false
     return true
   })
 }
@@ -256,6 +256,9 @@ const groups = computed(() => {
             >🛵 Solicitar entregador</button>
             <span v-else-if="o.fulfillment === 'DELIVERY' && !o.driverId && o.driverRequestedAt" class="rounded bg-blue-100 px-2 py-1 text-xs">
               aguardando entregador...
+            </span>
+            <span v-else-if="o.driverId && o.status === 'OUT_FOR_DELIVERY'" class="rounded bg-green-100 px-2 py-1 text-xs">
+              entregue ao entregador
             </span>
             <span v-else-if="o.driverId" class="rounded bg-green-100 px-2 py-1 text-xs">entregador a caminho</span>
             <button class="rounded border px-2 py-1" @click="openDetail(o)">Detalhes</button>
