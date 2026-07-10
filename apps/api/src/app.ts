@@ -17,6 +17,7 @@ import { storeCatalogRoutes } from './routes/store-catalog'
 import { storeMeRoutes } from './routes/store-me'
 import { storeOrderRoutes } from './routes/store-orders'
 import { publicStoreRoutes } from './routes/stores-public'
+import { webhookRoutes } from './routes/webhooks'
 
 export const app = createRouter()
 
@@ -49,6 +50,7 @@ app.route('/', storeOrderRoutes)
 app.route('/', storeCatalogRoutes)
 app.route('/', menuPublicRoutes)
 app.route('/', publicStoreRoutes)
+app.route('/', webhookRoutes)
 
 app.doc('/openapi.json', {
   openapi: '3.1.0',
