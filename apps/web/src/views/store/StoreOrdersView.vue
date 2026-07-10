@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { formatBRL, ORDER_STATUS_LABELS, type OrderStatus } from '@delivery/shared/constants'
+import { formatBRL, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type OrderStatus, type PaymentMethod } from '@delivery/shared/constants'
 import { api } from '../../lib/api'
 
 type OrderRow = {
@@ -9,7 +9,7 @@ type OrderRow = {
   fulfillment: 'DELIVERY' | 'PICKUP'
   driverId: string | null
   driverRequestedAt: string | null
-  paymentMethod: string
+  paymentMethod: PaymentMethod
   changeForCents: number | null
   totalCents: number
   createdAt: string
@@ -202,11 +202,10 @@ async function withdrawAmend() {
   }
 }
 
-function paymentLabel(o: { paymentMethod: string; changeForCents: number | null }) {
+function paymentLabel(o: { paymentMethod: PaymentMethod; changeForCents: number | null }) {
   if (o.paymentMethod === 'CASH') return `Dinheiro${o.changeForCents ? ` (troco p/ ${formatBRL(o.changeForCents)})` : ''}`
-  if (o.paymentMethod === 'CARD_MACHINE') return 'Maquininha'
-  if (o.paymentMethod === 'PIX_ONLINE') return '✅ PIX pago'
-  return '✅ Cartão pago'
+  if (o.paymentMethod === 'PIX_ONLINE' || o.paymentMethod === 'CARD_ONLINE') return `✅ ${PAYMENT_METHOD_LABELS[o.paymentMethod]}`
+  return PAYMENT_METHOD_LABELS[o.paymentMethod]
 }
 
 const wa = (phone: string | null) => (phone ? `https://wa.me/55${phone}` : null)
