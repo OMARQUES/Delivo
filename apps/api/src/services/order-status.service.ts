@@ -6,6 +6,7 @@ import type { PaymentProvider } from '../lib/payment-provider'
 import { OrderError } from './order.service'
 import { addEvent } from './order-events'
 import { refundOrderPaymentIfAny } from './payment.service'
+import { expirePendingAmendment, getPendingAmendment } from './amendment.service'
 
 export { addEvent } from './order-events'
 
@@ -18,6 +19,7 @@ export async function customerCancelOrder(db: Db, customerId: string, orderId: s
     .returning()
   if (rows.length === 0) throw new OrderError('Pedido não pode mais ser cancelado direto — solicite à loja', 409)
   await addEvent(db, orderId, 'CANCELLED', 'CUSTOMER', customerId)
+  await expirePendingAmendment(db, orderId)
   await refundOrderPaymentIfAny(db, provider ?? null, orderId)
   return rows[0]!
 }
@@ -50,6 +52,7 @@ export async function cancelStalePendingOrders(db: Db, olderThanMinutes = 30, pr
     .returning({ id: orders.id })
   for (const r of rows) {
     await addEvent(db, r.id, 'CANCELLED', 'SYSTEM', null, 'timeout 30min')
+    await expirePendingAmendment(db, r.id)
     await refundOrderPaymentIfAny(db, provider ?? null, r.id)
   }
   return rows.length
@@ -118,6 +121,8 @@ export async function storeUpdateOrderStatus(
     .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId)))
     .limit(1)
   if (!order) throw new OrderError('Pedido não encontrado', 404)
+  if (to !== 'CANCELLED' && (await getPendingAmendment(db, orderId)))
+    throw new OrderError('Resolva a alteração pendente antes de avançar o pedido', 409)
   if (!canTransition(order.status, to)) throw new OrderError(`Transição inválida: ${order.status} → ${to}`, 409)
 
   const rows = await db
@@ -127,7 +132,10 @@ export async function storeUpdateOrderStatus(
     .returning()
   if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)
   await addEvent(db, orderId, to, 'STORE', actorId, reason)
-  if (to === 'CANCELLED') await refundOrderPaymentIfAny(db, provider ?? null, orderId)
+  if (to === 'CANCELLED') {
+    await expirePendingAmendment(db, orderId)
+    await refundOrderPaymentIfAny(db, provider ?? null, orderId)
+  }
   let final = rows[0]!
   if (to === 'READY' && final.driverRequestedAt && !final.driverId) {
     const auto = await db
@@ -167,6 +175,7 @@ export async function storeResolveCancelRequest(
       .returning()
     if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)
     await addEvent(db, orderId, 'CANCELLED', 'STORE', actorId, 'solicitação do cliente aprovada')
+    await expirePendingAmendment(db, orderId)
     await refundOrderPaymentIfAny(db, provider ?? null, orderId)
     return rows[0]!
   }

@@ -140,6 +140,8 @@ export async function expireStaleAwaitingPayment(
     .returning({ id: orders.id })
   for (const o of stale) {
     await addEvent(db, o.id, 'CANCELLED', 'SYSTEM', null, 'pagamento expirado')
+    const { expirePendingAmendment } = await import('./amendment.service')
+    await expirePendingAmendment(db, o.id)
     const payment = await getOrderPayment(db, o.id)
     if (payment && payment.status === 'PENDING') {
       if (provider) await provider.cancelPayment(payment.providerPaymentId)
