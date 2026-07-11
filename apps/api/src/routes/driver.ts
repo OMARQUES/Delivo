@@ -35,6 +35,8 @@ import {
 } from '../services/store-driver.service'
 import { endShift, getActiveShift, ShiftError, startShift } from '../services/shift.service'
 import { createPaymentProvider } from '../lib/mercadopago'
+import { PaymentProviderError } from '../lib/payment-provider'
+import { PaymentError } from '../services/payment.service'
 
 export const driverRoutes = createRouter()
 
@@ -45,6 +47,9 @@ function rethrow(e: unknown): never {
   if (e instanceof BatchError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof StoreDriverError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof ShiftError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof PaymentProviderError)
+    throw new HTTPException(503, { message: 'Falha registrada; o estorno do cliente será reprocessado (gateway indisponível)' })
   throw e
 }
 
