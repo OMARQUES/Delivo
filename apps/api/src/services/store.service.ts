@@ -2,7 +2,7 @@ import { eq, sql } from 'drizzle-orm'
 import type { StoreCreateInput, StoreUpdateInput } from '@delivery/shared/schemas'
 import { isOpenNow } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { stores, users, authProviders } from '../db/schema'
+import { stores, users, authProviders, refreshTokens } from '../db/schema'
 import { hashPassword } from '../lib/password'
 
 export class StoreError extends Error {
@@ -115,14 +115,38 @@ export async function updateStore(db: Db, storeId: string, input: StoreUpdateInp
   return row
 }
 
-export async function setStoreActive(db: Db, storeId: string, isActive: boolean) {
-  const [row] = await db
-    .update(stores)
-    .set({ securityStatus: isActive ? 'ACTIVE' : 'SUSPENDED' })
-    .where(eq(stores.id, storeId))
-    .returning()
-  if (!row) throw new StoreError('Loja não encontrada', 404)
-  return row
+export async function setStoreSecurityStatus(
+  db: Db,
+  storeId: string,
+  securityStatus: 'ACTIVE' | 'SUSPENDED' | 'CLOSED',
+) {
+  return db.transaction(async (tx) => {
+    const [current] = await tx.select().from(stores).where(eq(stores.id, storeId)).limit(1)
+    if (!current) throw new StoreError('Loja não encontrada', 404)
+    if (current.securityStatus === 'CLOSED' && securityStatus !== 'CLOSED') {
+      throw new StoreError('Loja encerrada não pode ser reativada', 409)
+    }
+    if (current.securityStatus === securityStatus) return current
+
+    const [store] = await tx
+      .update(stores)
+      .set({ securityStatus })
+      .where(eq(stores.id, storeId))
+      .returning()
+    if (!store) throw new StoreError('Loja não encontrada', 404)
+
+    if (securityStatus === 'SUSPENDED' || securityStatus === 'CLOSED') {
+      await tx
+        .update(users)
+        .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
+        .where(eq(users.id, store.ownerUserId))
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(eq(refreshTokens.userId, store.ownerUserId))
+    }
+    return store
+  })
 }
 
 /** Comissão da plataforma em basis points (0..10000 = 0..100%). Admin-only. */

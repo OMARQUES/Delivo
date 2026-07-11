@@ -3,7 +3,7 @@ import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import {
   createStoreWithOwner, getStoreByOwner, getStoreBySlug, listPublicStores,
-  setStoreActive, updateStore, StoreError,
+  setStoreSecurityStatus, updateStore, StoreError,
 } from '../src/services/store.service'
 
 const input: StoreCreateInput = {
@@ -59,7 +59,7 @@ describe('listPublicStores / getStoreBySlug', () => {
       ...input, name: 'Mercado X', slug: 'mercado-x', category: 'MERCADO',
       owner: { ...input.owner, email: 'm@y.com' },
     })
-    await setStoreActive(testDb, b.id, false)
+    await setStoreSecurityStatus(testDb, b.id, 'SUSPENDED')
     const list = await listPublicStores(testDb)
     expect(list.map((s) => s.slug)).toEqual(['pizzaria-do-joao'])
     expect(list[0]).toHaveProperty('isOpen')
@@ -90,5 +90,20 @@ describe('updateStore', () => {
     const s = await createStoreWithOwner(testDb, input)
     await expect(updateStore(testDb, s.id, {})).rejects.toThrow(StoreError)
     await expect(updateStore(testDb, s.id, {})).rejects.toMatchObject({ status: 400 })
+  })
+})
+
+describe('setStoreSecurityStatus', () => {
+  it('suspends a store, hides it publicly and permanently closes the lifecycle', async () => {
+    const store = await createStoreWithOwner(testDb, input)
+    const suspended = await setStoreSecurityStatus(testDb, store.id, 'SUSPENDED')
+    expect(suspended.securityStatus).toBe('SUSPENDED')
+    expect(await getStoreBySlug(testDb, store.slug)).toBeNull()
+
+    const active = await setStoreSecurityStatus(testDb, store.id, 'ACTIVE')
+    expect(active.securityStatus).toBe('ACTIVE')
+    const closed = await setStoreSecurityStatus(testDb, store.id, 'CLOSED')
+    expect(closed.securityStatus).toBe('CLOSED')
+    await expect(setStoreSecurityStatus(testDb, store.id, 'ACTIVE')).rejects.toMatchObject({ status: 409 })
   })
 })

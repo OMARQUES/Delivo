@@ -7,7 +7,7 @@ import { stores } from '../db/schema'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { importCsvCatalog } from '../services/catalog.service'
 import {
-  createStoreWithOwner, listAllStores, setStoreActive, setStoreCommission, StoreError,
+  createStoreWithOwner, listAllStores, setStoreCommission, setStoreSecurityStatus, StoreError,
 } from '../services/store.service'
 
 export const adminStoreRoutes = createRouter()
@@ -19,11 +19,10 @@ function rethrow(e: unknown): never {
   throw e
 }
 
-const StoreOut = z.object({ id: z.string(), slug: z.string(), name: z.string(), isActive: z.boolean() }).passthrough()
-
-function toStoreOut(store: typeof stores.$inferSelect) {
-  return { ...store, isActive: store.securityStatus === 'ACTIVE' }
-}
+const StoreOut = z.object({
+  id: z.string(), slug: z.string(), name: z.string(),
+  securityStatus: z.enum(['ACTIVE', 'SUSPENDED', 'CLOSED']),
+}).passthrough()
 
 adminStoreRoutes.openapi(
   createRoute({
@@ -33,7 +32,7 @@ adminStoreRoutes.openapi(
   }),
   async (c) => {
     const store = await createStoreWithOwner(c.get('db'), c.req.valid('json')).catch(rethrow)
-    return c.json(toStoreOut(store), 201)
+    return c.json(store, 201)
   },
 )
 
@@ -42,23 +41,23 @@ adminStoreRoutes.openapi(
     method: 'get', path: '/admin/stores',
     responses: { 200: { description: 'Todas as lojas', content: { 'application/json': { schema: z.array(StoreOut) } } } },
   }),
-  async (c) => c.json((await listAllStores(c.get('db'))).map(toStoreOut), 200),
+  async (c) => c.json(await listAllStores(c.get('db')), 200),
 )
 
 adminStoreRoutes.openapi(
   createRoute({
-    method: 'patch', path: '/admin/stores/{id}/active',
+    method: 'patch', path: '/admin/stores/{id}/security-status',
     request: {
       params: z.object({ id: z.uuid() }),
-      body: { content: { 'application/json': { schema: z.object({ isActive: z.boolean() }) } } },
+      body: { content: { 'application/json': { schema: z.object({ securityStatus: z.enum(['ACTIVE', 'SUSPENDED', 'CLOSED']) }) } } },
     },
     responses: { 200: { description: 'Atualizada', content: { 'application/json': { schema: StoreOut } } } },
   }),
   async (c) => {
     const { id } = c.req.valid('param')
-    const { isActive } = c.req.valid('json')
-    const store = await setStoreActive(c.get('db'), id, isActive).catch(rethrow)
-    return c.json(toStoreOut(store), 200)
+    const { securityStatus } = c.req.valid('json')
+    const store = await setStoreSecurityStatus(c.get('db'), id, securityStatus).catch(rethrow)
+    return c.json(store, 200)
   },
 )
 
@@ -76,7 +75,7 @@ adminStoreRoutes.openapi(
     const { id } = c.req.valid('param')
     const { commissionBps } = c.req.valid('json')
     const store = await setStoreCommission(c.get('db'), id, commissionBps).catch(rethrow)
-    return c.json(toStoreOut(store), 200)
+    return c.json(store, 200)
   },
 )
 

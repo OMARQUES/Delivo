@@ -7,7 +7,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { createStoreWithOwner, setStoreActive } from '../src/services/store.service'
+import { createStoreWithOwner, setStoreSecurityStatus } from '../src/services/store.service'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -32,7 +32,7 @@ describe('GET /stores', () => {
     const inactive = await createStoreWithOwner(testDb, {
       ...base, slug: 'fechada', name: 'Fechada', owner: { ...base.owner, email: 'f@y.com' },
     })
-    await setStoreActive(testDb, inactive.id, false)
+    await setStoreSecurityStatus(testDb, inactive.id, 'SUSPENDED')
     const res = await app.request('/stores', {}, env)
     expect(res.status).toBe(200)
     const list = (await res.json()) as Array<Record<string, unknown>>
