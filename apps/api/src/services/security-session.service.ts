@@ -1,6 +1,6 @@
 import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
-import { refreshTokens, stores, users } from '../db/schema'
+import { drivers, refreshTokens, stores, users } from '../db/schema'
 import type { AccessTokenPayload } from '../lib/tokens'
 
 export type LivePrincipal = {
@@ -87,5 +87,45 @@ export async function revokeAllSessions(db: Db, userId: string, now = new Date()
       .update(refreshTokens)
       .set({ revokedAt: now })
       .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)))
+  })
+}
+
+export async function setDriverAccountStatus(
+  db: Db,
+  userId: string,
+  status: 'ACTIVE' | 'BLOCKED',
+  now = new Date(),
+) {
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(users)
+      .where(and(eq(users.id, userId), eq(users.role, 'DRIVER')))
+      .for('update')
+    if (!current) return null
+
+    const [updated] = status === 'BLOCKED' && current.status !== 'BLOCKED'
+      ? await tx
+        .update(users)
+        .set({ status, tokenVersion: sql`${users.tokenVersion} + 1` })
+        .where(and(eq(users.id, userId), eq(users.role, 'DRIVER')))
+        .returning({ id: users.id, name: users.name, status: users.status })
+      : await tx
+        .update(users)
+        .set({ status })
+        .where(and(eq(users.id, userId), eq(users.role, 'DRIVER')))
+        .returning({ id: users.id, name: users.name, status: users.status })
+
+    if (status === 'BLOCKED') {
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: now })
+        .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)))
+      await tx
+        .update(drivers)
+        .set({ isAvailable: false, fcmToken: null })
+        .where(eq(drivers.userId, userId))
+    }
+    return updated ?? null
   })
 }

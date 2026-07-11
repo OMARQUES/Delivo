@@ -7,6 +7,7 @@ import {
   revokeRefreshToken,
   AuthError,
 } from '../src/services/auth.service'
+import { createStoreWithOwner, setStoreSecurityStatus } from '../src/services/store.service'
 
 const SECRET = 'test-secret'
 const ana = {
@@ -83,6 +84,21 @@ describe('loginUser', () => {
     await expect(
       loginUser(testDb, { identifier: '44999998888', password: 'senha123' }, SECRET),
     ).rejects.toThrow('aguardando aprovação')
+  })
+
+  it('does not issue a session while the store is suspended or closed', async () => {
+    const store = await createStoreWithOwner(testDb, {
+      name: 'Loja suspensa', slug: 'loja-suspensa', category: 'PIZZARIA', phone: '4433330000',
+      city: 'Cidade', addressText: 'Rua A, 1', lat: -23.5, lng: -51.9,
+      owner: { name: 'Dono', email: 'dono@loja.test', password: 'senha123' },
+    })
+    await setStoreSecurityStatus(testDb, store.id, 'SUSPENDED')
+
+    await expect(loginUser(
+      testDb,
+      { identifier: 'dono@loja.test', password: 'senha123' },
+      SECRET,
+    )).rejects.toMatchObject({ status: 403 })
   })
 })
 

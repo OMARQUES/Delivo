@@ -20,13 +20,13 @@ export type AccessTokenPayload = {
 }
 
 export type AccessPrincipal = Pick<AccessTokenPayload, 'sub' | 'role' | 'name'> & {
-  tokenVersion?: number
+  tokenVersion: number
 }
 
 export async function signAccessToken(
   p: AccessPrincipal,
   secret: string,
-  familyId: string = crypto.randomUUID(),
+  familyId: string,
   from = new Date(),
 ): Promise<string> {
   const now = Math.floor(from.getTime() / 1000)
@@ -34,7 +34,7 @@ export async function signAccessToken(
     sub: p.sub,
     role: p.role,
     name: p.name,
-    ver: p.tokenVersion ?? 0,
+    ver: p.tokenVersion,
     sid: familyId,
     jti: crypto.randomUUID(),
     iss: TOKEN_ISSUER,

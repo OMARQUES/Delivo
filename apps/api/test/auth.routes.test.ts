@@ -50,6 +50,7 @@ describe('POST /auth/register', () => {
     expect(res.status).toBe(201)
     const body = (await res.json()) as AuthBody
     expect(body.user.email).toBe('ana@email.com')
+    expect(body.user).not.toHaveProperty('tokenVersion')
     expect(body.accessToken).toBeTruthy()
   })
   it('409 on duplicate, 400 on invalid body', async () => {
@@ -72,7 +73,9 @@ describe('POST /auth/login + GET /auth/me', () => {
     await post('/auth/register', ana)
     const login = await post('/auth/login', { identifier: '44999998888', password: 'senha123' })
     expect(login.status).toBe(200)
-    const { accessToken } = (await login.json()) as AuthBody
+    const loginBody = (await login.json()) as AuthBody
+    expect(loginBody.user).not.toHaveProperty('tokenVersion')
+    const { accessToken } = loginBody
     const me = await app.request('/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } }, env)
     expect(me.status).toBe(200)
     expect(await me.json()).toMatchObject({ name: 'Ana', role: 'CUSTOMER' })

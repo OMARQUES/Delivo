@@ -27,22 +27,34 @@ export async function ensureDriverProfile(db: Db, userId: string) {
   return row!
 }
 
+async function updateActiveDriverProfile(
+  db: Db,
+  userId: string,
+  patch: Partial<Pick<typeof drivers.$inferInsert, 'isAvailable' | 'fcmToken' | 'pixKey'>>,
+) {
+  return db.transaction(async (tx) => {
+    const [user] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.id, userId), eq(users.role, 'DRIVER'), eq(users.status, 'ACTIVE')))
+      .for('update')
+    if (!user) throw new DispatchError('Conta de entregador inativa', 403)
+    await tx.insert(drivers).values({ userId }).onConflictDoNothing()
+    const [row] = await tx.update(drivers).set(patch).where(eq(drivers.userId, userId)).returning()
+    return row!
+  })
+}
+
 export async function setAvailability(db: Db, userId: string, isAvailable: boolean) {
-  await ensureDriverProfile(db, userId)
-  const [row] = await db.update(drivers).set({ isAvailable }).where(eq(drivers.userId, userId)).returning()
-  return row!
+  return updateActiveDriverProfile(db, userId, { isAvailable })
 }
 
 export async function setFcmToken(db: Db, userId: string, token: string) {
-  await ensureDriverProfile(db, userId)
-  const [row] = await db.update(drivers).set({ fcmToken: token }).where(eq(drivers.userId, userId)).returning()
-  return row!
+  return updateActiveDriverProfile(db, userId, { fcmToken: token })
 }
 
 export async function setDriverPixKey(db: Db, userId: string, pixKey: string | null) {
-  await ensureDriverProfile(db, userId)
-  const [row] = await db.update(drivers).set({ pixKey }).where(eq(drivers.userId, userId)).returning()
-  return row!
+  return updateActiveDriverProfile(db, userId, { pixKey })
 }
 
 export async function listAvailableDeliveries(db: Db, driverUserId: string) {

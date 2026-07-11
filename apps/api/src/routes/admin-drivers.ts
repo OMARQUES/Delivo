@@ -1,9 +1,10 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
-import { and, desc, eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { createRouter } from '../app-factory'
 import { drivers, users } from '../db/schema'
 import { authMiddleware, requireRole } from '../middleware/auth'
+import { setDriverAccountStatus } from '../services/security-session.service'
 
 export const adminDriverRoutes = createRouter()
 
@@ -48,12 +49,8 @@ adminDriverRoutes.openapi(
   async (c) => {
     const { id } = c.req.valid('param')
     const { status } = c.req.valid('json')
-    const rows = await c.get('db')
-      .update(users)
-      .set({ status })
-      .where(and(eq(users.id, id), eq(users.role, 'DRIVER')))
-      .returning({ id: users.id, name: users.name, status: users.status })
-    if (rows.length === 0) throw new HTTPException(404, { message: 'Entregador não encontrado' })
-    return c.json(rows[0], 200)
+    const updated = await setDriverAccountStatus(c.get('db'), id, status)
+    if (!updated) throw new HTTPException(404, { message: 'Entregador não encontrado' })
+    return c.json(updated, 200)
   },
 )

@@ -7,6 +7,11 @@ import {
 const SECRET = 'test-secret'
 
 describe('access token', () => {
+  it('requires token version and session family at every call site', () => {
+    // @ts-expect-error security claims cannot be omitted
+    void signAccessToken({ sub: 'user-1', role: 'CUSTOMER', name: 'Ana' }, SECRET)
+  })
+
   it('signs a complete session-bound JWT contract', async () => {
     const now = new Date('2026-07-11T12:00:00Z')
     const token = await signAccessToken(

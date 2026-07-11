@@ -20,6 +20,20 @@ Desvios do plano registrados: a emissão/rotação de tokens permaneceu em `auth
 
 SEC-02, SEC-03 e SEC-08 continuam pendentes dos planos de rate limiting/anti-automação, verificação de identidade e confiabilidade de pagamentos. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida.
 
+### Revisão independente pós-implementação — 2026-07-11
+
+Revisão do código final encontrou e corrigiu sete lacunas não cobertas pelo primeiro gate:
+
+1. Loja `SUSPENDED`/`CLOSED` ainda conseguia autenticar e criar uma nova família que poderia funcionar após reativação. Login e refresh agora consultam `stores.securityStatus` antes de emitir credenciais.
+2. Bloquear e reativar um entregador ressuscitava access/refresh antigos. A transição para `BLOCKED` agora incrementa `tokenVersion` e revoga famílias na mesma transação.
+3. Bloqueio de entregador não removia disponibilidade nem destino FCM. Ambos são limpos atomicamente, e atualizações concorrentes de perfil usam o mesmo lock de usuário.
+4. Duas alterações administrativas concorrentes podiam violar a terminalidade de `CLOSED`. A linha da loja agora usa `FOR UPDATE` antes de validar a transição.
+5. Ausência de `APP_ENV` era interpretada como `local`, expondo docs/OpenAPI/health DB. O comportamento agora é fail-closed.
+6. Corpo JSON sem `Content-Type` atravessava validação e podia causar `500`. Requests com corpo em rotas JSON agora recebem `415`; limites de 256 KiB/6 MiB têm testes diretos.
+7. `tokenVersion` era opcional no emissor e aparecia nas respostas de auth. Claims de versão/família agora são obrigatórias no tipo, e o campo interno foi removido dos DTOs públicos.
+
+Gate pós-revisão: shared 89 testes, API 45 arquivos/377 testes e web 14 testes; typecheck, ESLint, builds web/driver e `git diff --check` passaram. UI permaneceu fora do escopo: telas administrativas que ainda usam `isActive` e visualização pública de evidências privadas precisam ser compatibilizadas nos planos correspondentes antes de staging operacional completo.
+
 ## Sumário executivo
 
 Esta revisão encontrou uma base razoável de autorização por papel e de isolamento por loja, mas a aplicação **não está pronta para ser considerada segura em produção**. Não foi encontrada uma forma direta de uma loja autenticada ler ou alterar objetos de outra loja nas rotas específicas de loja revisadas. Contudo, existem falhas de autorização horizontal/funcional fora desse núcleo, exposição pública de evidências privadas, controles de autenticação insuficientes e riscos de integridade financeira.

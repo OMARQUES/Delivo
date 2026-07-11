@@ -121,7 +121,7 @@ export async function setStoreSecurityStatus(
   securityStatus: 'ACTIVE' | 'SUSPENDED' | 'CLOSED',
 ) {
   return db.transaction(async (tx) => {
-    const [current] = await tx.select().from(stores).where(eq(stores.id, storeId)).limit(1)
+    const [current] = await tx.select().from(stores).where(eq(stores.id, storeId)).for('update')
     if (!current) throw new StoreError('Loja não encontrada', 404)
     if (current.securityStatus === 'CLOSED' && securityStatus !== 'CLOSED') {
       throw new StoreError('Loja encerrada não pode ser reativada', 409)

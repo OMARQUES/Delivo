@@ -1,4 +1,6 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
+import { stores } from '../src/db/schema'
 import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import {
@@ -105,5 +107,31 @@ describe('setStoreSecurityStatus', () => {
     const closed = await setStoreSecurityStatus(testDb, store.id, 'CLOSED')
     expect(closed.securityStatus).toBe('CLOSED')
     await expect(setStoreSecurityStatus(testDb, store.id, 'ACTIVE')).rejects.toMatchObject({ status: 409 })
+  })
+
+  it('keeps CLOSED terminal under concurrent close and reactivate requests', async () => {
+    const store = await createStoreWithOwner(testDb, input)
+    await setStoreSecurityStatus(testDb, store.id, 'SUSPENDED')
+
+    let releaseClose!: () => void
+    let reportLocked!: () => void
+    const closeMayCommit = new Promise<void>((resolve) => { releaseClose = resolve })
+    const closeHasLock = new Promise<void>((resolve) => { reportLocked = resolve })
+    const closing = testDb.transaction(async (tx) => {
+      await tx.select({ id: stores.id }).from(stores).where(eq(stores.id, store.id)).for('update')
+      await tx.update(stores).set({ securityStatus: 'CLOSED' }).where(eq(stores.id, store.id))
+      reportLocked()
+      await closeMayCommit
+    })
+
+    await closeHasLock
+    const activating = setStoreSecurityStatus(testDb, store.id, 'ACTIVE')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    releaseClose()
+    const activation = await Promise.allSettled([closing, activating])
+
+    const current = await getStoreByOwner(testDb, store.ownerUserId)
+    expect(activation[1]?.status).toBe('rejected')
+    expect(current?.securityStatus).toBe('CLOSED')
   })
 })

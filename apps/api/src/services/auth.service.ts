@@ -2,7 +2,7 @@ import { and, eq, isNull, or, sql } from 'drizzle-orm'
 import type { RegisterInput, LoginInput } from '@delivery/shared/schemas'
 import { normalizePhone } from '@delivery/shared/schemas'
 import type { Db } from '../db/client'
-import { authProviders, refreshTokens, users } from '../db/schema'
+import { authProviders, refreshTokens, stores, users } from '../db/schema'
 import { hashPassword, verifyPassword } from '../lib/password'
 import {
   generateRefreshToken,
@@ -39,20 +39,16 @@ export type PublicUser = {
   status: 'ACTIVE' | 'PENDING' | 'BLOCKED'
   phone: string | null
   email: string | null
-  tokenVersion: number
 }
 
 function toPublic(u: typeof users.$inferSelect): PublicUser {
-  return {
-    id: u.id, name: u.name, role: u.role, status: u.status, phone: u.phone, email: u.email,
-    tokenVersion: u.tokenVersion,
-  }
+  return { id: u.id, name: u.name, role: u.role, status: u.status, phone: u.phone, email: u.email }
 }
 
-async function issueTokens(db: Db, user: PublicUser, secret: string, familyId?: string) {
+async function issueTokens(db: Db, user: PublicUser, tokenVersion: number, secret: string, familyId?: string) {
   const resolvedFamilyId = familyId ?? crypto.randomUUID()
   const accessToken = await signAccessToken(
-    { sub: user.id, role: user.role, name: user.name, tokenVersion: user.tokenVersion },
+    { sub: user.id, role: user.role, name: user.name, tokenVersion },
     secret,
     resolvedFamilyId,
   )
@@ -112,13 +108,25 @@ export async function registerUser(db: Db, input: RegisterInput, secret: string)
 
   const pub = toPublic(user)
   if (status === 'PENDING') return { user: pub, accessToken: null, refreshToken: null }
-  return { user: pub, ...(await issueTokens(db, pub, secret)) }
+  return { user: pub, ...(await issueTokens(db, pub, user.tokenVersion, secret)) }
 }
 
-function assertLoginable(user: typeof users.$inferSelect) {
+type AuthReader = Pick<Db, 'select'>
+
+async function assertLoginable(db: AuthReader, user: typeof users.$inferSelect) {
   if (user.status === 'BLOCKED') throw new AuthError('Conta bloqueada — contate o suporte', 403)
   if (user.status === 'PENDING')
     throw new AuthError('Cadastro aguardando aprovação do administrador', 403)
+  if (user.role === 'STORE') {
+    const [store] = await db
+      .select({ securityStatus: stores.securityStatus })
+      .from(stores)
+      .where(eq(stores.ownerUserId, user.id))
+      .limit(1)
+    if (!store || store.securityStatus !== 'ACTIVE') {
+      throw new AuthError('Loja suspensa ou encerrada', 403)
+    }
+  }
 }
 
 export async function loginUser(db: Db, input: LoginInput, secret: string) {
@@ -146,9 +154,9 @@ export async function loginUser(db: Db, input: LoginInput, secret: string) {
   if (!(await verifyPassword(input.password, provider.passwordHash)))
     throw new AuthError('Credenciais inválidas', 401)
 
-  assertLoginable(user)
+  await assertLoginable(db, user)
   const pub = toPublic(user)
-  return { user: pub, ...(await issueTokens(db, pub, secret)) }
+  return { user: pub, ...(await issueTokens(db, pub, user.tokenVersion, secret)) }
 }
 
 export async function rotateRefreshToken(db: Db, rawToken: string, secret: string) {
@@ -179,11 +187,11 @@ export async function rotateRefreshToken(db: Db, rawToken: string, secret: strin
 
     const [user] = await tx.select().from(users).where(eq(users.id, row.userId)).limit(1)
     if (!user) throw new AuthError('Sessão inválida', 401)
-    assertLoginable(user)
+    await assertLoginable(tx, user)
 
     const pub = toPublic(user)
     const accessToken = await signAccessToken(
-      { sub: pub.id, role: pub.role, name: pub.name, tokenVersion: pub.tokenVersion },
+      { sub: pub.id, role: pub.role, name: pub.name, tokenVersion: user.tokenVersion },
       secret,
       row.familyId,
       now,

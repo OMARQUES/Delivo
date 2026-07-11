@@ -22,6 +22,7 @@ vi.mock('../src/db/client', () => ({
 // cors middleware runs on '*' and reads c.env.ALLOWED_ORIGINS, so every
 // app.request call needs a bindings object, not just the cors-focused tests.
 const env = {
+  APP_ENV: 'local' as const,
   ALLOWED_ORIGINS: 'http://localhost:5173,http://localhost:5174',
   JWT_SECRET: 'test',
   HYPERDRIVE: {} as Hyperdrive,
@@ -32,6 +33,60 @@ describe('GET /health', () => {
     const res = await app.request('/health', {}, env)
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ status: 'ok' })
+  })
+})
+
+describe('security baseline', () => {
+  it('fails closed for diagnostics when APP_ENV is missing', async () => {
+    const missingEnvironment: Partial<typeof env> = { ...env }
+    delete missingEnvironment.APP_ENV
+    expect((await app.request('/docs', {}, missingEnvironment as never)).status).toBe(404)
+    expect((await app.request('/openapi.json', {}, missingEnvironment as never)).status).toBe(404)
+    expect((await app.request('/health/db', {}, missingEnvironment as never)).status).toBe(404)
+  })
+
+  it('adds security and no-store headers to authentication errors', async () => {
+    const res = await app.request('/auth/me', {}, env)
+    expect(res.status).toBe(401)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(res.headers.get('x-frame-options')).toBe('DENY')
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'none'")
+  })
+
+  it('hides diagnostics outside local and enables HSTS only in production', async () => {
+    const staging = { ...env, APP_ENV: 'staging' as const }
+    const production = { ...env, APP_ENV: 'production' as const }
+    for (const path of ['/docs', '/openapi.json', '/health/db']) {
+      expect((await app.request(path, {}, staging)).status).toBe(404)
+      expect((await app.request(path, {}, production)).status).toBe(404)
+    }
+    expect((await app.request('/health', {}, env)).headers.get('strict-transport-security')).toBeNull()
+    expect((await app.request('/health', {}, production)).headers.get('strict-transport-security'))
+      .toBe('max-age=31536000; includeSubDomains')
+  })
+
+  it('rejects oversized JSON, oversized global bodies and wrong JSON media type', async () => {
+    const oversizedJson = JSON.stringify({ identifier: 'x'.repeat(257 * 1024), password: 'x' })
+    const json = await app.request('/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: oversizedJson,
+    }, env)
+    expect(json.status).toBe(413)
+
+    const global = await app.request('/store/me/logo', {
+      method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: new Uint8Array(6 * 1024 * 1024 + 1),
+    }, env)
+    expect(global.status).toBe(413)
+
+    const wrongType = await app.request('/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}',
+    }, env)
+    expect(wrongType.status).toBe(415)
+
+    const missingType = await app.request('/auth/login', {
+      method: 'POST', body: new TextEncoder().encode('{}'),
+    }, env)
+    expect(missingType.status).toBe(415)
   })
 })
 

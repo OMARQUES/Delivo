@@ -12,13 +12,15 @@ export const securityBaseline = createMiddleware<AppContext>(async (c, next) => 
   const contentType = c.req.header('content-type')
   const method = c.req.method
   const isUnsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+  const hasBody = c.req.raw.body !== null
+  const isJson = Boolean(contentType && /^application\/json(?:;\s*charset=utf-8)?$/i.test(contentType))
   const isUpload = c.req.path.endsWith('/logo') || c.req.path.endsWith('/photo') || c.req.path.endsWith('/return-photo')
   const isCsv = c.req.path.endsWith('/catalog/import')
   const isWebhook = c.req.path.startsWith('/webhooks/')
-  if (isUnsafe && contentType && !isUpload && !isCsv && !isWebhook && !/^application\/json(?:;\s*charset=utf-8)?$/i.test(contentType)) {
+  if (isUnsafe && hasBody && !isUpload && !isCsv && !isWebhook && !isJson) {
     return c.json({ error: 'Unsupported Media Type' }, 415)
   }
-  if (contentType && /^application\/json(?:;|$)/i.test(contentType)) {
+  if (isJson) {
     return jsonBodyLimit(c, next)
   }
   await next()
@@ -41,6 +43,6 @@ export const securityHeaders = createMiddleware<AppContext>(async (c, next) => {
 })
 
 export const localOnly = createMiddleware<AppContext>(async (c, next) => {
-  if ((c.env.APP_ENV ?? 'local') !== 'local') return c.json({ error: 'Not Found' }, 404)
+  if (c.env.APP_ENV !== 'local') return c.json({ error: 'Not Found' }, 404)
   await next()
 })
