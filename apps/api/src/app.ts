@@ -4,6 +4,7 @@ import { logger } from 'hono/logger'
 import { createRouter } from './app-factory'
 import { dbMiddleware } from './middleware/db'
 import { errorHandler } from './middleware/error-handler'
+import { globalBodyLimit, localOnly, securityBaseline, securityHeaders } from './middleware/security-baseline'
 import { addressRoutes } from './routes/addresses'
 import { adminDriverRoutes } from './routes/admin-drivers'
 import { adminStoreRoutes } from './routes/admin-stores'
@@ -25,6 +26,9 @@ import { webhookRoutes } from './routes/webhooks'
 export const app = createRouter()
 
 app.use('*', logger())
+app.use('*', globalBodyLimit)
+app.use('*', securityHeaders)
+app.use('*', securityBaseline)
 app.use('*', async (c, next) => {
   const allowed = (c.env.ALLOWED_ORIGINS ?? '')
     .split(',')
@@ -39,6 +43,10 @@ app.use('*', async (c, next) => {
 app.use('*', dbMiddleware)
 app.onError(errorHandler)
 app.notFound((c) => c.json({ error: 'Not Found' }, 404))
+
+app.use('/docs', localOnly)
+app.use('/openapi.json', localOnly)
+app.use('/health/db', localOnly)
 
 app.route('/', healthRoutes)
 app.route('/', authRoutes)

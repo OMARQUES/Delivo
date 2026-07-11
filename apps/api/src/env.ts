@@ -2,6 +2,7 @@ import type { Db } from './db/client'
 import type { LivePrincipal } from './services/security-session.service'
 
 export type Env = {
+  APP_ENV: 'local' | 'staging' | 'production'
   HYPERDRIVE: Hyperdrive
   BUCKET: R2Bucket
   JWT_SECRET: string

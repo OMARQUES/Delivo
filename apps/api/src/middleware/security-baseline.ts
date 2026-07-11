@@ -1,0 +1,45 @@
+import { bodyLimit } from 'hono/body-limit'
+import { createMiddleware } from 'hono/factory'
+import type { AppContext } from '../env'
+
+const GLOBAL_MAX_BYTES = 6 * 1024 * 1024
+const JSON_MAX_BYTES = 256 * 1024
+
+export const globalBodyLimit = bodyLimit({ maxSize: GLOBAL_MAX_BYTES })
+const jsonBodyLimit = bodyLimit({ maxSize: JSON_MAX_BYTES })
+
+export const securityBaseline = createMiddleware<AppContext>(async (c, next) => {
+  const contentType = c.req.header('content-type')
+  const method = c.req.method
+  const isUnsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+  const isUpload = c.req.path.endsWith('/logo') || c.req.path.endsWith('/return-photo')
+  const isCsv = c.req.path.endsWith('/catalog/import')
+  if (isUnsafe && contentType && !isUpload && !isCsv && !/^application\/json(?:;\s*charset=utf-8)?$/i.test(contentType)) {
+    return c.json({ error: 'Unsupported Media Type' }, 415)
+  }
+  if (contentType && /^application\/json(?:;|$)/i.test(contentType)) {
+    return jsonBodyLimit(c, next)
+  }
+  await next()
+})
+
+export const securityHeaders = createMiddleware<AppContext>(async (c, next) => {
+  await next()
+  c.header('X-Content-Type-Options', 'nosniff')
+  c.header('X-Frame-Options', 'DENY')
+  c.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+  c.header('Referrer-Policy', 'no-referrer')
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  if (c.env.APP_ENV === 'production') {
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  }
+  if (/^\/(auth|orders|me|driver|store|admin|private-media)(?:\/|$)/.test(c.req.path)
+    && !c.res.headers.has('Cache-Control')) {
+    c.header('Cache-Control', 'no-store')
+  }
+})
+
+export const localOnly = createMiddleware<AppContext>(async (c, next) => {
+  if ((c.env.APP_ENV ?? 'local') !== 'local') return c.json({ error: 'Not Found' }, 404)
+  await next()
+})
