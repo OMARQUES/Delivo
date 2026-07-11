@@ -69,7 +69,7 @@ Backend usa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `PUBLIC_API_URL` em `apps/a
 8. ✅ Financeiro — ledger imutável, fatura de comissão, payout manual por período, extratos loja/entregador, comissão por loja definida pelo admin (`/admin/lojas`, em %)
 - ✅ Controle da Loja — pausar/repreçar produto e opção ao vivo (sem replace-all), no cardápio da loja
 - ✅ Pacote de Entregas — loja agrupa pedidos (1 coleta, vários destinos) e oferta ao pool; entregador coleta 1x e quebra em entregas individuais
-- ✅ Entregadores Próprios (④a) — vínculo, turno com geofence, dispatch exclusivo e diária + extra por entrega
+- ✅ Entregadores Próprios (④a) — múltiplos vínculos, turno por ocorrência, autorização de atraso, reajuste confirmado e diária aprovada pela loja
 - ✅ Dispatch Direcionado (④b) — pool/próprios/específico para pedidos e pacotes, recusa e escalada explícita
 - ✅ Ofertas/Vagas (④c) — N vagas, recorrência semanal ou datas específicas, aceite atômico com conflito de agenda e vínculo temporário
 - ✅ Devolução + Meia-taxa — estorno na falha, pagamento na devolução e compensação de deslocamento freelance

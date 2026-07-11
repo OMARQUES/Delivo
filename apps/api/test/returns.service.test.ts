@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { eq } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import type { PaymentProvider } from '../src/lib/payment-provider'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
+import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -17,7 +17,8 @@ import {
 } from '../src/services/return.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
-import { startShift, updateActiveShift } from '../src/services/shift.service'
+import { startShift } from '../src/services/shift.service'
+import { decideActiveShiftTerms, proposeActiveShiftTerms } from '../src/services/shift-proposal.service'
 import { ledgerEntries, orders, payments, users } from '../src/db/schema'
 
 const storeInput: StoreCreateInput = {
@@ -106,12 +107,13 @@ describe('devolução após falha', () => {
   })
 
   it('congela o extra do fixo na falha e suporte pode confirmar a devolução', async () => {
-    const link = await inviteDriver(testDb, storeId, '44911111111', { dailyRateCents: 5_000, perDeliveryCents: 700, schedule: [] })
+    const link = await inviteDriver(testDb, storeId, '44911111111', { dailyRateCents: 5_000, perDeliveryCents: 700, schedule: scheduleForNow() })
     await confirmLink(testDb, driverId, link.id)
-    const shift = await startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })
+    const shift = await startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 })
     const order = await assignAndCollect(true)
     await failDelivery(testDb, driverId, order.id, { reason: 'WRONG_ADDRESS' })
-    await updateActiveShift(testDb, storeId, shift.id, { perDeliveryCents: 900 })
+    const proposal = await proposeActiveShiftTerms(testDb, storeId, shift.id, { dailyRateCents: 5_000, perDeliveryCents: 900, applyRetroactive: false })
+    await decideActiveShiftTerms(testDb, driverId, shift.id, proposal.id, true)
     await adminConfirmOrderReturn(testDb, order.id, crypto.randomUUID())
     const ledger = await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, order.id))
     expect(ledger.map((entry) => [entry.type, entry.amountCents])).toEqual([
@@ -143,9 +145,9 @@ describe('chegada e meia-taxa', () => {
     await storeReleaseDriver(testDb, storeId, first.id, ownerId)
     expect(await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, first.id))).toEqual([])
 
-    const link = await inviteDriver(testDb, storeId, '44911111111', { dailyRateCents: 5_000, perDeliveryCents: 700, schedule: [] })
+    const link = await inviteDriver(testDb, storeId, '44911111111', { dailyRateCents: 5_000, perDeliveryCents: 700, schedule: scheduleForNow() })
     await confirmLink(testDb, driverId, link.id)
-    await startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })
+    await startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 })
     const fixed = await makeOrder(); await requestDriverOwn(testDb, storeId, fixed.id); await acceptShiftDelivery(testDb, driverId, fixed.id)
     await confirmArrival(testDb, driverId, fixed.id, {})
     await storeReleaseDriver(testDb, storeId, fixed.id, ownerId)

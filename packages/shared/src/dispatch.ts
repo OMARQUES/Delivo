@@ -22,7 +22,7 @@ export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {
 export const STORE_DRIVER_STATUSES = ['INVITED', 'CONFIRMED', 'REMOVED'] as const
 export type StoreDriverStatus = (typeof STORE_DRIVER_STATUSES)[number]
 
-export const SHIFT_STATUSES = ['ACTIVE', 'CLOSED'] as const
+export const SHIFT_STATUSES = ['ACTIVE', 'PENDING_DAILY', 'REOPEN_ALLOWED', 'CLOSED'] as const
 export type ShiftStatus = (typeof SHIFT_STATUSES)[number]
 
 export const SHIFT_CLOSED_BY = ['DRIVER', 'STORE', 'SYSTEM'] as const

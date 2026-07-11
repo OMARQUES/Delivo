@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq, isNull } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
+import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { registerUser } from '../src/services/auth.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 import { createAddress } from '../src/services/address.service'
@@ -11,7 +11,8 @@ import {
   confirmLink, confirmLinkTermsChange, inviteDriver, proposeLinkTerms,
   rejectLinkTermsChange, removeLink,
 } from '../src/services/store-driver.service'
-import { endShift, startShift, updateActiveShift } from '../src/services/shift.service'
+import { decideShiftDaily, endShift, startShift } from '../src/services/shift.service'
+import { decideActiveShiftTerms, proposeActiveShiftTerms } from '../src/services/shift-proposal.service'
 import {
   listAvailableDriverTokens, listShiftDriverTokens, requestDriver, requestDriverOwn,
   requestDriverSpecific, storeUpdateOrderStatus, withdrawDriverRequest,
@@ -21,7 +22,7 @@ import {
   listAvailableDeliveries, listShiftDeliveries, refuseDirectDelivery,
   setAvailability, setFcmToken,
 } from '../src/services/dispatch.service'
-import { driverShifts, ledgerEntries, orders, stores, users } from '../src/db/schema'
+import { driverShifts, ledgerEntries, orders, storeDrivers, stores, users } from '../src/db/schema'
 
 const storeInput: StoreCreateInput = {
   name: 'Loja Turno', slug: 'loja-turno', category: 'MERCADO', phone: '4433334444', city: 'C',
@@ -82,16 +83,28 @@ async function deliverOwn() {
 }
 
 describe('entregadores próprios', () => {
-  it('isola o broadcast, congela valores e lança extra + diária de forma idempotente', async () => {
+  it('não encerra enquanto houver entrega associada em andamento', async () => {
     const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
-      dailyRateCents: 8_000, perDeliveryCents: 700, schedule: [],
+      dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow(),
     })
     await confirmLink(testDb, driverId, link.id)
-    await expect(startShift(testDb, driverId, storeId, { lat: -24.55, lng: -51.9 })).rejects.toThrow('fora do raio')
-    const shift = await startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })
+    const shift = await startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 })
+    const order = await makeOrder()
+    await requestDriverOwn(testDb, storeId, order.id)
+    await acceptShiftDelivery(testDb, driverId, order.id)
+    await expect(endShift(testDb, driverId, shift.id)).rejects.toThrow('Finalize ou devolva')
+  })
+
+  it('isola o broadcast, congela valores e lança extra + diária de forma idempotente', async () => {
+    const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
+      dailyRateCents: 8_000, perDeliveryCents: 700, schedule: scheduleForNow(),
+    })
+    await confirmLink(testDb, driverId, link.id)
+    await expect(startShift(testDb, driverId, link.id, { lat: -24.55, lng: -51.9 })).rejects.toThrow('fora do raio')
+    const shift = await startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 })
     await proposeLinkTerms(testDb, storeId, link.id, { dailyRateCents: 20_000, perDeliveryCents: 2_000 })
     expect(shift).toMatchObject({ dailyRateCents: 8_000, perDeliveryCents: 700, status: 'ACTIVE' })
-    await expect(startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })).rejects.toThrow('turno')
+    await expect(startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 })).rejects.toThrow('turno')
 
     const order = await makeOrder('PIX_ONLINE')
     await requestDriverOwn(testDb, storeId, order.id)
@@ -116,6 +129,7 @@ describe('entregadores próprios', () => {
     ])
 
     await endShift(testDb, driverId, shift.id)
+    await decideShiftDaily(testDb, storeId, customerId, shift.id, true)
     const daily = await testDb.select().from(ledgerEntries).where(isNull(ledgerEntries.orderId))
     expect(daily.map((entry) => [entry.type, entry.amountCents])).toEqual([
       ['DRIVER_DAILY_RATE_CREDIT', 8_000],
@@ -159,18 +173,20 @@ describe('entregadores próprios', () => {
 
   it('reconcilia retroativo pelo saldo real de cada pedido e usa novos valores no futuro', async () => {
     const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
-      dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [],
+      dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow(),
     })
     await confirmLink(testDb, driverId, link.id)
-    const shift = await startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })
+    const shift = await startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 })
 
     const first = await deliverOwn() // 500
-    await updateActiveShift(testDb, storeId, shift.id, { perDeliveryCents: 700, applyRetroactive: false })
+    const firstProposal = await proposeActiveShiftTerms(testDb, storeId, shift.id, { dailyRateCents: 5_000, perDeliveryCents: 700, applyRetroactive: false })
+    await decideActiveShiftTerms(testDb, driverId, shift.id, firstProposal.id, true)
     const second = await deliverOwn() // 700
-    const adjusted = await updateActiveShift(testDb, storeId, shift.id, {
+    const secondProposal = await proposeActiveShiftTerms(testDb, storeId, shift.id, {
       dailyRateCents: 9_000, perDeliveryCents: 800, applyRetroactive: true,
     })
-    expect(adjusted).toMatchObject({ dailyRateCents: 9_000, perDeliveryCents: 800, adjustmentSeq: 2 })
+    const adjusted = await decideActiveShiftTerms(testDb, driverId, shift.id, secondProposal.id, true)
+    expect(adjusted.shift).toMatchObject({ dailyRateCents: 9_000, perDeliveryCents: 800, adjustmentSeq: 2 })
 
     const driverCredits = await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.type, 'DRIVER_PER_DELIVERY_CREDIT'))
     const sumFor = (orderId: string) => driverCredits
@@ -184,26 +200,26 @@ describe('entregadores próprios', () => {
     expect(afterThird.filter((entry) => entry.orderId === third.id).reduce((sum, entry) => sum + entry.amountCents, 0)).toBe(800)
 
     const countBeforeRetry = afterThird.length
-    await updateActiveShift(testDb, storeId, shift.id, { perDeliveryCents: 800, applyRetroactive: true })
+    const retryProposal = await proposeActiveShiftTerms(testDb, storeId, shift.id, { dailyRateCents: 9_000, perDeliveryCents: 800, applyRetroactive: true })
+    await decideActiveShiftTerms(testDb, driverId, shift.id, retryProposal.id, true)
     expect(await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.type, 'DRIVER_PER_DELIVERY_CREDIT'))).toHaveLength(countBeforeRetry)
-    await expect(updateActiveShift(testDb, crypto.randomUUID(), shift.id, { dailyRateCents: 1 })).rejects.toMatchObject({ status: 404 })
+    await expect(proposeActiveShiftTerms(testDb, crypto.randomUUID(), shift.id, { dailyRateCents: 1, perDeliveryCents: 800, applyRetroactive: false })).rejects.toMatchObject({ status: 404 })
 
     await endShift(testDb, driverId, shift.id)
+    await decideShiftDaily(testDb, storeId, customerId, shift.id, true)
     const daily = await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.type, 'DRIVER_DAILY_RATE_CREDIT'))
     expect(daily).toHaveLength(1)
     expect(daily[0]!.amountCents).toBe(9_000)
   })
 
-  it('reconvidar após remover reativa o vínculo (não dá 409)', async () => {
+  it('reconvidar após remover cria novo vínculo e preserva histórico', async () => {
     const first = await inviteDriver(testDb, storeId, '44 91111-1111', { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [] })
     await removeLink(testDb, storeId, first.id)
-    // reinvite com valores novos → reativa o MESMO registro como INVITED
+    // Um novo convite cria uma nova identidade; o removido permanece histórico.
     const again = await inviteDriver(testDb, storeId, '44 91111-1111', { dailyRateCents: 9_000, perDeliveryCents: 900, schedule: [] })
-    expect(again.id).toBe(first.id)
+    expect(again.id).not.toBe(first.id)
     expect(again).toMatchObject({ status: 'INVITED', dailyRateCents: 9_000, perDeliveryCents: 900 })
-    // vínculo ativo → reinvite dá 409
-    await expect(inviteDriver(testDb, storeId, '44 91111-1111', { dailyRateCents: 1, perDeliveryCents: 1, schedule: [] }))
-      .rejects.toMatchObject({ status: 409 })
+    expect(await testDb.select().from(storeDrivers).where(eq(storeDrivers.driverUserId, driverId))).toHaveLength(2)
   })
 
   it('loja escala OWN → pool geral explicitamente (sem fallback automático)', async () => {
@@ -245,9 +261,9 @@ describe('entregadores próprios', () => {
 
   it('direciona a um entregador, permite recusa e redirecionamento explícito', async () => {
     for (const [id, phone] of [[driverId, '44911111111'], [freelanceId, '44922222222']] as const) {
-      const link = await inviteDriver(testDb, storeId, phone, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [] })
+      const link = await inviteDriver(testDb, storeId, phone, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow() })
       await confirmLink(testDb, id, link.id)
-      await startShift(testDb, id, storeId, { lat: -23.55, lng: -51.9 })
+      await startShift(testDb, id, link.id, { lat: -23.55, lng: -51.9 })
     }
     await setFcmToken(testDb, driverId, 'token-direto-123')
     await setFcmToken(testDb, freelanceId, 'token-outro-456')
@@ -275,13 +291,13 @@ describe('entregadores próprios', () => {
 
   it('serializa início de turno com aceite do pool geral', async () => {
     const link = await inviteDriver(testDb, storeId, '44911111111', {
-      dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [],
+      dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow(),
     })
     await confirmLink(testDb, driverId, link.id)
     const order = await makeOrder()
     await requestDriver(testDb, storeId, order.id)
     const results = await Promise.allSettled([
-      startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 }),
+      startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 }),
       acceptDelivery(testDb, driverId, order.id),
     ])
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)

@@ -4,6 +4,7 @@ import type { Env } from './env'
 import { createPaymentProvider } from './lib/mercadopago'
 import { cancelStalePendingOrders } from './services/order-status.service'
 import { expireStaleAwaitingPayment } from './services/payment.service'
+import { autoApproveStaleShiftDailies } from './services/shift.service'
 
 export default {
   fetch: app.fetch,
@@ -15,6 +16,8 @@ export default {
       if (n > 0) console.log(`cron: ${n} pedidos PENDING expirados cancelados`)
       const expired = await expireStaleAwaitingPayment(db, provider)
       if (expired > 0) console.log(`cron: ${expired} pagamentos expirados`)
+      const dailies = await autoApproveStaleShiftDailies(db)
+      if (dailies > 0) console.log(`cron: ${dailies} diárias de turno aprovadas automaticamente`)
     } finally {
       await client.end()
     }

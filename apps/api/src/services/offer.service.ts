@@ -1,8 +1,8 @@
 import { and, desc, eq, lt, sql } from 'drizzle-orm'
-import { offerScheduleItems, scheduleConflicts, type OfferCreateInput } from '@delivery/shared'
+import { datedScheduleExpiry, offerScheduleItems, saoPauloDate, type OfferCreateInput } from '@delivery/shared'
 import type { Db } from '../db/client'
 import { driverOffers, offerAcceptances, storeDrivers, stores, users } from '../db/schema'
-import { isLinkActive } from './store-driver.service'
+import { assertNoScheduleConflict, StoreDriverError } from './store-driver.service'
 
 export class OfferError extends Error {
   constructor(message: string, public status: 400 | 404 | 409 = 400) { super(message) }
@@ -45,45 +45,32 @@ export async function listOpenOffers(db: Db, driverUserId: string) {
     .leftJoin(offerAcceptances, and(eq(offerAcceptances.offerId, driverOffers.id), eq(offerAcceptances.driverUserId, driverUserId)))
     .where(and(eq(driverOffers.status, 'OPEN'), lt(driverOffers.acceptedCount, driverOffers.slots), sql`${offerAcceptances.id} is null`))
     .orderBy(desc(driverOffers.createdAt))
-  const today = todaySP()
+  const today = saoPauloDate()
   return rows.filter((offer) => offer.recurrence.kind === 'WEEKLY' || offer.recurrence.dates.some((date) => date >= today))
-}
-function todaySP() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-}
-function expiresAfterLastDate(dates: string[]) {
-  const last = [...dates].sort().at(-1)!
-  const [year, month, day] = last.split('-').map(Number)
-  const next = new Date(Date.UTC(year!, month! - 1, day! + 1)).toISOString().slice(0, 10)
-  return new Date(`${next}T00:00:00-03:00`)
 }
 export async function acceptOffer(db: Db, driverUserId: string, offerId: string) {
   try {
     return await db.transaction(async (tx) => {
+      await tx.select({ id: users.id }).from(users).where(eq(users.id, driverUserId)).for('update')
       const [offer] = await tx.select().from(driverOffers).where(eq(driverOffers.id, offerId)).for('update')
       if (!offer) throw new OfferError('Oferta não encontrada', 404)
       if (offer.acceptedCount >= offer.slots) throw new OfferError('Vagas esgotadas', 409)
       if (offer.status !== 'OPEN') throw new OfferError('Oferta encerrada', 409)
-      // Serializa aceites do mesmo entregador em ofertas diferentes. Sem este
-      // lock, duas transações poderiam validar a mesma agenda antiga e criar
-      // vínculos conflitantes ao mesmo tempo.
-      await tx.select({ id: users.id }).from(users).where(eq(users.id, driverUserId)).for('update')
       const [answered] = await tx.select({ id: offerAcceptances.id }).from(offerAcceptances).where(and(
         eq(offerAcceptances.offerId, offerId), eq(offerAcceptances.driverUserId, driverUserId),
       )).limit(1)
       if (answered) throw new OfferError('Você já respondeu esta oferta', 409)
-      const links = await tx.select().from(storeDrivers).where(eq(storeDrivers.driverUserId, driverUserId))
-      const activeLinks = links.filter((link) => isLinkActive(link))
-      if (activeLinks.some((link) => link.storeId === offer.storeId)) throw new OfferError('Você já está vinculado a esta loja', 409)
-      const today = todaySP()
+      const today = saoPauloDate()
       const effectiveRecurrence = offer.recurrence.kind === 'DATES'
         ? { kind: 'DATES' as const, dates: offer.recurrence.dates.filter((date) => date >= today) }
         : offer.recurrence
       if (effectiveRecurrence.kind === 'DATES' && effectiveRecurrence.dates.length === 0) throw new OfferError('Oferta expirada', 409)
-      const confirmedSchedule = activeLinks.filter((link) => link.status === 'CONFIRMED')
-        .flatMap((link) => link.schedule).filter((item) => !('date' in item) || item.date >= today)
-      if (scheduleConflicts(confirmedSchedule, { recurrence: effectiveRecurrence, start: offer.startTime, end: offer.endTime }))
-        throw new OfferError('Conflito de horário com sua agenda', 409)
+      const effectiveSchedule = offerScheduleItems({ recurrence: effectiveRecurrence, start: offer.startTime, end: offer.endTime })
+      try { await assertNoScheduleConflict(tx, driverUserId, effectiveSchedule) }
+      catch (error) {
+        if (error instanceof StoreDriverError) throw new OfferError('Conflito de horário com sua agenda', 409)
+        throw error
+      }
       const [claimed] = await tx.update(driverOffers).set({
         acceptedCount: sql`${driverOffers.acceptedCount} + 1`,
         status: sql`case when ${driverOffers.acceptedCount} + 1 >= ${driverOffers.slots} then 'CLOSED'::driver_offer_status else ${driverOffers.status} end`,
@@ -92,20 +79,17 @@ export async function acceptOffer(db: Db, driverUserId: string, offerId: string)
       if (!claimed) throw new OfferError('Vagas esgotadas', 409)
       await tx.insert(offerAcceptances).values({ offerId, driverUserId, status: 'ACCEPTED' })
       const schedule = offerScheduleItems({ recurrence: offer.recurrence, start: offer.startTime, end: offer.endTime })
-      const expiresAt = offer.recurrence.kind === 'DATES' ? expiresAfterLastDate(offer.recurrence.dates) : null
-      const existing = links.find((link) => link.storeId === offer.storeId)
+      const expiresAt = offer.recurrence.kind === 'DATES' ? datedScheduleExpiry(schedule) : null
       const terms = { status: 'CONFIRMED' as const, dailyRateCents: offer.dailyRateCents, perDeliveryCents: offer.perDeliveryCents,
         schedule, expiresAt, pendingDailyRateCents: null, pendingPerDeliveryCents: null, pendingSchedule: null,
         pendingProposedAt: null, updatedAt: new Date(),
       }
-      const [link] = existing
-        ? await tx.update(storeDrivers).set(terms).where(eq(storeDrivers.id, existing.id)).returning()
-        : await tx.insert(storeDrivers).values({ storeId: offer.storeId, driverUserId, ...terms }).returning()
+      const [link] = await tx.insert(storeDrivers).values({ storeId: offer.storeId, driverUserId, ...terms }).returning()
       return { offer: claimed, link: link! }
     })
   } catch (error) {
     if (error instanceof OfferError) throw error
-    if (uniqueViolation(error)) throw new OfferError('Você já respondeu esta oferta ou já está vinculado à loja', 409)
+    if (uniqueViolation(error)) throw new OfferError('Você já respondeu esta oferta', 409)
     throw error
   }
 }

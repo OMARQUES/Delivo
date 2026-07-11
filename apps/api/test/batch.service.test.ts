@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq, inArray } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
+import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -179,9 +179,9 @@ describe('store-side batches', () => {
 
   it('direciona pacote a próprios/específico e aceite em turno grava shiftId', async () => {
     for (const [id, phone] of [[driver1, '44911111111'], [driver2, '44922222222']] as const) {
-      const link = await inviteDriver(testDb, storeId, phone, { dailyRateCents: 5_000, perDeliveryCents: 600, schedule: [] })
+      const link = await inviteDriver(testDb, storeId, phone, { dailyRateCents: 5_000, perDeliveryCents: 600, schedule: scheduleForNow() })
       await confirmLink(testDb, id, link.id)
-      await startShift(testDb, id, storeId, { lat: -23.55, lng: -51.9 })
+      await startShift(testDb, id, link.id, { lat: -23.55, lng: -51.9 })
     }
     const { batch, ids } = await makeBatch()
     await broadcastBatch(testDb, storeId, batch.id, { target: 'SPECIFIC', requestedDriverId: driver1 })

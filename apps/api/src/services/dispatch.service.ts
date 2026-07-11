@@ -312,7 +312,7 @@ export async function completeDelivery(db: Db, driverUserId: string, orderId: st
       eq(orders.status, 'OUT_FOR_DELIVERY'),
     )).limit(1)
     if (!candidate) throw new DispatchError('Pedido não está em rota', 409)
-    // Ordem global dos locks: turno -> pedido. updateActiveShift usa a mesma
+    // Ordem global dos locks: turno -> pedido. O aceite de reajuste usa a mesma
     // ordem, evitando que reajuste e conclusão creditem o mesmo pedido duas vezes.
     if (candidate.shiftId) {
       await tx.select({ id: driverShifts.id }).from(driverShifts)

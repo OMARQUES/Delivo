@@ -27,9 +27,11 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
   }
 
   if (res.status === 204) return undefined as T
-  const body = (await res.json().catch(() => ({}))) as { error?: string }
+  const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: Array<{ message?: string; path?: Array<string | number> }> }
   if (!res.ok) {
-    const err: ApiError = { status: res.status, message: body.error ?? 'Erro inesperado' }
+    const issue = body.issues?.[0]
+    const field = issue?.path?.length ? `${issue.path.join('.')}: ` : ''
+    const err: ApiError = { status: res.status, message: issue?.message ? `${field}${issue.message}` : body.error ?? 'Erro inesperado' }
     throw Object.assign(new Error(err.message), err)
   }
   return body as T

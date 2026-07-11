@@ -69,7 +69,7 @@ describe('serviço de ofertas', () => {
     expect(await testDb.select().from(storeDrivers).where(eq(storeDrivers.driverUserId, drivers[2]!))).toHaveLength(1)
   })
 
-  it('dispensa sem ocupar vaga e reativa vínculo removido ou expirado', async () => {
+  it('dispensa sem ocupar vaga e cria novo vínculo preservando removido', async () => {
     const dismissed = await weekly(storeA)
     await dismissOffer(testDb, drivers[0]!, dismissed.id)
     expect((await testDb.select().from(driverOffers).where(eq(driverOffers.id, dismissed.id)))[0]!.acceptedCount).toBe(0)
@@ -80,17 +80,18 @@ describe('serviço de ofertas', () => {
       start: '17:00', end: '03:00', recurrence: { kind: 'DATES', dates: ['2026-07-18'] },
     })
     const accepted = await acceptOffer(testDb, drivers[0]!, dated.id)
-    expect(accepted.link.id).toBe(old[0]!.id)
+    expect(accepted.link.id).not.toBe(old[0]!.id)
     expect(accepted.link).toMatchObject({ status: 'CONFIRMED', schedule: [{ date: '2026-07-18', start: '17:00', end: '03:00' }] })
-    expect(accepted.link.expiresAt).toEqual(new Date('2026-07-19T03:00:00.000Z'))
+    expect(accepted.link.expiresAt).toEqual(new Date('2026-07-19T06:00:00.000Z'))
+    expect(await testDb.select().from(storeDrivers).where(eq(storeDrivers.driverUserId, drivers[0]!))).toHaveLength(2)
   })
 
   it('oculta vínculo expirado e impede novo turno', async () => {
-    await testDb.insert(storeDrivers).values({ storeId: storeA, driverUserId: drivers[0]!, status: 'CONFIRMED',
+    const [expiredLink] = await testDb.insert(storeDrivers).values({ storeId: storeA, driverUserId: drivers[0]!, status: 'CONFIRMED',
       expiresAt: new Date(Date.now() - 60_000), schedule: [{ date: '2020-01-01', start: '09:00', end: '18:00' }],
-    })
+    }).returning()
     expect(await listDriverLinks(testDb, drivers[0]!)).toHaveLength(0)
     expect(await listStoreDrivers(testDb, storeA)).toHaveLength(0)
-    await expect(startShift(testDb, drivers[0]!, storeA, { lat: -23.4, lng: -51.9 })).rejects.toMatchObject({ status: 409, message: 'Vínculo expirado' })
+    await expect(startShift(testDb, drivers[0]!, expiredLink!.id, { lat: -23.4, lng: -51.9 })).rejects.toMatchObject({ status: 409, message: 'Vínculo expirado' })
   })
 })

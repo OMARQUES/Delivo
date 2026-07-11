@@ -8,6 +8,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  text,
   timestamp,
   uniqueIndex,
   uuid,
@@ -24,6 +25,7 @@ import { users } from './users'
 export const storeDriverStatus = pgEnum('store_driver_status', STORE_DRIVER_STATUSES)
 export const shiftStatus = pgEnum('shift_status', SHIFT_STATUSES)
 export const shiftClosedBy = pgEnum('shift_closed_by', SHIFT_CLOSED_BY)
+export const shiftDailyDecision = pgEnum('shift_daily_decision', ['PENDING', 'APPROVED', 'REJECTED'])
 
 export type DriverSchedule = ScheduleItem[]
 
@@ -46,7 +48,8 @@ export const storeDrivers = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   },
   (t) => [
-    uniqueIndex('store_drivers_unique').on(t.storeId, t.driverUserId),
+    index('store_drivers_driver_status_idx').on(t.driverUserId, t.status),
+    index('store_drivers_store_status_idx').on(t.storeId, t.status),
     check('store_drivers_pending_terms_complete', sql`(
       ${t.pendingProposedAt} is null
       and ${t.pendingDailyRateCents} is null
@@ -67,20 +70,29 @@ export const driverShifts = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     storeId: uuid('store_id').notNull().references(() => stores.id, { onDelete: 'restrict' }),
     driverUserId: uuid('driver_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+    storeDriverId: uuid('store_driver_id').notNull().references(() => storeDrivers.id, { onDelete: 'restrict' }),
     status: shiftStatus('status').notNull().default('ACTIVE'),
     dailyRateCents: integer('daily_rate_cents').notNull(),
     perDeliveryCents: integer('per_delivery_cents').notNull(),
     /** Data operacional no fuso da loja (MVP: America/Sao_Paulo). */
     workDate: date('work_date').notNull(),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    scheduledStartAt: timestamp('scheduled_start_at', { withTimezone: true }),
     scheduledEndAt: timestamp('scheduled_end_at', { withTimezone: true }),
     endedAt: timestamp('ended_at', { withTimezone: true }),
     earlyClose: boolean('early_close').notNull().default(false),
     closedBy: shiftClosedBy('closed_by'),
+    dailyDecision: shiftDailyDecision('daily_decision'),
+    dailyDecidedAt: timestamp('daily_decided_at', { withTimezone: true }),
+    dailyDecidedBy: uuid('daily_decided_by').references(() => users.id, { onDelete: 'restrict' }),
+    dailyDecisionReason: text('daily_decision_reason'),
+    autoApproveAt: timestamp('auto_approve_at', { withTimezone: true }),
+    reopenUntil: timestamp('reopen_until', { withTimezone: true }),
+    reopenCount: integer('reopen_count').notNull().default(0),
     adjustmentSeq: integer('adjustment_seq').notNull().default(0),
   },
   (t) => [
-    uniqueIndex('driver_shifts_driver_store_day_unique').on(t.driverUserId, t.storeId, t.workDate),
+    uniqueIndex('driver_shifts_link_day_unique').on(t.storeDriverId, t.workDate),
     uniqueIndex('driver_shifts_one_active_per_driver')
       .on(t.driverUserId)
       .where(sql`${t.status} = 'ACTIVE'`),

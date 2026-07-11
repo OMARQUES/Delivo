@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { api } from '../lib/api'
 import { enablePush, pushConfigured } from '../lib/push'
 import { useAuthStore } from '../stores/auth'
+import { findStartOccurrence } from '@delivery/shared'
+import { formatBRL } from '@delivery/shared/constants'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -14,21 +16,31 @@ const pixKey = ref('')
 const pixMsg = ref('')
 const savingPix = ref(false)
 type ScheduleItem = ({ dow: number } | { date: string }) & { start: string; end: string }
-type Shift = { id: string; storeName: string; storeAddressText: string; startedAt: string }
-type Link = { storeId: string; storeName: string; status: string; schedule: ScheduleItem[] }
+type TermProposal = { id: string; dailyRateCents: number; perDeliveryCents: number; applyRetroactive: boolean; note: string | null }
+type Shift = { id: string; storeName: string; storeAddressText: string; startedAt: string; pendingTerms: TermProposal | null }
+type Link = { id: string; storeId: string; storeName: string; status: string; schedule: ScheduleItem[] }
+type Authorization = { id: string; storeDriverId: string; workDate: string; status: 'PENDING' | 'ACCEPTED'; authorizedUntil: string; scheduledEndAt: string; dailyRateCents: number; perDeliveryCents: number; note: string }
+type RecentShift = { id: string; storeDriverId: string; workDate: string; status: 'ACTIVE' | 'PENDING_DAILY' | 'REOPEN_ALLOWED' | 'CLOSED'; dailyDecision: 'PENDING' | 'APPROVED' | 'REJECTED' | null; dailyDecisionReason: string | null; reopenUntil: string | null; dailyRateCents: number }
 const shift = ref<Shift | null>(null)
 const links = ref<Link[]>([])
 const shiftBusy = ref(false)
 const shiftMsg = ref('')
+const authorizations = ref<Authorization[]>([])
+const recentShifts = ref<RecentShift[]>([])
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
+let syncClock: ReturnType<typeof setInterval> | undefined
 
 async function loadShift() {
-  const [active, allLinks] = await Promise.all([
+  const [active, allLinks, pendingAuthorizations, recent] = await Promise.all([
     api<Shift | null>('/driver/shifts/active'), api<Link[]>('/driver/links'),
+    api<Authorization[]>('/driver/shift-authorizations'),
+    api<RecentShift[]>('/driver/shifts/recent'),
   ])
   shift.value = active
   links.value = allLinks.filter((link) => link.status === 'CONFIRMED')
+  authorizations.value = pendingAuthorizations
+  recentShifts.value = recent
 }
 
 const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -110,8 +122,9 @@ onMounted(async () => {
     // token invalido: guard resolve na proxima navegacao.
   }
   clock = setInterval(() => { now.value = Date.now() }, 1_000)
+  syncClock = setInterval(() => { void loadShift() }, 15_000)
 })
-onBeforeUnmount(() => clearInterval(clock))
+onBeforeUnmount(() => { clearInterval(clock); clearInterval(syncClock) })
 
 async function toggle() {
   saving.value = true
@@ -133,9 +146,56 @@ async function start(storeId: string) {
     const gps = await new Promise<GeolocationPosition>((resolve, reject) =>
       navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15_000 }),
     )
-    await api('/driver/shifts', { method: 'POST', body: JSON.stringify({ storeId, lat: gps.coords.latitude, lng: gps.coords.longitude }) })
+    await api('/driver/shifts', { method: 'POST', body: JSON.stringify({ storeDriverId: storeId, lat: gps.coords.latitude, lng: gps.coords.longitude }) })
     await loadShift()
   } catch (e) { shiftMsg.value = e instanceof Error ? e.message : 'Não foi possível obter sua localização' }
+  finally { shiftBusy.value = false }
+}
+
+function linkWindowLabel(link: Link) {
+  if (!link.schedule.length) return 'Sem agenda'
+  return link.schedule.map((item) => `${'date' in item ? item.date.split('-').reverse().slice(0, 2).join('/') : DOW[item.dow]} ${item.start}–${item.end}`).join(' · ')
+}
+
+function acceptedAuthorization(linkId: string) {
+  return authorizations.value.find((item) => item.storeDriverId === linkId && item.status === 'ACCEPTED' && new Date() < new Date(item.authorizedUntil))
+}
+
+function occurrenceUsed(link: Link) {
+  const occurrence = findStartOccurrence(link.schedule, new Date(), 30)
+  const authorization = acceptedAuthorization(link.id)
+  const workDate = occurrence?.workDate ?? authorization?.workDate ?? null
+  return Boolean(workDate && recentShifts.value.some((shift) => shift.storeDriverId === link.id && shift.workDate === workDate))
+}
+
+function canStart(link: Link) {
+  const occurrence = findStartOccurrence(link.schedule, new Date(), 30)
+  const authorization = acceptedAuthorization(link.id)
+  return link.schedule.length > 0 && !occurrenceUsed(link) && (occurrence != null || authorization != null)
+}
+
+function startReason(link: Link) {
+  if (!link.schedule.length) return 'Sem agenda'
+  if (occurrenceUsed(link)) return 'Ocorrência já utilizada'
+  if (acceptedAuthorization(link.id)) return 'Início excepcional liberado'
+  return canStart(link) ? 'No horário' : 'Fora da janela ±30 min'
+}
+
+async function decideAuthorization(id: string, decision: 'accept' | 'reject') {
+  try { await api(`/driver/shift-authorizations/${id}/${decision}`, { method: 'POST' }); await loadShift() }
+  catch (e) { shiftMsg.value = e instanceof Error ? e.message : 'Erro' }
+}
+
+async function decideShiftTerms(proposalId: string, decision: 'accept' | 'reject') {
+  if (!shift.value) return
+  try { await api(`/driver/shifts/${shift.value.id}/terms/${proposalId}/${decision}`, { method: 'POST' }); await loadShift() }
+  catch (e) { shiftMsg.value = e instanceof Error ? e.message : 'Erro' }
+}
+
+async function reactivate(id: string) {
+  shiftBusy.value = true; shiftMsg.value = ''
+  try { await api(`/driver/shifts/${id}/reactivate`, { method: 'POST' }); await loadShift() }
+  catch (e) { shiftMsg.value = e instanceof Error ? e.message : 'Erro' }
   finally { shiftBusy.value = false }
 }
 
@@ -204,7 +264,7 @@ async function logout() {
       <div v-else-if="links.length" class="space-y-1">
         <div class="flex flex-wrap items-center gap-2">
           <span>Iniciar turno:</span>
-          <button v-for="link in links" :key="link.storeId" class="rounded border bg-white px-3 py-1 disabled:opacity-50" :disabled="shiftBusy" @click="start(link.storeId)">{{ link.storeName }}</button>
+          <button v-for="link in links" :key="link.id" class="rounded border bg-white px-3 py-1 text-left disabled:opacity-50" :disabled="shiftBusy || !canStart(link)" :title="startReason(link)" @click="start(link.id)">{{ link.storeName }} · {{ linkWindowLabel(link) }}<small class="block">{{ startReason(link) }}</small></button>
         </div>
         <p v-if="openWindow" class="font-semibold text-green-700">🟢 {{ openWindow.store }}: você está no horário ({{ openWindow.item.start }}–{{ openWindow.item.end }}) — inicie o turno.</p>
         <p v-else-if="soon" class="font-semibold text-orange-700">⏰ Falta pouco! {{ nextLabel }}</p>
@@ -212,6 +272,37 @@ async function logout() {
       </div>
       <p v-else>Confirme um convite em “Minhas lojas” para iniciar um turno.</p>
       <p v-if="shiftMsg" class="mt-1 text-red-600">{{ shiftMsg }}</p>
+    </section>
+    <section v-if="authorizations.some((item) => item.status === 'PENDING')" class="border-b bg-orange-50 p-3 text-sm">
+      <p class="font-semibold">Autorizações excepcionais pendentes</p>
+      <div v-for="item in authorizations.filter((entry) => entry.status === 'PENDING')" :key="item.id" class="mt-2 rounded border bg-white p-2">
+        <p>Até {{ new Date(item.authorizedUntil).toLocaleString('pt-BR') }} · fim {{ new Date(item.scheduledEndAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) }}</p>
+        <p>{{ formatBRL(item.dailyRateCents) }}/dia + {{ formatBRL(item.perDeliveryCents) }}/entrega · {{ item.note }}</p>
+        <div class="mt-2 flex gap-2"><button class="rounded border px-3 py-1" @click="decideAuthorization(item.id, 'reject')">Recusar</button><button class="rounded bg-black px-3 py-1 text-white" @click="decideAuthorization(item.id, 'accept')">Aceitar</button></div>
+      </div>
+    </section>
+    <section v-if="recentShifts.some((item) => item.status === 'PENDING_DAILY' || item.status === 'REOPEN_ALLOWED')" class="border-b bg-purple-50 p-3 text-sm">
+      <div v-for="item in recentShifts.filter((entry) => entry.status === 'PENDING_DAILY' || entry.status === 'REOPEN_ALLOWED')" :key="item.id" class="rounded border bg-white p-2">
+        <p class="font-semibold">Diária {{ item.status === 'REOPEN_ALLOWED' ? 'com reativação liberada' : 'aguardando decisão da loja' }}</p>
+        <p>{{ formatBRL(item.dailyRateCents) }} · aprovação automática em até 24h.</p>
+        <button v-if="item.status === 'REOPEN_ALLOWED' && new Date() <= new Date(item.reopenUntil!)" class="mt-2 rounded bg-black px-3 py-1 text-white" :disabled="shiftBusy" @click="reactivate(item.id)">Reativar turno até {{ new Date(item.reopenUntil!).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) }}</button>
+        <p v-else-if="item.status === 'REOPEN_ALLOWED'" class="mt-1 text-red-700">Prazo de reativação encerrado; a diária aguarda decisão.</p>
+      </div>
+    </section>
+    <details v-if="recentShifts.some((item) => item.status === 'CLOSED' && item.dailyDecision)" class="border-b p-3 text-sm">
+      <summary class="cursor-pointer text-gray-600">Decisões recentes de diária</summary>
+      <p v-for="item in recentShifts.filter((entry) => entry.status === 'CLOSED' && entry.dailyDecision).slice(0, 5)" :key="item.id" class="mt-2 rounded border p-2">
+        {{ item.workDate.split('-').reverse().join('/') }} · {{ formatBRL(item.dailyRateCents) }} ·
+        <strong :class="item.dailyDecision === 'APPROVED' ? 'text-green-700' : 'text-red-700'">{{ item.dailyDecision === 'APPROVED' ? 'Aprovada' : 'Recusada' }}</strong>
+        <span v-if="item.dailyDecisionReason" class="block text-xs text-gray-600">{{ item.dailyDecisionReason }}</span>
+      </p>
+    </details>
+    <section v-if="shift?.pendingTerms" class="border-b bg-yellow-50 p-3 text-sm">
+      <p class="font-semibold">Proposta de reajuste do turno</p>
+      <p>{{ formatBRL(shift.pendingTerms.dailyRateCents) }}/dia + {{ formatBRL(shift.pendingTerms.perDeliveryCents) }}/entrega</p>
+      <p>{{ shift.pendingTerms.applyRetroactive ? 'Extra retroativo para entregas concluídas' : 'Novo extra apenas para próximas entregas' }}</p>
+      <p v-if="shift.pendingTerms.note">{{ shift.pendingTerms.note }}</p>
+      <div class="mt-2 flex gap-2"><button class="rounded border px-3 py-1" @click="decideShiftTerms(shift.pendingTerms!.id, 'reject')">Recusar</button><button class="rounded bg-black px-3 py-1 text-white" @click="decideShiftTerms(shift.pendingTerms!.id, 'accept')">Aceitar</button></div>
     </section>
     <details class="border-b p-3 text-sm">
       <summary class="cursor-pointer text-gray-600">Minha chave PIX (recebimento do frete)</summary>

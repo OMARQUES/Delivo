@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm'
 import type { DriverRequestTarget, OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { deliveryBatches, driverShifts, orderEvents, orders, storeDrivers, stores, users } from '../db/schema'
@@ -60,13 +60,12 @@ export async function broadcastBatch(
     if (opts.target === 'SPECIFIC') {
       if (!opts.requestedDriverId) throw new BatchError('Escolha o entregador', 400)
       const [active] = await tx.select({ id: driverShifts.id }).from(driverShifts)
-        .innerJoin(storeDrivers, and(eq(storeDrivers.storeId, driverShifts.storeId), eq(storeDrivers.driverUserId, driverShifts.driverUserId)))
+        .innerJoin(storeDrivers, eq(storeDrivers.id, driverShifts.storeDriverId))
         .where(and(
         eq(driverShifts.storeId, storeId),
         eq(driverShifts.driverUserId, opts.requestedDriverId),
         eq(driverShifts.status, 'ACTIVE'),
         eq(storeDrivers.status, 'CONFIRMED'),
-        or(isNull(storeDrivers.expiresAt), gt(storeDrivers.expiresAt, new Date())),
       )).limit(1)
       if (!active) throw new BatchError('Entregador não está em turno nesta loja', 409)
     }

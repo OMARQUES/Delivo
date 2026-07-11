@@ -33,7 +33,7 @@ import {
 import {
   confirmLink, confirmLinkTermsChange, listDriverLinks, rejectLinkTermsChange, StoreDriverError,
 } from '../services/store-driver.service'
-import { endShift, getActiveShift, ShiftError, startShift } from '../services/shift.service'
+import { endShift, getActiveShift, listDriverRecentShifts, reactivateShift, ShiftError, startShift } from '../services/shift.service'
 import { createPaymentProvider } from '../lib/mercadopago'
 import { PaymentProviderError } from '../lib/payment-provider'
 import { PaymentError } from '../services/payment.service'
@@ -44,6 +44,7 @@ import {
   ReturnError,
 } from '../services/return.service'
 import { acceptOffer, dismissOffer, listOpenOffers, OfferError } from '../services/offer.service'
+import { decideActiveShiftTerms, decideShiftAuthorization, listDriverAuthorizations, ShiftProposalError } from '../services/shift-proposal.service'
 
 export const driverRoutes = createRouter()
 
@@ -57,6 +58,7 @@ function rethrow(e: unknown): never {
   if (e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof ReturnError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof OfferError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof ShiftProposalError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof PaymentProviderError)
     throw new HTTPException(503, { message: 'Falha registrada; o estorno do cliente será reprocessado (gateway indisponível)' })
   throw e
@@ -64,6 +66,7 @@ function rethrow(e: unknown): never {
 
 const Out = z.object({}).passthrough()
 const IdParam = z.object({ id: z.uuid() })
+const ShiftProposalParam = z.object({ id: z.uuid(), proposalId: z.uuid() })
 
 driverRoutes.openapi(createRoute({
   method: 'get', path: '/driver/offers',
@@ -116,9 +119,28 @@ driverRoutes.openapi(createRoute({
     body: { content: { 'application/json': { schema: StartShiftSchema } } },
   }, responses: { 201: { description: 'Turno iniciado', content: { 'application/json': { schema: Out } } } },
 }), async (c) => {
-  const { storeId, lat, lng } = c.req.valid('json')
-  return c.json(await startShift(c.get('db'), c.get('auth')!.sub, storeId, { lat, lng }).catch(rethrow), 201)
+  const { storeDriverId, lat, lng } = c.req.valid('json')
+  return c.json(await startShift(c.get('db'), c.get('auth')!.sub, storeDriverId, { lat, lng }).catch(rethrow), 201)
 })
+
+driverRoutes.openapi(createRoute({
+  method: 'get', path: '/driver/shift-authorizations',
+  responses: { 200: { description: 'Autorizações pendentes', content: { 'application/json': { schema: z.array(Out) } } } },
+}), async (c) => c.json(await listDriverAuthorizations(c.get('db'), c.get('auth')!.sub), 200))
+
+for (const decision of ['accept', 'reject'] as const) driverRoutes.openapi(createRoute({
+  method: 'post', path: `/driver/shift-authorizations/{id}/${decision}`, request: { params: IdParam },
+  responses: { 200: { description: 'Autorização respondida', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await decideShiftAuthorization(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id, decision === 'accept',
+).catch(rethrow), 200))
+
+for (const decision of ['accept', 'reject'] as const) driverRoutes.openapi(createRoute({
+  method: 'post', path: `/driver/shifts/{id}/terms/{proposalId}/${decision}`, request: { params: ShiftProposalParam },
+  responses: { 200: { description: 'Reajuste respondido', content: { 'application/json': { schema: Out } } } },
+}), async (c) => { const p = c.req.valid('param'); return c.json(await decideActiveShiftTerms(
+  c.get('db'), c.get('auth')!.sub, p.id, p.proposalId, decision === 'accept',
+).catch(rethrow), 200) })
 
 driverRoutes.openapi(createRoute({
   method: 'post', path: '/driver/shifts/{id}/end', request: { params: IdParam },
@@ -126,6 +148,18 @@ driverRoutes.openapi(createRoute({
 }), async (c) => c.json(await endShift(
   c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
 ).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/shifts/{id}/reactivate', request: { params: IdParam },
+  responses: { 200: { description: 'Turno reativado', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await reactivateShift(
+  c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'get', path: '/driver/shifts/recent',
+  responses: { 200: { description: 'Turnos recentes', content: { 'application/json': { schema: z.array(Out) } } } },
+}), async (c) => c.json(await listDriverRecentShifts(c.get('db'), c.get('auth')!.sub), 200))
 
 driverRoutes.openapi(createRoute({
   method: 'get', path: '/driver/shift-deliveries',

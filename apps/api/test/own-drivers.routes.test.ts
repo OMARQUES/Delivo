@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { inArray } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
+import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -9,7 +9,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { users } from '../src/db/schema'
+import { shiftStartAuthorizations, users } from '../src/db/schema'
 import { signAccessToken } from '../src/lib/tokens'
 import { registerUser } from '../src/services/auth.service'
 import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
@@ -53,7 +53,7 @@ beforeEach(async () => {
   driverToken = await signAccessToken({ sub: driver.user.id, role: 'DRIVER', name: 'D' }, env.JWT_SECRET)
   otherDriverToken = await signAccessToken({ sub: other.user.id, role: 'DRIVER', name: 'O' }, env.JWT_SECRET)
   customerToken = await signAccessToken({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
-  const link = await inviteDriver(testDb, storeId, input.phone, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [] })
+  const link = await inviteDriver(testDb, storeId, input.phone, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow() })
   linkId = link.id
   await confirmLink(testDb, driverId, linkId)
 })
@@ -67,6 +67,37 @@ function req(path: string, init: RequestInit, token: string) {
 }
 
 describe('termos e reajuste via HTTP', () => {
+  it('inicia por storeDriverId e protege ownership/RBAC', async () => {
+    expect((await req('/driver/shifts', { method: 'POST', body: JSON.stringify({ storeDriverId: linkId, lat: -23.55, lng: -51.9 }) }, otherDriverToken)).status).toBe(404)
+    expect((await req('/driver/shifts', { method: 'POST', body: JSON.stringify({ storeDriverId: linkId, lat: -23.55, lng: -51.9 }) }, customerToken)).status).toBe(403)
+    expect((await req('/driver/shifts', { method: 'POST', body: JSON.stringify({ storeDriverId: linkId, lat: -23.55, lng: -51.9 }) }, driverToken)).status).toBe(201)
+  })
+
+  it('encerra sem pagar, reativa o mesmo turno e exige decisão da loja para a diária', async () => {
+    const started = await req('/driver/shifts', { method: 'POST', body: JSON.stringify({ storeDriverId: linkId, lat: -23.55, lng: -51.9 }) }, driverToken)
+    const shift = await started.json() as { id: string }
+    const ended = await req(`/driver/shifts/${shift.id}/end`, { method: 'POST' }, driverToken)
+    expect(await ended.json()).toMatchObject({ status: 'PENDING_DAILY', dailyDecision: 'PENDING' })
+    expect((await req(`/store/me/shifts/${shift.id}/reactivation`, { method: 'POST' }, otherStoreToken)).status).toBe(404)
+    expect((await req(`/store/me/shifts/${shift.id}/reactivation`, { method: 'POST' }, storeToken)).status).toBe(200)
+    expect((await req(`/driver/shifts/${shift.id}/reactivate`, { method: 'POST' }, driverToken)).status).toBe(200)
+    await req(`/driver/shifts/${shift.id}/end`, { method: 'POST' }, driverToken)
+    expect((await req(`/store/me/shifts/${shift.id}/daily/approve`, { method: 'POST' }, customerToken)).status).toBe(403)
+    const approved = await req(`/store/me/shifts/${shift.id}/daily/approve`, { method: 'POST' }, storeToken)
+    expect(await approved.json()).toMatchObject({ status: 'CLOSED', dailyDecision: 'APPROVED', reopenCount: 1 })
+  })
+
+  it('somente o entregador dono responde autorização excepcional', async () => {
+    const now = new Date()
+    const [authorization] = await testDb.insert(shiftStartAuthorizations).values({ storeDriverId: linkId,
+      workDate: now.toISOString().slice(0, 10), authorizedUntil: new Date(now.getTime() + 60_000),
+      scheduledStartAt: new Date(now.getTime() - 60_000), scheduledEndAt: new Date(now.getTime() + 120_000),
+      dailyRateCents: 5_000, perDeliveryCents: 500, note: 'Teste de ownership',
+    }).returning()
+    expect((await req(`/driver/shift-authorizations/${authorization!.id}/accept`, { method: 'POST' }, otherDriverToken)).status).toBe(404)
+    expect((await req(`/driver/shift-authorizations/${authorization!.id}/accept`, { method: 'POST' }, driverToken)).status).toBe(200)
+  })
+
   it('propõe sem ativar, só o entregador vinculado confirma e RBAC bloqueia cliente', async () => {
     const proposed = await req(`/store/me/drivers/${linkId}`, {
       method: 'PATCH', body: JSON.stringify({ dailyRateCents: 7_000, perDeliveryCents: 800 }),
@@ -83,14 +114,17 @@ describe('termos e reajuste via HTTP', () => {
   })
 
   it('reajusta somente turno ativo da própria loja', async () => {
-    const shift = await startShift(testDb, driverId, storeId, { lat: -23.55, lng: -51.9 })
-    expect((await req(`/store/me/shifts/${shift.id}`, {
-      method: 'PATCH', body: JSON.stringify({ dailyRateCents: 9_000, perDeliveryCents: 900 }),
+    const shift = await startShift(testDb, driverId, linkId, { lat: -23.55, lng: -51.9 })
+    expect((await req(`/store/me/shifts/${shift.id}/terms`, {
+      method: 'POST', body: JSON.stringify({ dailyRateCents: 9_000, perDeliveryCents: 900 }),
     }, otherStoreToken)).status).toBe(404)
-    const adjusted = await req(`/store/me/shifts/${shift.id}`, {
-      method: 'PATCH', body: JSON.stringify({ dailyRateCents: 9_000, perDeliveryCents: 900 }),
+    const proposed = await req(`/store/me/shifts/${shift.id}/terms`, {
+      method: 'POST', body: JSON.stringify({ dailyRateCents: 9_000, perDeliveryCents: 900 }),
     }, storeToken)
+    expect(proposed.status).toBe(201)
+    const proposal = await proposed.json() as { id: string }
+    const adjusted = await req(`/driver/shifts/${shift.id}/terms/${proposal.id}/accept`, { method: 'POST' }, driverToken)
     expect(adjusted.status).toBe(200)
-    expect(await adjusted.json()).toMatchObject({ dailyRateCents: 9_000, perDeliveryCents: 900 })
+    expect(await adjusted.json()).toMatchObject({ shift: { dailyRateCents: 9_000, perDeliveryCents: 900 } })
   })
 })
