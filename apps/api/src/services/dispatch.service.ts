@@ -391,7 +391,7 @@ export async function listDriverDeliveries(db: Db, driverUserId: string, scope: 
     ))
     .orderBy(desc(orders.createdAt))
     .limit(scope === 'active' ? 50 : scope === 'done' ? 30 : 500)
-  return rows.map((row) => scope === 'active'
-    ? toActiveDriverDelivery(row, [])
-    : toDriverHistoryDelivery(row))
+  return rows.map((row) => scope === 'done'
+    ? toDriverHistoryDelivery(row)
+    : toActiveDriverDelivery(row, []))
 }
