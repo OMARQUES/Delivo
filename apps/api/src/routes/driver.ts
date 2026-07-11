@@ -45,6 +45,7 @@ import {
 } from '../services/return.service'
 import { acceptOffer, dismissOffer, listOpenOffers, OfferError } from '../services/offer.service'
 import { decideActiveShiftTerms, decideShiftAuthorization, listDriverAuthorizations, ShiftProposalError } from '../services/shift-proposal.service'
+import { toDriverActionResult } from '../services/driver-delivery.dto'
 
 export const driverRoutes = createRouter()
 
@@ -198,9 +199,9 @@ driverRoutes.openapi(
     request: { params: IdParam, body: { content: { 'application/json': { schema: DriverArrivalSchema } } } },
     responses: { 200: { description: 'Chegada registrada', content: { 'application/json': { schema: Out } } } },
   }),
-  async (c) => c.json(await confirmArrival(
+  async (c) => c.json(toDriverActionResult(await confirmArrival(
     c.get('db'), c.get('auth')!.sub, c.req.valid('param').id, c.req.valid('json'),
-  ).catch(rethrow), 200),
+  ).catch(rethrow)), 200),
 )
 
 driverRoutes.openapi(
@@ -327,7 +328,7 @@ driverRoutes.openapi(
     request: { params: IdParam },
     responses: { 200: { description: 'Coletada', content: { 'application/json': { schema: Out } } } },
   }),
-  async (c) => c.json(await collectDelivery(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200),
+  async (c) => c.json(toDriverActionResult(await collectDelivery(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow)), 200),
 )
 
 driverRoutes.openapi(
@@ -337,7 +338,7 @@ driverRoutes.openapi(
     request: { params: IdParam },
     responses: { 200: { description: 'Entregue', content: { 'application/json': { schema: Out } } } },
   }),
-  async (c) => c.json(await completeDelivery(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200),
+  async (c) => c.json(toDriverActionResult(await completeDelivery(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow)), 200),
 )
 
 driverRoutes.openapi(
@@ -347,9 +348,9 @@ driverRoutes.openapi(
     request: { params: IdParam },
     responses: { 200: { description: 'Devolução declarada', content: { 'application/json': { schema: Out } } } },
   }),
-  async (c) => c.json(await markDriverReturned(
+  async (c) => c.json(toDriverActionResult(await markDriverReturned(
     c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
-  ).catch(rethrow), 200),
+  ).catch(rethrow)), 200),
 )
 
 const RETURN_IMAGE_TYPES: Record<string, string> = {
@@ -397,8 +398,8 @@ driverRoutes.openapi(
     responses: { 200: { description: 'Falha registrada', content: { 'application/json': { schema: Out } } } },
   }),
   async (c) =>
-    c.json(await failDelivery(
+    c.json(toDriverActionResult(await failDelivery(
       c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
       c.req.valid('json'), createPaymentProvider(c.env),
-    ).catch(rethrow), 200),
+    ).catch(rethrow)), 200),
 )

@@ -7,6 +7,7 @@ import { driverShifts, drivers, orderItems, orders, stores, users } from '../db/
 import { addEvent } from './order-status.service'
 import { recordHalfFee, recordOrderLedger } from './finance.service'
 import { refundOrderPaymentIfAny } from './payment.service'
+import { toActiveDriverDelivery, toDriverHistoryDelivery } from './driver-delivery.dto'
 
 export class DispatchError extends Error {
   constructor(
@@ -101,17 +102,7 @@ async function driverOrderDetail(db: Db, driverUserId: string, orderId: string) 
     .from(orderItems)
     .where(eq(orderItems.orderId, orderId))
     .orderBy(orderItems.sortIndex)
-  return {
-    ...row.order,
-    storeName: row.storeName,
-    storeAddressText: row.storeAddressText,
-    storeLat: row.storeLat,
-    storeLng: row.storeLng,
-    storePhone: row.storePhone,
-    customerName: row.customerName,
-    customerPhone: row.customerPhone,
-    items,
-  }
+  return toActiveDriverDelivery(row, items)
 }
 
 export async function acceptDelivery(db: Db, driverUserId: string, orderId: string) {
@@ -400,14 +391,7 @@ export async function listDriverDeliveries(db: Db, driverUserId: string, scope: 
     ))
     .orderBy(desc(orders.createdAt))
     .limit(scope === 'active' ? 50 : scope === 'done' ? 30 : 500)
-  return rows.map((r) => ({
-    ...r.order,
-    storeName: r.storeName,
-    storeAddressText: r.storeAddressText,
-    storeLat: r.storeLat,
-    storeLng: r.storeLng,
-    storePhone: r.storePhone,
-    customerName: r.customerName,
-    customerPhone: r.customerPhone,
-  }))
+  return rows.map((row) => scope === 'active'
+    ? toActiveDriverDelivery(row, [])
+    : toDriverHistoryDelivery(row))
 }
