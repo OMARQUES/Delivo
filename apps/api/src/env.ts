@@ -1,5 +1,5 @@
 import type { Db } from './db/client'
-import type { AccessTokenPayload } from './lib/tokens'
+import type { LivePrincipal } from './services/security-session.service'
 
 export type Env = {
   HYPERDRIVE: Hyperdrive
@@ -21,6 +21,6 @@ export type AppContext = {
   Bindings: Env
   Variables: {
     db: Db
-    auth?: AccessTokenPayload
+    auth?: LivePrincipal
   }
 }

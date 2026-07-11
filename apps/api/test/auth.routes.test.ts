@@ -11,6 +11,7 @@ import { app } from '../src/app'
 import { authMiddleware, requireRole } from '../src/middleware/auth'
 import { signAccessToken } from '../src/lib/tokens'
 import { errorHandler } from '../src/middleware/error-handler'
+import { refreshTokens, users } from '../src/db/schema'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -105,13 +106,34 @@ describe('POST /auth/refresh + /auth/logout', () => {
 })
 
 describe('requireRole unit', () => {
-  const mini = new Hono<{ Bindings: typeof env; Variables: { auth?: unknown } }>()
+  const mini = new Hono<{ Bindings: typeof env; Variables: { auth?: unknown; db?: typeof testDb } }>()
   mini.onError(errorHandler)
+  mini.use('*', async (c, next) => {
+    c.set('db', testDb)
+    await next()
+  })
   mini.use('/admin/*', authMiddleware, requireRole('ADMIN'))
   mini.get('/admin/ping', (c) => c.json({ ok: true }))
+
+  async function tokenFor(role: 'CUSTOMER' | 'ADMIN') {
+    const [user] = await testDb.insert(users).values({
+      name: role, role, status: 'ACTIVE', email: `${role}-${crypto.randomUUID()}@test.local`,
+    }).returning()
+    if (!user) throw new Error('test user was not created')
+    const familyId = crypto.randomUUID()
+    await testDb.insert(refreshTokens).values({
+      userId: user.id, familyId, tokenHash: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000),
+    })
+    return signAccessToken(
+      { sub: user.id, role, name: user.name, tokenVersion: user.tokenVersion },
+      env.JWT_SECRET,
+      familyId,
+    )
+  }
+
   it('403 wrong role, 200 right role', async () => {
-    const cust = await signAccessToken({ sub: 'u1', role: 'CUSTOMER', name: 'A' }, env.JWT_SECRET)
-    const admin = await signAccessToken({ sub: 'u2', role: 'ADMIN', name: 'B' }, env.JWT_SECRET)
+    const cust = await tokenFor('CUSTOMER')
+    const admin = await tokenFor('ADMIN')
     expect((await mini.request('/admin/ping', { headers: { Authorization: `Bearer ${cust}` } }, env)).status).toBe(403)
     expect((await mini.request('/admin/ping', { headers: { Authorization: `Bearer ${admin}` } }, env)).status).toBe(200)
   })
