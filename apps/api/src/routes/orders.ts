@@ -7,7 +7,7 @@ import { users } from '../db/schema'
 import { createPaymentProvider } from '../lib/mercadopago'
 import { resolvePayerEmail } from '../lib/payer-email'
 import { PaymentProviderError } from '../lib/payment-provider'
-import { authMiddleware } from '../middleware/auth'
+import { authMiddleware, requireRole } from '../middleware/auth'
 import {
   OrderError,
   createOrder,
@@ -21,8 +21,8 @@ import { AmendmentError, approveAmendment, rejectAmendment } from '../services/a
 
 export const orderRoutes = createRouter()
 
-orderRoutes.use('/orders/*', authMiddleware)
-orderRoutes.use('/orders', authMiddleware)
+orderRoutes.use('/orders/*', authMiddleware, requireRole('CUSTOMER'))
+orderRoutes.use('/orders', authMiddleware, requireRole('CUSTOMER'))
 
 function rethrow(e: unknown): never {
   if (e instanceof AmendmentError) throw new HTTPException(e.status, { message: e.message })

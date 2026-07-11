@@ -2,12 +2,12 @@ import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
 import { AddressSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
-import { authMiddleware } from '../middleware/auth'
+import { authMiddleware, requireRole } from '../middleware/auth'
 import { createAddress, deleteAddress, listAddresses } from '../services/address.service'
 
 export const addressRoutes = createRouter()
 
-addressRoutes.use('/me/*', authMiddleware)
+addressRoutes.use('/me/*', authMiddleware, requireRole('CUSTOMER'))
 
 const Out = z.object({ id: z.string() }).passthrough()
 
