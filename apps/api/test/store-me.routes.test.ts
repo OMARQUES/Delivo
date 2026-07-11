@@ -7,7 +7,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { signAccessToken } from '../src/lib/tokens'
+import { createTestSession } from './helpers/test-db'
 import { createStoreWithOwner } from '../src/services/store.service'
 
 const put = vi.fn(async () => ({}))
@@ -33,7 +33,7 @@ afterAll(closeTestDb)
 
 async function makeStore() {
   const store = await createStoreWithOwner(testDb, input)
-  const token = await signAccessToken({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
+  const token = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
   return { store, token }
 }
 
@@ -69,12 +69,12 @@ describe('GET/PATCH /store/me', () => {
     expect(((await get.json()) as { pixKey: string }).pixKey).toBe('chave@pix.com')
   })
 
-  it('401 anon, 403 CUSTOMER, 404 STORE sem loja', async () => {
+  it('401 anon, 403 CUSTOMER e STORE sem loja', async () => {
     expect((await app.request('/store/me', {}, env)).status).toBe(401)
-    const cust = await signAccessToken({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
+    const cust = await createTestSession({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
     expect((await app.request('/store/me', { headers: { Authorization: `Bearer ${cust}` } }, env)).status).toBe(403)
-    const orphanStore = await signAccessToken({ sub: crypto.randomUUID(), role: 'STORE', name: 'S' }, env.JWT_SECRET)
-    expect((await app.request('/store/me', { headers: { Authorization: `Bearer ${orphanStore}` } }, env)).status).toBe(404)
+    const orphanStore = await createTestSession({ sub: crypto.randomUUID(), role: 'STORE', name: 'S' }, env.JWT_SECRET)
+    expect((await app.request('/store/me', { headers: { Authorization: `Bearer ${orphanStore}` } }, env)).status).toBe(403)
   })
 })
 

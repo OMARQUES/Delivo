@@ -7,7 +7,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { signAccessToken } from '../src/lib/tokens'
+import { createTestSession } from './helpers/test-db'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -24,13 +24,13 @@ const storeInput = {
 }
 
 async function adminToken() {
-  return signAccessToken({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Root' }, env.JWT_SECRET)
+  return createTestSession({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Root' }, env.JWT_SECRET)
 }
 async function customerToken() {
-  return signAccessToken({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
+  return createTestSession({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
 }
 
-type StoreBody = { id: string; slug: string; isActive: boolean }
+type StoreBody = { id: string; slug: string; securityStatus: 'ACTIVE' | 'SUSPENDED' | 'CLOSED' }
 
 function req(path: string, init: RequestInit = {}, token?: string) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(init.headers as Record<string, string>) }
@@ -62,16 +62,16 @@ describe('POST /admin/stores', () => {
   })
 })
 
-describe('GET /admin/stores + PATCH active', () => {
-  it('lists all (including inactive) and toggles active', async () => {
+describe('GET /admin/stores + PATCH security status', () => {
+  it('lists all and suspends a store', async () => {
     const create = await req('/admin/stores', { method: 'POST', body: JSON.stringify(storeInput) }, await adminToken())
     const { id } = (await create.json()) as StoreBody
-    const patch = await req(`/admin/stores/${id}/active`, { method: 'PATCH', body: JSON.stringify({ isActive: false }) }, await adminToken())
+    const patch = await req(`/admin/stores/${id}/security-status`, { method: 'PATCH', body: JSON.stringify({ securityStatus: 'SUSPENDED' }) }, await adminToken())
     expect(patch.status).toBe(200)
     const list = await req('/admin/stores', {}, await adminToken())
     const body = (await list.json()) as StoreBody[]
     expect(body).toHaveLength(1)
-    expect(body[0]?.isActive).toBe(false)
+    expect(body[0]?.securityStatus).toBe('SUSPENDED')
   })
 })
 

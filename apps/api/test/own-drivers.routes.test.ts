@@ -9,8 +9,8 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
+import { createTestSession } from './helpers/test-db'
 import { shiftStartAuthorizations, users } from '../src/db/schema'
-import { signAccessToken } from '../src/lib/tokens'
 import { registerUser } from '../src/services/auth.service'
 import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
 import { startShift } from '../src/services/shift.service'
@@ -39,20 +39,20 @@ beforeEach(async () => {
   await truncateAll()
   const store = await createStoreWithOwner(testDb, baseStore)
   storeId = store.id
-  storeToken = await signAccessToken({ sub: store.ownerUserId, role: 'STORE', name: 'Lojista' }, env.JWT_SECRET)
+  storeToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'Lojista' }, env.JWT_SECRET)
   const otherStore = await createStoreWithOwner(testDb, {
     ...baseStore, name: 'Outra', slug: 'outra-termos', phone: '4433335555',
     owner: { name: 'Outra', email: 'outra@termos.test', password: 'senha123' },
   })
-  otherStoreToken = await signAccessToken({ sub: otherStore.ownerUserId, role: 'STORE', name: 'Outra' }, env.JWT_SECRET)
+  otherStoreToken = await createTestSession({ sub: otherStore.ownerUserId, role: 'STORE', name: 'Outra' }, env.JWT_SECRET)
   const input = { name: 'D', phone: '44911111111', password: 'senha123', role: 'DRIVER' as const, acceptedTerms: true as const }
   const driver = await registerUser(testDb, input, env.JWT_SECRET)
   const other = await registerUser(testDb, { ...input, phone: '44922222222' }, env.JWT_SECRET)
   driverId = driver.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(inArray(users.id, [driver.user.id, other.user.id]))
-  driverToken = await signAccessToken({ sub: driver.user.id, role: 'DRIVER', name: 'D' }, env.JWT_SECRET)
-  otherDriverToken = await signAccessToken({ sub: other.user.id, role: 'DRIVER', name: 'O' }, env.JWT_SECRET)
-  customerToken = await signAccessToken({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
+  driverToken = await createTestSession({ sub: driver.user.id, role: 'DRIVER', name: 'D' }, env.JWT_SECRET)
+  otherDriverToken = await createTestSession({ sub: other.user.id, role: 'DRIVER', name: 'O' }, env.JWT_SECRET)
+  customerToken = await createTestSession({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
   const link = await inviteDriver(testDb, storeId, input.phone, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow() })
   linkId = link.id
   await confirmLink(testDb, driverId, linkId)

@@ -5,6 +5,8 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 import * as schema from '../../src/db/schema'
+import { refreshTokens, users } from '../../src/db/schema'
+import { signAccessToken } from '../../src/lib/tokens'
 
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/delivery_test'
@@ -29,6 +31,35 @@ export async function truncateAll() {
 /** Fecha a conexão. Chamar em afterAll do último suite. */
 export async function closeTestDb() {
   await client.end()
+}
+
+export async function createTestSession(
+  principal: { sub: string; role: 'CUSTOMER' | 'STORE' | 'DRIVER' | 'ADMIN'; name: string },
+  secret: string,
+) {
+  let [user] = await testDb.select().from(users).where(sql`${users.id} = ${principal.sub}`).limit(1)
+  if (!user) {
+    [user] = await testDb.insert(users).values({
+      id: principal.sub,
+      name: principal.name,
+      role: principal.role,
+      status: 'ACTIVE',
+      email: `${principal.sub}@test.local`,
+    }).returning()
+  }
+  if (!user) throw new Error('test session user was not created')
+  const familyId = crypto.randomUUID()
+  await testDb.insert(refreshTokens).values({
+    userId: user.id,
+    familyId,
+    tokenHash: `test-${crypto.randomUUID()}`,
+    expiresAt: new Date(Date.now() + 60_000),
+  })
+  return signAccessToken(
+    { sub: user.id, role: user.role, name: user.name, tokenVersion: user.tokenVersion },
+    secret,
+    familyId,
+  )
 }
 
 /** Agenda semanal cuja janela começou agora e termina em uma hora (fuso SP). */

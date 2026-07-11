@@ -8,8 +8,9 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { ledgerEntries, orders } from '../src/db/schema'
-import { signAccessToken } from '../src/lib/tokens'
+import { createTestSession } from './helpers/test-db'
+import { ledgerEntries, orders, users } from '../src/db/schema'
+import { eq } from 'drizzle-orm'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -50,7 +51,7 @@ beforeEach(async () => {
   await truncateAll()
   const store = await createStoreWithOwner(testDb, storeInput)
   storeId = store.id
-  storeToken = await signAccessToken({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
+  storeToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
   await updateStore(testDb, storeId, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),
     deliveryFeeMode: 'FIXED',
@@ -62,7 +63,8 @@ beforeEach(async () => {
   const productId = (await createProduct(testDb, storeId, { categoryId: cat.id, name: 'Pizza', basePriceCents: 10000, isAvailable: true })).id
   const driver = await registerUser(testDb, { ...ana, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
   driverId = driver.user.id
-  driverToken = await signAccessToken({ sub: driverId, role: 'DRIVER', name: 'Duda' }, env.JWT_SECRET)
+  await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverId))
+  driverToken = await createTestSession({ sub: driverId, role: 'DRIVER', name: 'Duda' }, env.JWT_SECRET)
   const { order } = await createOrder(testDb, customer.user.id, {
     storeSlug: 'pizzaria',
     fulfillment: 'DELIVERY',
@@ -76,7 +78,7 @@ beforeEach(async () => {
 afterAll(closeTestDb)
 
 function adminToken() {
-  return signAccessToken({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Root' }, env.JWT_SECRET)
+  return createTestSession({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Root' }, env.JWT_SECRET)
 }
 
 async function req(path: string, init: RequestInit = {}, token?: string) {
@@ -198,7 +200,8 @@ describe('finance routes', () => {
     const other = await registerUser(testDb, {
       ...ana, name: 'Outro', phone: '44922222222', role: 'DRIVER',
     }, env.JWT_SECRET)
-    const otherToken = await signAccessToken({ sub: other.user.id, role: 'DRIVER', name: 'Outro' }, env.JWT_SECRET)
+    await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, other.user.id))
+    const otherToken = await createTestSession({ sub: other.user.id, role: 'DRIVER', name: 'Outro' }, env.JWT_SECRET)
     expect((await req(`/driver/earnings/orders/${orderId}`, {}, otherToken)).status).toBe(404)
   })
 })

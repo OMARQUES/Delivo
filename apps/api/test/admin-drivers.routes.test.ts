@@ -7,7 +7,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { signAccessToken } from '../src/lib/tokens'
+import { createTestSession } from './helpers/test-db'
 import { loginUser, registerUser } from '../src/services/auth.service'
 
 const env = {
@@ -23,7 +23,7 @@ let driverUserId: string
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  adminToken = await signAccessToken({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Root' }, env.JWT_SECRET)
+  adminToken = await createTestSession({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Root' }, env.JWT_SECRET)
   const d = await registerUser(testDb, {
     name: 'Duda',
     phone: '44911111111',

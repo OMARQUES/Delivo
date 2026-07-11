@@ -9,8 +9,8 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
+import { createTestSession } from './helpers/test-db'
 import { orders, users } from '../src/db/schema'
-import { signAccessToken } from '../src/lib/tokens'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -65,8 +65,8 @@ beforeEach(async () => {
     owner: { name: 'Maria', email: 'batch-routes-other@email.com', password: 'senha123' },
   })
   storeId = store.id
-  ownerToken = await signAccessToken({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
-  otherOwnerToken = await signAccessToken({ sub: other.ownerUserId, role: 'STORE', name: 'Maria' }, env.JWT_SECRET)
+  ownerToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
+  otherOwnerToken = await createTestSession({ sub: other.ownerUserId, role: 'STORE', name: 'Maria' }, env.JWT_SECRET)
   await updateStore(testDb, storeId, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),
     deliveryFeeMode: 'FIXED',
@@ -85,8 +85,8 @@ beforeEach(async () => {
   const driver = await registerUser(testDb, { ...customerInput, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
   const driver2 = await registerUser(testDb, { ...customerInput, name: 'Edu', phone: '44922222222', role: 'DRIVER' }, env.JWT_SECRET)
   await testDb.update(users).set({ status: 'ACTIVE' }).where(inArray(users.id, [driver.user.id, driver2.user.id]))
-  driverToken = await signAccessToken({ sub: driver.user.id, role: 'DRIVER', name: 'Duda' }, env.JWT_SECRET)
-  driver2Token = await signAccessToken({ sub: driver2.user.id, role: 'DRIVER', name: 'Edu' }, env.JWT_SECRET)
+  driverToken = await createTestSession({ sub: driver.user.id, role: 'DRIVER', name: 'Duda' }, env.JWT_SECRET)
+  driver2Token = await createTestSession({ sub: driver2.user.id, role: 'DRIVER', name: 'Edu' }, env.JWT_SECRET)
 })
 afterAll(closeTestDb)
 

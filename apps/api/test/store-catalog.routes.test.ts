@@ -8,7 +8,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { signAccessToken } from '../src/lib/tokens'
+import { createTestSession } from './helpers/test-db'
 import { createStoreWithOwner } from '../src/services/store.service'
 
 const put = vi.fn(async () => ({}))
@@ -34,7 +34,7 @@ beforeEach(async () => {
   const store = await createStoreWithOwner(testDb, storeInput)
   storeId = store.id
   void storeId
-  token = await signAccessToken({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
+  token = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
 })
 afterAll(closeTestDb)
 
@@ -136,7 +136,7 @@ describe('products routes', () => {
 
   it('401 anon, 403 CUSTOMER', async () => {
     expect((await app.request('/store/me/catalog', {}, env)).status).toBe(401)
-    const cust = await signAccessToken({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
+    const cust = await createTestSession({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
     expect(
       (await app.request('/store/me/catalog', { headers: { Authorization: `Bearer ${cust}` } }, env)).status,
     ).toBe(403)
@@ -195,7 +195,7 @@ describe('PATCH /store/me/options/:id', () => {
       slug: 'outra-pizzaria',
       owner: { ...storeInput.owner, email: 'outra@email.com' },
     })
-    const otherToken = await signAccessToken(
+    const otherToken = await createTestSession(
       { sub: otherStore.ownerUserId, role: 'STORE', name: 'Outra Loja' },
       env.JWT_SECRET,
     )

@@ -9,10 +9,10 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
+import { createTestSession } from './helpers/test-db'
 import { ledgerEntries, orders, users } from '../src/db/schema'
 import type { PaymentProvider } from '../src/lib/payment-provider'
 import * as mp from '../src/lib/mercadopago'
-import { signAccessToken } from '../src/lib/tokens'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
@@ -73,7 +73,7 @@ beforeEach(async () => {
   await truncateAll()
   const store = await createStoreWithOwner(testDb, storeInput)
   storeId = store.id
-  ownerToken = await signAccessToken({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
+  ownerToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
   await updateStore(testDb, storeId, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),
     deliveryFeeMode: 'DISTANCE',

@@ -9,8 +9,8 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
+import { createTestSession } from './helpers/test-db'
 import { ledgerEntries, orderEvents, orders, users } from '../src/db/schema'
-import { signAccessToken } from '../src/lib/tokens'
 import { registerUser } from '../src/services/auth.service'
 import { createStoreWithOwner } from '../src/services/store.service'
 
@@ -45,9 +45,9 @@ beforeEach(async () => {
     owner: { name: 'Outra', email: 'other@return.test', password: 'senha123' },
   })
   storeId = store.id
-  storeToken = await signAccessToken({ sub: store.ownerUserId, role: 'STORE', name: 'Lojista' }, env.JWT_SECRET)
-  otherStoreToken = await signAccessToken({ sub: other.ownerUserId, role: 'STORE', name: 'Outra' }, env.JWT_SECRET)
-  adminToken = await signAccessToken({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Admin' }, env.JWT_SECRET)
+  storeToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'Lojista' }, env.JWT_SECRET)
+  otherStoreToken = await createTestSession({ sub: other.ownerUserId, role: 'STORE', name: 'Outra' }, env.JWT_SECRET)
+  adminToken = await createTestSession({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Admin' }, env.JWT_SECRET)
   const customer = await registerUser(testDb, {
     name: 'Cliente', phone: '44999999999', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true,
   }, env.JWT_SECRET)
@@ -55,7 +55,7 @@ beforeEach(async () => {
     name: 'Driver', phone: '44911111111', password: 'senha123', role: 'DRIVER', acceptedTerms: true,
   }, env.JWT_SECRET)
   customerId = customer.user.id; driverId = driver.user.id
-  driverToken = await signAccessToken({ sub: driver.user.id, role: 'DRIVER', name: 'Driver' }, env.JWT_SECRET)
+  driverToken = await createTestSession({ sub: driver.user.id, role: 'DRIVER', name: 'Driver' }, env.JWT_SECRET)
   await testDb.update(users).set({ status: 'ACTIVE' })
   customerToken = customer.accessToken!
 })
@@ -101,7 +101,7 @@ describe('rotas de devolução', () => {
       name: 'Outro driver', phone: '44922222222', password: 'senha123', role: 'DRIVER', acceptedTerms: true,
     }, env.JWT_SECRET)
     await testDb.update(users).set({ status: 'ACTIVE' })
-    const otherToken = await signAccessToken({ sub: other.user.id, role: 'DRIVER', name: 'Outro driver' }, env.JWT_SECRET)
+    const otherToken = await createTestSession({ sub: other.user.id, role: 'DRIVER', name: 'Outro driver' }, env.JWT_SECRET)
     expect((await req(`/driver/orders/${order.id}/returned`, { method: 'POST' }, otherToken)).status).toBe(404)
 
     expect((await req(`/driver/orders/${order.id}/returned`, { method: 'POST' }, driverToken)).status).toBe(200)
@@ -140,7 +140,7 @@ describe('rotas de devolução', () => {
     ])
     const driverList = await req('/driver/deliveries?scope=returns', {}, driverToken)
     expect(await driverList.json()).toEqual([
-      expect.objectContaining({ id: order.id, returnPhotoKeys: saved!.returnPhotoKeys }),
+      expect.objectContaining({ id: order.id, returnPhotoCount: saved!.returnPhotoKeys.length }),
     ])
 
     const other = await failedOrder()

@@ -10,8 +10,8 @@ vi.mock('../src/db/client', async () => {
 
 import { eq, inArray } from 'drizzle-orm'
 import { app } from '../src/app'
+import { createTestSession } from './helpers/test-db'
 import { ledgerEntries, users } from '../src/db/schema'
-import { signAccessToken } from '../src/lib/tokens'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -70,8 +70,8 @@ beforeEach(async () => {
   driverId = d1.user.id
   driver2Id = d2.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(inArray(users.id, [driverId, driver2Id]))
-  driverToken = await signAccessToken({ sub: driverId, role: 'DRIVER', name: 'Duda' }, env.JWT_SECRET)
-  driver2Token = await signAccessToken({ sub: driver2Id, role: 'DRIVER', name: 'Edu' }, env.JWT_SECRET)
+  driverToken = await createTestSession({ sub: driverId, role: 'DRIVER', name: 'Duda' }, env.JWT_SECRET)
+  driver2Token = await createTestSession({ sub: driver2Id, role: 'DRIVER', name: 'Edu' }, env.JWT_SECRET)
 })
 afterAll(closeTestDb)
 
@@ -162,7 +162,7 @@ describe('driver flow via HTTP', () => {
       body: JSON.stringify({ reason: 'WRONG_ADDRESS', note: 'numero nao existe' }),
     }, driverToken)
     expect(fail.status).toBe(200)
-    expect(((await fail.json()) as { failReason: string }).failReason).toBe('WRONG_ADDRESS')
+    expect((await fail.json()) as { id: string; status: string }).toMatchObject({ id: order.id, status: 'DELIVERY_FAILED' })
     expect(await ledgerSummary(order.id)).toEqual([])
     expect((await req('/driver/available', {}, customerToken)).status).toBe(403)
     expect((await app.request('/driver/available', {}, env)).status).toBe(401)
