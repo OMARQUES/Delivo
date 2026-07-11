@@ -12,9 +12,10 @@ export const securityBaseline = createMiddleware<AppContext>(async (c, next) => 
   const contentType = c.req.header('content-type')
   const method = c.req.method
   const isUnsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
-  const isUpload = c.req.path.endsWith('/logo') || c.req.path.endsWith('/return-photo')
+  const isUpload = c.req.path.endsWith('/logo') || c.req.path.endsWith('/photo') || c.req.path.endsWith('/return-photo')
   const isCsv = c.req.path.endsWith('/catalog/import')
-  if (isUnsafe && contentType && !isUpload && !isCsv && !/^application\/json(?:;\s*charset=utf-8)?$/i.test(contentType)) {
+  const isWebhook = c.req.path.startsWith('/webhooks/')
+  if (isUnsafe && contentType && !isUpload && !isCsv && !isWebhook && !/^application\/json(?:;\s*charset=utf-8)?$/i.test(contentType)) {
     return c.json({ error: 'Unsupported Media Type' }, 415)
   }
   if (contentType && /^application\/json(?:;|$)/i.test(contentType)) {
