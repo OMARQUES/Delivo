@@ -1,5 +1,25 @@
 # Revisão de segurança do backend — 2026-07-11
 
+## Remediação P0 — concluída
+
+Plano executado: `docs/superpowers/plans/2026-07-11-p0-authorization-session-foundation.md`. As 10 tasks foram implementadas em ciclo TDD no worktree `feat/p0-authorization-session`. Gate final verde: shared 89 testes, API 45 arquivos/367 testes, typecheck e ESLint sem erros, `git diff --check` limpo.
+
+| Achado | Estado P0 | Evidência implementada | Limite remanescente |
+| --- | --- | --- | --- |
+| SEC-01 | Remediado | CUSTOMER obrigatório em `/orders*` e `/me/addresses*`; matriz exaustiva ANON/CUSTOMER/DRIVER/STORE/ADMIN sobre todas as rotas protegidas em `authorization-matrix.routes.test.ts`. | — |
+| SEC-04 | Remediado | JWT completo (`iss/aud/nbf/jti/sid/ver`) e principal vivo consultado no PostgreSQL a cada request; revogação por família e por `tokenVersion`. | MFA e identidade verificada continuam fora do P0. |
+| SEC-05 | Remediado | `securityStatus` ACTIVE/SUSPENDED/CLOSED; suspensão incrementa `tokenVersion` do dono, revoga refresh e bloqueia descoberta pública. | — |
+| SEC-06 | Mitigação emergencial | `/media/*` só serve `logos/` e `products/`; `returns/` não consulta R2. | Leitura privada autenticada, retenção e auditoria pertencem ao plano de mídia privada. |
+| SEC-07 | Remediado | DTOs explícitos de entrega ativa/histórico removem spreads de `orders` e PII do histórico do entregador; mutações de entregador respondem só `{id,status}`. | Projeções de loja/admin (`listStoreOrders`, `listPendingReturns`) seguem fora deste plano por design. |
+| SEC-12 | Parcialmente remediado | Limites de corpo global (6 MiB) e JSON (256 KiB), content type explícito. | Rate limiting, deadlines externos e limites de custo seguem pendentes. |
+| SEC-20 | Parcialmente remediado | Headers defensivos, `no-store` em superfícies sensíveis, HSTS só em produção e docs/OpenAPI/health DB restritos a `APP_ENV=local`. | Políticas de borda Cloudflare e staging seguem em fase própria. |
+
+Contratos negativos cross-tenant e transições de evento de segurança (logout, logout-all, bloqueio de conta, suspensão de loja) verificados em `authorization-boundary.routes.test.ts`: leituras de recurso alheio retornam `404`; mutações escopadas por dono afetam 0 linhas e rejeitam com `404`/`409` sem vazar existência.
+
+Desvios do plano registrados: a emissão/rotação de tokens permaneceu em `auth.service.ts` (o plano sugeria mover para `security-session.service.ts`); a organização de arquivo difere mas as propriedades de segurança — claims completos, vínculo de família, revogação viva — são idênticas e cobertas por teste.
+
+SEC-02, SEC-03 e SEC-08 continuam pendentes dos planos de rate limiting/anti-automação, verificação de identidade e confiabilidade de pagamentos. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida.
+
 ## Sumário executivo
 
 Esta revisão encontrou uma base razoável de autorização por papel e de isolamento por loja, mas a aplicação **não está pronta para ser considerada segura em produção**. Não foi encontrada uma forma direta de uma loja autenticada ler ou alterar objetos de outra loja nas rotas específicas de loja revisadas. Contudo, existem falhas de autorização horizontal/funcional fora desse núcleo, exposição pública de evidências privadas, controles de autenticação insuficientes e riscos de integridade financeira.
