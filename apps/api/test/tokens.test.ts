@@ -1,16 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { verify } from 'hono/jwt'
-import { signAccessToken, generateRefreshToken, hashToken, ACCESS_TTL_SECONDS } from '../src/lib/tokens'
+import { decode } from 'hono/jwt'
+import {
+  signAccessToken, generateRefreshToken, hashToken, ACCESS_TTL_SECONDS,
+} from '../src/lib/tokens'
 
 const SECRET = 'test-secret'
 
 describe('access token', () => {
-  it('signs a JWT with sub/role/name and 15min expiry', async () => {
-    const token = await signAccessToken({ sub: 'user-1', role: 'CUSTOMER', name: 'Ana' }, SECRET)
-    const payload = await verify(token, SECRET, 'HS256')
-    expect(payload.sub).toBe('user-1')
-    expect(payload.role).toBe('CUSTOMER')
-    expect(payload.name).toBe('Ana')
+  it('signs a complete session-bound JWT contract', async () => {
+    const now = new Date('2026-07-11T12:00:00Z')
+    const token = await signAccessToken(
+      { sub: 'user-1', role: 'CUSTOMER', name: 'Ana', tokenVersion: 7 },
+      SECRET,
+      '11111111-1111-4111-8111-111111111111',
+      now,
+    )
+    const { payload } = decode(token)
+    expect(payload).toMatchObject({
+      sub: 'user-1',
+      role: 'CUSTOMER',
+      name: 'Ana',
+      ver: 7,
+      sid: '11111111-1111-4111-8111-111111111111',
+      iss: 'delivery-api',
+      aud: 'delivery-clients',
+    })
+    expect(payload.jti).toMatch(/^[0-9a-f-]{36}$/)
+    expect(payload.nbf).toBe(payload.iat)
     expect(Number(payload.exp) - Number(payload.iat)).toBe(ACCESS_TTL_SECONDS)
   })
 })

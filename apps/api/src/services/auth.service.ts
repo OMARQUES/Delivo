@@ -39,19 +39,28 @@ export type PublicUser = {
   status: 'ACTIVE' | 'PENDING' | 'BLOCKED'
   phone: string | null
   email: string | null
+  tokenVersion: number
 }
 
 function toPublic(u: typeof users.$inferSelect): PublicUser {
-  return { id: u.id, name: u.name, role: u.role, status: u.status, phone: u.phone, email: u.email }
+  return {
+    id: u.id, name: u.name, role: u.role, status: u.status, phone: u.phone, email: u.email,
+    tokenVersion: u.tokenVersion,
+  }
 }
 
 async function issueTokens(db: Db, user: PublicUser, secret: string, familyId?: string) {
-  const accessToken = await signAccessToken({ sub: user.id, role: user.role, name: user.name }, secret)
+  const resolvedFamilyId = familyId ?? crypto.randomUUID()
+  const accessToken = await signAccessToken(
+    { sub: user.id, role: user.role, name: user.name, tokenVersion: user.tokenVersion },
+    secret,
+    resolvedFamilyId,
+  )
   const { token, hash } = await generateRefreshToken()
   await db.insert(refreshTokens).values({
     userId: user.id,
     tokenHash: hash,
-    familyId: familyId ?? crypto.randomUUID(),
+    familyId: resolvedFamilyId,
     expiresAt: refreshExpiry(),
   })
   return { accessToken, refreshToken: token }
