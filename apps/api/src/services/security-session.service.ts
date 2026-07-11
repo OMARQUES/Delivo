@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from 'drizzle-orm'
+import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { refreshTokens, stores, users } from '../db/schema'
 import type { AccessTokenPayload } from '../lib/tokens'
@@ -66,4 +66,26 @@ export async function resolveLivePrincipal(db: Db, p: AccessTokenPayload, now = 
     jti: p.jti,
     storeId: row.storeId,
   } satisfies LivePrincipal
+}
+
+export async function revokeSessionFamily(db: Db, familyId: string, now = new Date()) {
+  await db
+    .update(refreshTokens)
+    .set({ revokedAt: now })
+    .where(and(eq(refreshTokens.familyId, familyId), isNull(refreshTokens.revokedAt)))
+}
+
+export async function revokeAllSessions(db: Db, userId: string, now = new Date()) {
+  await db.transaction(async (tx) => {
+    const [user] = await tx
+      .update(users)
+      .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id })
+    if (!user) throw new PrincipalError('INVALID', 401)
+    await tx
+      .update(refreshTokens)
+      .set({ revokedAt: now })
+      .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)))
+  })
 }

@@ -89,7 +89,7 @@ describe('POST /auth/login + GET /auth/me', () => {
 })
 
 describe('POST /auth/refresh + /auth/logout', () => {
-  it('refresh rotates; reuse kills family; logout revokes', async () => {
+  it('refresh rotates; reuse kills family; logout revokes the active access session', async () => {
     await post('/auth/register', ana)
     const login = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
     const { refreshToken } = (await login.json()) as AuthBody
@@ -99,9 +99,39 @@ describe('POST /auth/refresh + /auth/logout', () => {
     expect((await post('/auth/refresh', { refreshToken })).status).toBe(401)
     expect((await post('/auth/refresh', { refreshToken: rt2 })).status).toBe(401)
     const login2 = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
-    const { refreshToken: rt3 } = (await login2.json()) as AuthBody
-    expect((await post('/auth/logout', { refreshToken: rt3 })).status).toBe(204)
+    const { refreshToken: rt3, accessToken: access3 } = (await login2.json()) as AuthBody
+    expect((await app.request('/auth/me', { headers: { Authorization: `Bearer ${access3}` } }, env)).status).toBe(200)
+    expect((await app.request('/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${access3}` } }, env)).status).toBe(204)
+    expect((await app.request('/auth/me', { headers: { Authorization: `Bearer ${access3}` } }, env)).status).toBe(401)
     expect((await post('/auth/refresh', { refreshToken: rt3 })).status).toBe(401)
+  })
+
+  it('logout-all invalidates every device immediately', async () => {
+    await post('/auth/register', ana)
+    const first = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
+    const second = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
+    const { accessToken: accessA } = (await first.json()) as AuthBody
+    const { accessToken: accessB } = (await second.json()) as AuthBody
+
+    expect((await app.request('/auth/logout-all', {
+      method: 'POST', headers: { Authorization: `Bearer ${accessA}` },
+    }, env)).status).toBe(204)
+    expect((await app.request('/auth/me', { headers: { Authorization: `Bearer ${accessA}` } }, env)).status).toBe(401)
+    expect((await app.request('/auth/me', { headers: { Authorization: `Bearer ${accessB}` } }, env)).status).toBe(401)
+  })
+
+  it('concurrent refresh reuse revokes the full session family', async () => {
+    await post('/auth/register', ana)
+    const login = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
+    const { refreshToken } = (await login.json()) as AuthBody
+    const responses = await Promise.all([
+      post('/auth/refresh', { refreshToken }),
+      post('/auth/refresh', { refreshToken }),
+    ])
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(1)
+    const winner = responses.find((response) => response.status === 200)
+    const body = await winner!.json() as AuthBody
+    expect((await post('/auth/refresh', { refreshToken: body.refreshToken })).status).toBe(401)
   })
 })
 

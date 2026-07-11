@@ -57,11 +57,13 @@ async function issueTokens(db: Db, user: PublicUser, secret: string, familyId?: 
     resolvedFamilyId,
   )
   const { token, hash } = await generateRefreshToken()
-  await db.insert(refreshTokens).values({
-    userId: user.id,
-    tokenHash: hash,
-    familyId: resolvedFamilyId,
-    expiresAt: refreshExpiry(),
+  await db.transaction(async (tx) => {
+    await tx.insert(refreshTokens).values({
+      userId: user.id,
+      tokenHash: hash,
+      familyId: resolvedFamilyId,
+      expiresAt: refreshExpiry(),
+    })
   })
   return { accessToken, refreshToken: token }
 }
@@ -151,32 +153,52 @@ export async function loginUser(db: Db, input: LoginInput, secret: string) {
 
 export async function rotateRefreshToken(db: Db, rawToken: string, secret: string) {
   const hash = await hashToken(rawToken)
-  const [row] = await db.select().from(refreshTokens).where(eq(refreshTokens.tokenHash, hash)).limit(1)
-  if (!row) throw new AuthError('Sessão inválida', 401)
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx.select().from(refreshTokens).where(eq(refreshTokens.tokenHash, hash)).limit(1)
+    if (!row) throw new AuthError('Sessão inválida', 401)
 
-  const now = new Date()
-  if (row.revokedAt || row.expiresAt < now) throw new AuthError('Sessão expirada', 401)
-  if (row.usedAt) {
-    await db
+    const now = new Date()
+    if (row.revokedAt || row.expiresAt < now) throw new AuthError('Sessão expirada', 401)
+
+    const [claimed] = await tx
       .update(refreshTokens)
-      .set({ revokedAt: now })
-      .where(and(eq(refreshTokens.familyId, row.familyId), isNull(refreshTokens.revokedAt)))
-    throw new AuthError('Sessão inválida', 401)
-  }
+      .set({ usedAt: now })
+      .where(and(
+        eq(refreshTokens.id, row.id),
+        isNull(refreshTokens.usedAt),
+        isNull(refreshTokens.revokedAt),
+      ))
+      .returning({ id: refreshTokens.id })
+    if (!claimed) {
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: now })
+        .where(and(eq(refreshTokens.familyId, row.familyId), isNull(refreshTokens.revokedAt)))
+      return null
+    }
 
-  const updated = await db
-    .update(refreshTokens)
-    .set({ usedAt: now })
-    .where(and(eq(refreshTokens.id, row.id), isNull(refreshTokens.usedAt)))
-    .returning({ id: refreshTokens.id })
-  if (updated.length === 0) throw new AuthError('Sessão inválida', 401)
+    const [user] = await tx.select().from(users).where(eq(users.id, row.userId)).limit(1)
+    if (!user) throw new AuthError('Sessão inválida', 401)
+    assertLoginable(user)
 
-  const [user] = await db.select().from(users).where(eq(users.id, row.userId)).limit(1)
-  if (!user) throw new AuthError('Sessão inválida', 401)
-  assertLoginable(user)
-
-  const pub = toPublic(user)
-  return { user: pub, ...(await issueTokens(db, pub, secret, row.familyId)) }
+    const pub = toPublic(user)
+    const accessToken = await signAccessToken(
+      { sub: pub.id, role: pub.role, name: pub.name, tokenVersion: pub.tokenVersion },
+      secret,
+      row.familyId,
+      now,
+    )
+    const replacement = await generateRefreshToken()
+    await tx.insert(refreshTokens).values({
+      userId: pub.id,
+      tokenHash: replacement.hash,
+      familyId: row.familyId,
+      expiresAt: refreshExpiry(now),
+    })
+    return { user: pub, accessToken, refreshToken: replacement.token }
+  })
+  if (!result) throw new AuthError('Sessão inválida', 401)
+  return result
 }
 
 export async function revokeRefreshToken(db: Db, rawToken: string) {

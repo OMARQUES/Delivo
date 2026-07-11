@@ -7,9 +7,9 @@ import {
   AuthError,
   loginUser,
   registerUser,
-  revokeRefreshToken,
   rotateRefreshToken,
 } from '../services/auth.service'
+import { revokeAllSessions, revokeSessionFamily } from '../services/security-session.service'
 
 export const authRoutes = createRouter()
 
@@ -76,11 +76,24 @@ authRoutes.openapi(
   createRoute({
     method: 'post',
     path: '/auth/logout',
-    request: { body: { content: { 'application/json': { schema: RefreshSchema } } } },
+    middleware: [authMiddleware] as const,
     responses: { 204: { description: 'Sessão encerrada' } },
   }),
   async (c) => {
-    await revokeRefreshToken(c.get('db'), c.req.valid('json').refreshToken)
+    await revokeSessionFamily(c.get('db'), c.get('auth')!.sessionFamilyId)
+    return c.body(null, 204)
+  },
+)
+
+authRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/auth/logout-all',
+    middleware: [authMiddleware] as const,
+    responses: { 204: { description: 'Todas as sessões encerradas' } },
+  }),
+  async (c) => {
+    await revokeAllSessions(c.get('db'), c.get('auth')!.sub)
     return c.body(null, 204)
   },
 )
