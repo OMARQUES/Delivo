@@ -1,9 +1,11 @@
-import { and, desc, eq, gte, lt } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, lt } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import {
   driverPayoutItems,
   driverPayouts,
   ledgerEntries,
+  orderItems,
+  orders,
   storeInvoiceItems,
   storeInvoices,
   storePayoutItems,
@@ -296,4 +298,36 @@ export async function getDriverFinance(db: Db, driverId: string) {
     .orderBy(desc(driverPayouts.createdAt))
     .limit(50)
   return { ledger, payouts }
+}
+
+/** Explicit projection: this response must never expose customer or delivery data. */
+export async function getDriverEarningOrderDetail(db: Db, driverId: string, orderId: string) {
+  const [order] = await db.select({
+    orderId: orders.id,
+    createdAt: orders.createdAt,
+    status: orders.status,
+    storeName: stores.name,
+  }).from(orders)
+    .innerJoin(stores, eq(stores.id, orders.storeId))
+    .where(and(eq(orders.id, orderId), eq(orders.driverId, driverId)))
+    .limit(1)
+  if (!order) throw new FinanceError('Pedido não encontrado', 404)
+
+  const [items, ledger] = await Promise.all([
+    db.select({
+      nameSnapshot: orderItems.nameSnapshot,
+      quantity: orderItems.quantity,
+    }).from(orderItems)
+      .where(eq(orderItems.orderId, orderId))
+      .orderBy(asc(orderItems.sortIndex)),
+    db.select({
+      type: ledgerEntries.type,
+      amountCents: ledgerEntries.amountCents,
+      description: ledgerEntries.description,
+      createdAt: ledgerEntries.createdAt,
+    }).from(ledgerEntries)
+      .where(and(eq(ledgerEntries.orderId, orderId), eq(ledgerEntries.driverId, driverId)))
+      .orderBy(asc(ledgerEntries.createdAt)),
+  ])
+  return { ...order, items, ledger }
 }

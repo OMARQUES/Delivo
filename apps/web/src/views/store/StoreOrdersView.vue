@@ -36,6 +36,8 @@ type OrderRow = {
   driverArrivedAt: string | null
   returnPendingAt: string | null
   returnedAt: string | null
+  driverReturnedAt: string | null
+  returnPhotoKeys: string[]
 }
 type Batch = {
   id: string
@@ -64,6 +66,7 @@ type Detail = OrderRow & {
 
 const active = ref<OrderRow[]>([])
 const done = ref<OrderRow[]>([])
+const returnRows = ref<OrderRow[]>([])
 const detail = ref<Detail | null>(null)
 const error = ref('')
 const amending = ref(false)
@@ -75,6 +78,7 @@ const shifts = ref<ActiveShift[]>([])
 let timer: ReturnType<typeof setInterval> | undefined
 let knownPending = new Set<string>()
 let firstLoad = true
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
 
 function beep() {
   try {
@@ -95,9 +99,10 @@ function beep() {
 
 async function load() {
   try {
-    const [a, d, b, s] = await Promise.all([
+    const [a, d, returns, b, s] = await Promise.all([
       api<OrderRow[]>('/store/me/orders?scope=active'),
       api<OrderRow[]>('/store/me/orders?scope=done'),
+      api<OrderRow[]>('/store/me/orders?scope=returns'),
       api<Batch[]>('/store/me/batches'),
       api<ActiveShift[]>('/store/me/shifts'),
     ])
@@ -107,6 +112,7 @@ async function load() {
     firstLoad = false
     active.value = a
     done.value = d
+    returnRows.value = returns
     batches.value = b
     shifts.value = s
     selected.value = new Set([...selected.value].filter((id) => a.some((o) => eligibleForBatch(o) && o.id === id)))
@@ -350,12 +356,35 @@ const groups = computed(() => {
   for (const o of active.value) (g[o.status] ??= []).push(o)
   return g
 })
+const pendingReturns = computed(() => returnRows.value)
+const doneHistory = computed(() => done.value.filter((o) => !pendingReturns.value.some((pending) => pending.id === o.id)))
+const mediaUrl = (key: string) => `${API_URL}/media/${key}`
 </script>
 
 <template>
   <main class="mx-auto max-w-3xl p-4 print:hidden">
     <h1 class="text-xl font-bold">Pedidos</h1>
     <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
+
+    <section v-if="pendingReturns.length" class="mt-4 rounded border border-yellow-500 bg-yellow-50 p-3">
+      <h2 class="font-semibold">📦 Devoluções pendentes ({{ pendingReturns.length }})</h2>
+      <ul class="mt-2 space-y-2">
+        <li v-for="o in pendingReturns" :key="o.id" class="rounded border border-yellow-300 bg-white p-3 text-sm">
+          <div class="flex justify-between gap-3">
+            <span><strong>{{ o.customerName }}</strong><small class="block text-yellow-800">Pendente há {{ returnAge(o.returnPendingAt!) }}</small></span>
+            <strong>{{ formatBRL(o.totalCents) }}</strong>
+          </div>
+          <p v-if="o.driverReturnedAt" class="mt-2 rounded bg-blue-50 p-2 text-xs text-blue-800">✓ O entregador declarou que devolveu na loja.</p>
+          <p v-else class="mt-2 text-xs text-gray-600">Aguardando o entregador devolver os produtos.</p>
+          <div v-if="o.returnPhotoKeys.length" class="mt-2 flex gap-2">
+            <a v-for="key in o.returnPhotoKeys" :key="key" :href="mediaUrl(key)" target="_blank">
+              <img :src="mediaUrl(key)" alt="Comprovante da devolução" class="h-20 w-20 rounded border object-cover" />
+            </a>
+          </div>
+          <button class="mt-2 rounded bg-black px-3 py-2 text-white" @click="confirmReturn(o)">Confirmar devolução</button>
+        </li>
+      </ul>
+    </section>
 
     <section class="mt-4 rounded border border-dashed p-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
@@ -462,10 +491,10 @@ const groups = computed(() => {
     <p v-if="active.length === 0" class="mt-4 text-gray-500">Nenhum pedido ativo.</p>
 
     <details class="mt-6">
-      <summary class="cursor-pointer font-semibold">Concluídos/cancelados recentes ({{ done.length }})</summary>
+      <summary class="cursor-pointer font-semibold">Concluídos/cancelados recentes ({{ doneHistory.length }})</summary>
       <ul class="mt-2 space-y-1 text-sm">
-        <li v-for="o in done" :key="o.id" class="flex justify-between gap-2 rounded border p-2" :class="o.returnPendingAt && !o.returnedAt && 'border-yellow-500 bg-yellow-50'">
-          <span>{{ o.customerName }} · {{ ORDER_STATUS_LABELS[o.status] }}<span v-if="o.returnPendingAt && !o.returnedAt" class="mt-1 block text-xs text-yellow-800">📦 Devolução pendente há {{ returnAge(o.returnPendingAt) }} <button class="ml-2 rounded bg-black px-2 py-1 text-white" @click="confirmReturn(o)">Confirmar devolução</button></span><span v-else-if="o.returnedAt" class="block text-xs text-green-700">Devolução confirmada</span></span>
+        <li v-for="o in doneHistory" :key="o.id" class="flex justify-between gap-2 rounded border p-2">
+          <span>{{ o.customerName }} · {{ ORDER_STATUS_LABELS[o.status] }}<span v-if="o.returnedAt" class="block text-xs text-green-700">Devolução confirmada</span></span>
           <span>{{ formatBRL(o.totalCents) }}</span>
         </li>
       </ul>

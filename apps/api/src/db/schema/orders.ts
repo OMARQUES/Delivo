@@ -1,5 +1,6 @@
+import { sql } from 'drizzle-orm'
 import {
-  doublePrecision, integer, pgEnum, pgTable, real, text, timestamp, uniqueIndex, uuid, index,
+  doublePrecision, integer, jsonb, pgEnum, pgTable, real, text, timestamp, uniqueIndex, uuid, index,
 } from 'drizzle-orm/pg-core'
 import { DRIVER_REQUEST_TARGETS, ORDER_STATUSES } from '@delivery/shared/constants'
 import { stores } from './stores'
@@ -72,6 +73,9 @@ export const orders = pgTable(
     returnDriverPayCents: integer('return_driver_pay_cents'),
     returnedAt: timestamp('returned_at', { withTimezone: true }),
     returnConfirmedBy: uuid('return_confirmed_by'),
+    /** Declaração/evidência do entregador; pagamento continua dependendo da confirmação. */
+    driverReturnedAt: timestamp('driver_returned_at', { withTimezone: true }),
+    returnPhotoKeys: jsonb('return_photo_keys').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     /** DELIVERY_FAILED: motivo (enum em shared) */
     failReason: text('fail_reason'),
     idempotencyKey: text('idempotency_key').notNull(),

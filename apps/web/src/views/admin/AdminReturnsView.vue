@@ -11,9 +11,13 @@ type PendingReturn = {
   returnPendingAgeMinutes: number
   returnDriverPayCents: number | null
   failReason: string | null
+  driverReturnedAt: string | null
+  returnPhotoKeys: string[]
 }
 const rows = ref<PendingReturn[]>([])
 const error = ref('')
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
+const mediaUrl = (key: string) => `${API_URL}/media/${key}`
 async function load() {
   try { rows.value = await api<PendingReturn[]>('/admin/returns') }
   catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
@@ -35,7 +39,16 @@ onMounted(load)
     <p v-if="!rows.length" class="mt-4 text-gray-500">Nenhuma devolução pendente.</p>
     <ul class="mt-4 space-y-2">
       <li v-for="row in rows" :key="row.id" class="flex flex-wrap items-center justify-between gap-3 rounded border border-yellow-400 bg-yellow-50 p-3 text-sm">
-        <span><strong>{{ row.storeName }}</strong> · {{ row.driverName }}<br><span class="text-gray-600">Pendente há {{ age(row.returnPendingAgeMinutes) }} · pagamento {{ formatBRL(row.returnDriverPayCents ?? 0) }} · {{ row.failReason }}</span></span>
+        <span>
+          <strong>{{ row.storeName }}</strong> · {{ row.driverName }}<br>
+          <span class="text-gray-600">Pendente há {{ age(row.returnPendingAgeMinutes) }} · pagamento {{ formatBRL(row.returnDriverPayCents ?? 0) }} · {{ row.failReason }}</span>
+          <span v-if="row.driverReturnedAt" class="mt-1 block text-xs font-medium text-blue-800">✓ Entregador declarou a devolução</span>
+          <span v-if="row.returnPhotoKeys.length" class="mt-2 flex gap-2">
+            <a v-for="key in row.returnPhotoKeys" :key="key" :href="mediaUrl(key)" target="_blank">
+              <img :src="mediaUrl(key)" alt="Comprovante da devolução" class="h-20 w-20 rounded border object-cover" />
+            </a>
+          </span>
+        </span>
         <button class="rounded bg-black px-3 py-2 text-white" @click="confirmReturn(row)">Confirmar devolução</button>
       </li>
     </ul>

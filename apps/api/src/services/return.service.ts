@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { orders, stores, users } from '../db/schema'
 import { addEvent } from './order-events'
@@ -8,6 +8,62 @@ export class ReturnError extends Error {
   constructor(message: string, public status: 400 | 404 | 409 = 409) {
     super(message)
   }
+}
+
+export async function markDriverReturned(db: Db, driverUserId: string, orderId: string) {
+  return db.transaction(async (tx) => {
+    const [order] = await tx.select({ driverReturnedAt: orders.driverReturnedAt }).from(orders).where(and(
+      eq(orders.id, orderId),
+      eq(orders.driverId, driverUserId),
+      eq(orders.status, 'DELIVERY_FAILED'),
+      isNotNull(orders.returnPendingAt),
+      isNull(orders.returnedAt),
+    )).for('update')
+    if (!order) throw new ReturnError('Devolução pendente não encontrada', 404)
+    if (order.driverReturnedAt) throw new ReturnError('Devolução já foi declarada', 409)
+    const [marked] = await tx.update(orders).set({ driverReturnedAt: new Date() }).where(and(
+      eq(orders.id, orderId),
+      eq(orders.driverId, driverUserId),
+      eq(orders.status, 'DELIVERY_FAILED'),
+      isNotNull(orders.returnPendingAt),
+      isNull(orders.returnedAt),
+      isNull(orders.driverReturnedAt),
+    )).returning()
+    if (!marked) throw new ReturnError('Devolução mudou — recarregue', 409)
+    await addEvent(tx, orderId, 'DELIVERY_FAILED', 'DRIVER', driverUserId, 'entregador declarou devolução na loja')
+    return marked
+  })
+}
+
+export async function getDriverPendingReturn(db: Db, driverUserId: string, orderId: string) {
+  const [order] = await db.select({
+    id: orders.id,
+    returnPhotoKeys: orders.returnPhotoKeys,
+  }).from(orders).where(and(
+    eq(orders.id, orderId),
+    eq(orders.driverId, driverUserId),
+    eq(orders.status, 'DELIVERY_FAILED'),
+    isNotNull(orders.returnPendingAt),
+    isNull(orders.returnedAt),
+  )).limit(1)
+  if (!order) throw new ReturnError('Devolução pendente não encontrada', 404)
+  if (order.returnPhotoKeys.length >= 2) throw new ReturnError('Limite de 2 fotos atingido', 400)
+  return order
+}
+
+export async function appendReturnPhotoKey(db: Db, driverUserId: string, orderId: string, key: string) {
+  const [updated] = await db.update(orders).set({
+    returnPhotoKeys: sql`${orders.returnPhotoKeys} || ${JSON.stringify([key])}::jsonb`,
+  }).where(and(
+    eq(orders.id, orderId),
+    eq(orders.driverId, driverUserId),
+    eq(orders.status, 'DELIVERY_FAILED'),
+    isNotNull(orders.returnPendingAt),
+    isNull(orders.returnedAt),
+    sql`jsonb_array_length(${orders.returnPhotoKeys}) < 2`,
+  )).returning({ returnPhotoKeys: orders.returnPhotoKeys })
+  if (!updated) throw new ReturnError('Limite de fotos atingido ou devolução encerrada', 400)
+  return updated
 }
 
 async function confirmReturn(db: Db, orderId: string, actorId: string, storeId?: string) {

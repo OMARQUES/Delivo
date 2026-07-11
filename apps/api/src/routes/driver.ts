@@ -37,6 +37,12 @@ import { endShift, getActiveShift, ShiftError, startShift } from '../services/sh
 import { createPaymentProvider } from '../lib/mercadopago'
 import { PaymentProviderError } from '../lib/payment-provider'
 import { PaymentError } from '../services/payment.service'
+import {
+  appendReturnPhotoKey,
+  getDriverPendingReturn,
+  markDriverReturned,
+  ReturnError,
+} from '../services/return.service'
 
 export const driverRoutes = createRouter()
 
@@ -48,6 +54,7 @@ function rethrow(e: unknown): never {
   if (e instanceof StoreDriverError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof ShiftError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof ReturnError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof PaymentProviderError)
     throw new HTTPException(503, { message: 'Falha registrada; o estorno do cliente será reprocessado (gateway indisponível)' })
   throw e
@@ -236,7 +243,7 @@ driverRoutes.openapi(
   createRoute({
     method: 'get',
     path: '/driver/deliveries',
-    request: { query: z.object({ scope: z.enum(['active', 'done']).default('active') }) },
+    request: { query: z.object({ scope: z.enum(['active', 'done', 'returns']).default('active') }) },
     responses: { 200: { description: 'Minhas entregas', content: { 'application/json': { schema: z.array(Out) } } } },
   }),
   async (c) => c.json(await listDriverDeliveries(c.get('db'), c.get('auth')!.sub, c.req.valid('query').scope), 200),
@@ -281,6 +288,55 @@ driverRoutes.openapi(
   }),
   async (c) => c.json(await completeDelivery(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200),
 )
+
+driverRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/driver/orders/{id}/returned',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Devolução declarada', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await markDriverReturned(
+    c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+  ).catch(rethrow), 200),
+)
+
+const RETURN_IMAGE_TYPES: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+}
+const MAX_RETURN_PHOTO_BYTES = 5 * 1024 * 1024
+
+driverRoutes.put('/driver/orders/:id/return-photo', async (c) => {
+  const driverId = c.get('auth')!.sub
+  const orderId = c.req.param('id')
+  if (!z.uuid().safeParse(orderId).success) throw new HTTPException(400, { message: 'Pedido inválido' })
+  const type = c.req.header('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+  const ext = RETURN_IMAGE_TYPES[type]
+  if (!ext) throw new HTTPException(400, { message: 'Envie uma imagem jpeg, png ou webp' })
+
+  const declaredLength = Number(c.req.header('Content-Length') ?? 0)
+  if (declaredLength > MAX_RETURN_PHOTO_BYTES) {
+    throw new HTTPException(400, { message: 'Imagem maior que 5MB' })
+  }
+
+  await getDriverPendingReturn(c.get('db'), driverId, orderId).catch(rethrow)
+  const body = await c.req.arrayBuffer()
+  if (body.byteLength === 0 || body.byteLength > MAX_RETURN_PHOTO_BYTES) {
+    throw new HTTPException(400, { message: 'Imagem vazia ou maior que 5MB' })
+  }
+
+  const key = `returns/${crypto.randomUUID()}.${ext}`
+  await c.env.BUCKET.put(key, body, { httpMetadata: { contentType: type } })
+  try {
+    await appendReturnPhotoKey(c.get('db'), driverId, orderId, key)
+  } catch (error) {
+    await c.env.BUCKET.delete(key).catch(() => undefined)
+    rethrow(error)
+  }
+  return c.json({ key }, 200)
+})
 
 driverRoutes.openapi(
   createRoute({

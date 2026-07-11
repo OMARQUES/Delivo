@@ -6,6 +6,7 @@
 | GPS de “cheguei na loja” é best-effort e apenas auditado no evento; detecção de mock/root ainda não existe | Emenda Devolução | Plano 9 (Capacitor/anti-fraude) |
 | Meia-taxa cobre apenas freelance; entregador fixo mantém a diária do turno | Emenda Devolução | Decisão aceita |
 | Devolução nunca é autoconfirmada; loja ou suporte precisam confirmar manualmente | Emenda Devolução | Decisão aceita |
+| Fotos de devolução são servidas por chave não-adivinhável em `/media`, mas sem ACL; revisar acesso/autorização no deploy | Melhorias Devolução/Ganhos | Hardening pré-produção |
 | Data operacional do turno usa `America/Sao_Paulo`; lojas em outros fusos exigirão timezone por loja | Review Plano ④a | Antes de expansão multi-fuso |
 | Escala avançada com valor e horário diferentes por dia exige termos financeiros por item da agenda e editor próprio | Plano ④a-2 | Evolução futura de escalas |
 | Pacote: coleta exige TODOS os pedidos READY (sem coleta parcial) | Plano ③ | Se lojas pedirem coleta parcial |

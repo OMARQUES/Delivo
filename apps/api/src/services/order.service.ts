@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, sql } from 'drizzle-orm'
 import type { CheckoutInput } from '@delivery/shared/schemas'
 import {
   calcDeliveryFee,
@@ -341,7 +341,7 @@ export async function getCustomerOrder(db: Db, customerId: string, orderId: stri
 
 const ACTIVE_STATUSES = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER', 'OUT_FOR_DELIVERY'] as const
 
-export async function listStoreOrders(db: Db, storeId: string, scope: 'active' | 'done') {
+export async function listStoreOrders(db: Db, storeId: string, scope: 'active' | 'done' | 'returns') {
   const rows = await db
     .select({
       order: orders,
@@ -354,10 +354,12 @@ export async function listStoreOrders(db: Db, storeId: string, scope: 'active' |
       eq(orders.storeId, storeId),
       scope === 'active'
         ? inArray(orders.status, [...ACTIVE_STATUSES])
-        : inArray(orders.status, ['DELIVERED', 'DELIVERY_FAILED', 'CANCELLED']),
+        : scope === 'done'
+          ? inArray(orders.status, ['DELIVERED', 'DELIVERY_FAILED', 'CANCELLED'])
+          : and(eq(orders.status, 'DELIVERY_FAILED'), isNotNull(orders.returnPendingAt), isNull(orders.returnedAt)),
     ))
     .orderBy(desc(orders.createdAt))
-    .limit(scope === 'active' ? 100 : 30)
+    .limit(scope === 'active' ? 100 : scope === 'done' ? 30 : 500)
 
   const result = []
   for (const r of rows) {

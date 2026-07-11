@@ -36,24 +36,31 @@ type Delivery = {
   driverArrivedAt: string | null
   returnPendingAt: string | null
   returnedAt: string | null
+  driverReturnedAt: string | null
+  returnPhotoKeys: string[]
 }
 
 const active = ref<Delivery[]>([])
 const doneList = ref<Delivery[]>([])
+const returnList = ref<Delivery[]>([])
 const error = ref('')
 const failFor = ref<Delivery | null>(null)
 const failReason = ref<DeliveryFailReason>('NO_ANSWER')
 const failNote = ref('')
+const uploadingReturnFor = ref<string | null>(null)
 let timer: ReturnType<typeof setInterval> | undefined
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
 
 async function load() {
   try {
-    const [a, d] = await Promise.all([
+    const [a, d, returns] = await Promise.all([
       api<Delivery[]>('/driver/deliveries?scope=active'),
       api<Delivery[]>('/driver/deliveries?scope=done'),
+      api<Delivery[]>('/driver/deliveries?scope=returns'),
     ])
     active.value = a
     doneList.value = d
+    returnList.value = returns
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
   }
@@ -117,6 +124,32 @@ async function submitFail() {
   }
 }
 
+async function markReturned(o: Delivery) {
+  error.value = ''
+  try {
+    await api(`/driver/orders/${o.id}/returned`, { method: 'POST' })
+    await load()
+  } catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
+
+async function uploadReturnPhoto(o: Delivery, event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  error.value = ''
+  uploadingReturnFor.value = o.id
+  try {
+    await api(`/driver/orders/${o.id}/return-photo`, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file,
+    })
+    await load()
+  } catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+  finally { uploadingReturnFor.value = null }
+}
+
 const waze = (lat: number, lng: number) => `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`
 const wa = (phone: string | null) => (phone ? `https://wa.me/55${phone}` : null)
 const collectible = (o: Delivery) => o.status === 'READY' || o.status === 'AWAITING_DRIVER'
@@ -150,11 +183,42 @@ const batchPickups = computed(() => {
 })
 const toCollect = computed(() => active.value.filter((o) => !inRoute(o) && !o.batchId))
 const toDeliver = computed(() => active.value.filter(inRoute))
+const pendingReturns = computed(() => returnList.value)
+const history = computed(() => doneList.value.filter((o) => !pendingReturns.value.some((pending) => pending.id === o.id)))
+const mediaUrl = (key: string) => `${API_URL}/media/${key}`
 </script>
 
 <template>
   <main class="mx-auto max-w-lg space-y-4 p-4">
     <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
+
+    <section v-if="pendingReturns.length" class="rounded border border-yellow-500 bg-yellow-50 p-3">
+      <h2 class="font-bold">📦 Devolver na loja ({{ pendingReturns.length }})</h2>
+      <p class="text-xs text-yellow-800">O pagamento é liberado após a loja confirmar o recebimento.</p>
+      <ul class="mt-2 space-y-2">
+        <li v-for="o in pendingReturns" :key="o.id" class="rounded border border-yellow-300 bg-white p-3">
+          <p class="font-semibold">{{ o.storeName }}</p>
+          <p class="text-xs text-gray-500">{{ o.storeAddressText }}</p>
+          <div v-if="o.returnPhotoKeys.length" class="mt-2 flex gap-2">
+            <a v-for="key in o.returnPhotoKeys" :key="key" :href="mediaUrl(key)" target="_blank">
+              <img :src="mediaUrl(key)" alt="Comprovante da devolução" class="h-20 w-20 rounded border object-cover" />
+            </a>
+          </div>
+          <p v-if="o.driverReturnedAt" class="mt-2 rounded bg-blue-50 p-2 text-xs text-blue-800">
+            ✓ Devolução informada — aguardando a loja confirmar.
+          </p>
+          <div class="mt-2 flex flex-wrap gap-2 text-sm">
+            <a :href="waze(o.storeLat, o.storeLng)" target="_blank" class="rounded border px-2 py-1 underline">Waze loja</a>
+            <button v-if="!o.driverReturnedAt" class="rounded bg-black px-2 py-1 text-white" @click="markReturned(o)">Devolvi na loja</button>
+            <label v-if="o.returnPhotoKeys.length < 2" class="cursor-pointer rounded border px-2 py-1" :class="uploadingReturnFor === o.id && 'opacity-50'">
+              {{ uploadingReturnFor === o.id ? 'Enviando…' : '📷 Anexar foto' }}
+              <input class="hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" :disabled="uploadingReturnFor === o.id" @change="uploadReturnPhoto(o, $event)" />
+            </label>
+            <span v-else class="rounded bg-gray-100 px-2 py-1 text-xs">2 fotos anexadas</span>
+          </div>
+        </li>
+      </ul>
+    </section>
 
     <section>
       <h2 class="font-bold">Coletar na loja ({{ toCollect.length }} avulsa(s), {{ batchPickups.length }} pacote(s))</h2>
@@ -219,10 +283,10 @@ const toDeliver = computed(() => active.value.filter(inRoute))
     </section>
 
     <details>
-      <summary class="cursor-pointer font-semibold">Histórico ({{ doneList.length }})</summary>
+      <summary class="cursor-pointer font-semibold">Histórico ({{ history.length }})</summary>
       <ul class="mt-2 space-y-1 text-sm">
-        <li v-for="o in doneList" :key="o.id" class="flex justify-between gap-2 rounded border p-2">
-          <span>{{ o.storeName }} -> {{ o.customerName }} · {{ ORDER_STATUS_LABELS[o.status] }}<span v-if="o.status === 'DELIVERY_FAILED' && o.returnPendingAt && !o.returnedAt" class="mt-1 block rounded bg-yellow-100 p-1 text-xs text-yellow-800">⚠️ Devolva o produto na loja — pagamento liberado após confirmação.</span><span v-else-if="o.returnedAt" class="mt-1 block text-xs text-green-700">Devolução confirmada · pagamento liberado</span></span>
+        <li v-for="o in history" :key="o.id" class="flex justify-between gap-2 rounded border p-2">
+          <span>{{ o.storeName }} -> {{ o.customerName }} · {{ ORDER_STATUS_LABELS[o.status] }}<span v-if="o.returnedAt" class="mt-1 block text-xs text-green-700">Devolução confirmada · pagamento liberado</span></span>
           <span>{{ o.deliveryFeeCents != null ? formatBRL(o.deliveryFeeCents) : '-' }}</span>
         </li>
       </ul>

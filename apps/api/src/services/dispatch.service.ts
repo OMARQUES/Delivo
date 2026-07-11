@@ -375,7 +375,7 @@ export async function failDelivery(
 
 const DRIVER_ACTIVE: OrderStatus[] = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER', 'OUT_FOR_DELIVERY']
 
-export async function listDriverDeliveries(db: Db, driverUserId: string, scope: 'active' | 'done') {
+export async function listDriverDeliveries(db: Db, driverUserId: string, scope: 'active' | 'done' | 'returns') {
   const rows = await db
     .select({
       order: orders,
@@ -394,10 +394,12 @@ export async function listDriverDeliveries(db: Db, driverUserId: string, scope: 
       eq(orders.driverId, driverUserId),
       scope === 'active'
         ? inArray(orders.status, DRIVER_ACTIVE)
-        : inArray(orders.status, ['DELIVERED', 'DELIVERY_FAILED', 'CANCELLED']),
+        : scope === 'done'
+          ? inArray(orders.status, ['DELIVERED', 'DELIVERY_FAILED', 'CANCELLED'])
+          : and(eq(orders.status, 'DELIVERY_FAILED'), isNotNull(orders.returnPendingAt), isNull(orders.returnedAt)),
     ))
     .orderBy(desc(orders.createdAt))
-    .limit(scope === 'active' ? 50 : 30)
+    .limit(scope === 'active' ? 50 : scope === 'done' ? 30 : 500)
   return rows.map((r) => ({
     ...r.order,
     storeName: r.storeName,

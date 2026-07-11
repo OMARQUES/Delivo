@@ -26,6 +26,8 @@ Auth já funciona: registro/login por email ou telefone, guards por role em `/lo
 
 Entregadores próprios: a loja convida por telefone em `/loja/entregadores`; o entregador confirma em “Minhas lojas”, inicia o turno próximo à loja e passa a receber somente o broadcast daquela loja. Mudanças nos termos exigem confirmação. Pedidos e pacotes podem ir ao pool, a todos os próprios ou a um entregador específico; recusas nunca causam fallback automático. A loja também pode reajustar um turno ativo e reconciliar o extra retroativo pelo ledger.
 
+Falhas de entrega ficam destacadas em uma seção própria de devoluções. O entregador pode declarar a devolução na loja e anexar até duas fotos de evidência; o pagamento só é liberado quando loja ou suporte confirmam. Em Ganhos, lançamentos exibem data/hora e abrem um detalhe do pedido sanitizado, sem dados do cliente.
+
 ## Verificação
 
 ```bash

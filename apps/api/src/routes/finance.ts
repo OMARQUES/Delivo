@@ -7,6 +7,7 @@ import { authMiddleware, requireRole } from '../middleware/auth'
 import {
   closeFinancePeriod,
   FinanceError,
+  getDriverEarningOrderDetail,
   getDriverFinance,
   getStoreFinance,
   listAdminFinance,
@@ -115,4 +116,16 @@ financeRoutes.openapi(
     responses: { 200: { description: 'Financeiro do entregador', content: { 'application/json': { schema: Out } } } },
   }),
   async (c) => c.json(await getDriverFinance(c.get('db'), c.get('auth')!.sub), 200),
+)
+
+financeRoutes.openapi(
+  createRoute({
+    method: 'get',
+    path: '/driver/earnings/orders/{id}',
+    request: { params: IdParam },
+    responses: { 200: { description: 'Detalhe sanitizado do ganho', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await getDriverEarningOrderDetail(
+    c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+  ).catch(rethrow), 200),
 )

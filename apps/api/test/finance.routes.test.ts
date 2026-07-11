@@ -8,7 +8,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { ledgerEntries } from '../src/db/schema'
+import { ledgerEntries, orders } from '../src/db/schema'
 import { signAccessToken } from '../src/lib/tokens'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
@@ -169,5 +169,36 @@ describe('finance routes', () => {
     const driverBody = (await driver.json()) as { ledger: { amountCents: number }[]; payouts: { totalCents: number }[] }
     expect(driverBody.ledger.map((e) => e.amountCents)).toEqual([500])
     expect(driverBody.payouts[0]).toMatchObject({ totalCents: 500 })
+  })
+
+  it('expõe detalhe do ganho apenas ao entregador e sem dados do cliente', async () => {
+    await testDb.update(orders).set({
+      driverId,
+      status: 'DELIVERED',
+      note: 'não vazar esta observação',
+      taxId: '12345678901',
+    })
+    await seedLedger()
+
+    const response = await req(`/driver/earnings/orders/${orderId}`, {}, driverToken)
+    expect(response.status).toBe(200)
+    const body = await response.json() as Record<string, unknown> & {
+      items: Record<string, unknown>[]
+      ledger: Record<string, unknown>[]
+    }
+    expect(Object.keys(body).sort()).toEqual(['createdAt', 'items', 'ledger', 'orderId', 'status', 'storeName'])
+    expect(body).toMatchObject({ orderId, status: 'DELIVERED', storeName: 'Pizzaria' })
+    expect(body.items).toEqual([{ nameSnapshot: 'Pizza', quantity: 1 }])
+    expect(Object.keys(body.ledger[0]!).sort()).toEqual(['amountCents', 'createdAt', 'description', 'type'])
+    expect(body.ledger).toHaveLength(1)
+    expect(JSON.stringify(body)).not.toContain('Rua B, 22')
+    expect(JSON.stringify(body)).not.toContain('não vazar esta observação')
+    expect(JSON.stringify(body)).not.toContain('12345678901')
+
+    const other = await registerUser(testDb, {
+      ...ana, name: 'Outro', phone: '44922222222', role: 'DRIVER',
+    }, env.JWT_SECRET)
+    const otherToken = await signAccessToken({ sub: other.user.id, role: 'DRIVER', name: 'Outro' }, env.JWT_SECRET)
+    expect((await req(`/driver/earnings/orders/${orderId}`, {}, otherToken)).status).toBe(404)
   })
 })

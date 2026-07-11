@@ -183,7 +183,7 @@ storeOrderRoutes.openapi(
   createRoute({
     method: 'get',
     path: '/store/me/orders',
-    request: { query: z.object({ scope: z.enum(['active', 'done']).default('active') }) },
+    request: { query: z.object({ scope: z.enum(['active', 'done', 'returns']).default('active') }) },
     responses: { 200: { description: 'Fila', content: { 'application/json': { schema: z.array(Out) } } } },
   }),
   async (c) => c.json(await listStoreOrders(c.get('db'), await ownStoreId(c), c.req.valid('query').scope), 200),
