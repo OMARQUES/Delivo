@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { AppContext } from '../env'
 import { createPaymentProvider } from '../lib/mercadopago'
+import { PaymentProviderError } from '../lib/payment-provider'
 import { confirmPaymentApproved } from '../services/payment.service'
 
 /**
@@ -54,7 +55,9 @@ webhookRoutes.post('/webhooks/mercadopago', async (c) => {
     if (payment.status === 'APPROVED') {
       await confirmPaymentApproved(c.get('db'), dataId, provider)
     }
-  } catch {
+  } catch (e) {
+    // pagamento inexistente no MP (ex.: teste do painel com id fake) — ack, sem retry
+    if (e instanceof PaymentProviderError && e.httpStatus === 404) return c.json({ ok: true, ignored: true }, 200)
     return c.json({ error: 'retry' }, 500)
   }
   return c.json({ ok: true }, 200)

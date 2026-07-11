@@ -55,6 +55,8 @@ export class PaymentProviderError extends Error {
   constructor(
     message: string,
     public status: 400 | 402 | 502 = 502,
+    /** HTTP status cru do gateway (ex.: 404 = pagamento inexistente no MP) */
+    public httpStatus?: number,
   ) {
     super(message)
   }

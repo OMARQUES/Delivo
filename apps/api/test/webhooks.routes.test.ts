@@ -10,7 +10,7 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { orders } from '../src/db/schema'
-import type { PaymentProvider } from '../src/lib/payment-provider'
+import { PaymentProviderError, type PaymentProvider } from '../src/lib/payment-provider'
 import * as mp from '../src/lib/mercadopago'
 import { createAddress } from '../src/services/address.service'
 import { registerUser } from '../src/services/auth.service'
@@ -157,5 +157,25 @@ describe('POST /webhooks/mercadopago', () => {
     expect((await webhookReq('ghost', await sign('ghost', 'req-1', ts), ts)).status).toBe(200)
     const noSecret = await app.request('/webhooks/mercadopago?data.id=x&type=payment', { method: 'POST', body: '{}' }, env)
     expect(noSecret.status).toBe(503)
+  })
+
+  it('gateway 404 (pagamento inexistente, ex.: teste do painel MP) -> 200 ack sem retry', async () => {
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue(fakeProvider({
+      getPayment: async () => {
+        throw new PaymentProviderError('Gateway de pagamento indisponível (404)', 502, 404)
+      },
+    }))
+    const ts = String(Math.floor(Date.now() / 1000))
+    expect((await webhookReq('123456', await sign('123456', 'req-1', ts), ts)).status).toBe(200)
+  })
+
+  it('gateway 5xx (erro real) -> 500 para o MP re-tentar', async () => {
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue(fakeProvider({
+      getPayment: async () => {
+        throw new PaymentProviderError('Gateway de pagamento indisponível (500)', 502, 500)
+      },
+    }))
+    const ts = String(Math.floor(Date.now() / 1000))
+    expect((await webhookReq('123456', await sign('123456', 'req-1', ts), ts)).status).toBe(500)
   })
 })

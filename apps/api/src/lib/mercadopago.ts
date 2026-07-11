@@ -34,7 +34,7 @@ export class MercadoPagoProvider implements PaymentProvider {
     }
     const res = await fetch(`${BASE}${path}`, { ...init, headers })
     if (!res.ok) {
-      throw new PaymentProviderError(`Gateway de pagamento indisponível (${res.status})`, 502)
+      throw new PaymentProviderError(`Gateway de pagamento indisponível (${res.status})`, 502, res.status)
     }
     return (await res.json()) as T
   }
