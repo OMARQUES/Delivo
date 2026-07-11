@@ -21,6 +21,10 @@ function rethrow(e: unknown): never {
 
 const StoreOut = z.object({ id: z.string(), slug: z.string(), name: z.string(), isActive: z.boolean() }).passthrough()
 
+function toStoreOut(store: typeof stores.$inferSelect) {
+  return { ...store, isActive: store.securityStatus === 'ACTIVE' }
+}
+
 adminStoreRoutes.openapi(
   createRoute({
     method: 'post', path: '/admin/stores',
@@ -29,7 +33,7 @@ adminStoreRoutes.openapi(
   }),
   async (c) => {
     const store = await createStoreWithOwner(c.get('db'), c.req.valid('json')).catch(rethrow)
-    return c.json(store, 201)
+    return c.json(toStoreOut(store), 201)
   },
 )
 
@@ -38,7 +42,7 @@ adminStoreRoutes.openapi(
     method: 'get', path: '/admin/stores',
     responses: { 200: { description: 'Todas as lojas', content: { 'application/json': { schema: z.array(StoreOut) } } } },
   }),
-  async (c) => c.json(await listAllStores(c.get('db')), 200),
+  async (c) => c.json((await listAllStores(c.get('db'))).map(toStoreOut), 200),
 )
 
 adminStoreRoutes.openapi(
@@ -54,7 +58,7 @@ adminStoreRoutes.openapi(
     const { id } = c.req.valid('param')
     const { isActive } = c.req.valid('json')
     const store = await setStoreActive(c.get('db'), id, isActive).catch(rethrow)
-    return c.json(store, 200)
+    return c.json(toStoreOut(store), 200)
   },
 )
 
@@ -72,7 +76,7 @@ adminStoreRoutes.openapi(
     const { id } = c.req.valid('param')
     const { commissionBps } = c.req.valid('json')
     const store = await setStoreCommission(c.get('db'), id, commissionBps).catch(rethrow)
-    return c.json(store, 200)
+    return c.json(toStoreOut(store), 200)
   },
 )
 

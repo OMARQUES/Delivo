@@ -78,7 +78,7 @@ export async function quoteOrder(db: Db, customerId: string, input: CheckoutInpu
   const [store] = await db
     .select()
     .from(stores)
-    .where(sql`lower(${stores.slug}) = ${input.storeSlug.toLowerCase()} and ${stores.isActive} = true`)
+    .where(sql`lower(${stores.slug}) = ${input.storeSlug.toLowerCase()} and ${stores.securityStatus} = 'ACTIVE'`)
     .limit(1)
   if (!store) throw new OrderError('Loja não encontrada', 404)
   if (store.isPaused || !isOpenNow(store.openingHours)) problems.push('Loja fechada/pausada no momento')

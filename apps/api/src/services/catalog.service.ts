@@ -275,7 +275,7 @@ export async function getPublicMenu(db: Db, slug: string) {
   const [store] = await db
     .select({ id: stores.id })
     .from(stores)
-    .where(sql`lower(${stores.slug}) = ${slug.toLowerCase()} and ${stores.isActive} = true`)
+    .where(sql`lower(${stores.slug}) = ${slug.toLowerCase()} and ${stores.securityStatus} = 'ACTIVE'`)
   if (!store) return null
   const categories = await getStoreCatalog(db, store.id)
   return {
@@ -310,7 +310,7 @@ export async function searchProducts(db: Db, q: string) {
     .from(products)
     .innerJoin(stores, eq(products.storeId, stores.id))
     .where(
-      sql`${stores.isActive} = true and ${products.isAvailable} = true and (
+      sql`${stores.securityStatus} = 'ACTIVE' and ${products.isAvailable} = true and (
         to_tsvector('portuguese', ${products.name} || ' ' || coalesce(${products.description}, ''))
           @@ websearch_to_tsquery('portuguese', ${query})
         or unaccent(${products.name}) ilike unaccent(${'%' + query + '%'})

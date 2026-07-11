@@ -6,6 +6,7 @@ import { sql } from 'drizzle-orm'
 import { users } from './users'
 
 export const deliveryFeeMode = pgEnum('delivery_fee_mode', ['FIXED', 'DISTANCE'])
+export const storeSecurityStatus = pgEnum('store_security_status', ['ACTIVE', 'SUSPENDED', 'CLOSED'])
 
 export const stores = pgTable(
   'stores',
@@ -41,8 +42,7 @@ export const stores = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     isPaused: boolean('is_paused').notNull().default(false),
-    /** false = bloqueada pelo admin (some da home, checkout negado) */
-    isActive: boolean('is_active').notNull().default(true),
+    securityStatus: storeSecurityStatus('security_status').notNull().default('ACTIVE'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()

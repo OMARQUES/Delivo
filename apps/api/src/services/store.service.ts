@@ -90,7 +90,7 @@ function withOpen<T extends { openingHours: { dow: number; open: string; close: 
 
 /** Home: só lojas ativas, com isOpen computado (abertas primeiro fica pro front/SQL depois). */
 export async function listPublicStores(db: Db) {
-  const rows = await db.select(PUBLIC_COLUMNS).from(stores).where(eq(stores.isActive, true))
+  const rows = await db.select(PUBLIC_COLUMNS).from(stores).where(eq(stores.securityStatus, 'ACTIVE'))
   return rows.map(withOpen)
 }
 
@@ -98,7 +98,7 @@ export async function getStoreBySlug(db: Db, slug: string) {
   const [row] = await db
     .select(PUBLIC_COLUMNS)
     .from(stores)
-    .where(sql`lower(${stores.slug}) = ${slug.toLowerCase()} and ${stores.isActive} = true`)
+    .where(sql`lower(${stores.slug}) = ${slug.toLowerCase()} and ${stores.securityStatus} = 'ACTIVE'`)
     .limit(1)
   return row ? withOpen(row) : null
 }
@@ -116,7 +116,11 @@ export async function updateStore(db: Db, storeId: string, input: StoreUpdateInp
 }
 
 export async function setStoreActive(db: Db, storeId: string, isActive: boolean) {
-  const [row] = await db.update(stores).set({ isActive }).where(eq(stores.id, storeId)).returning()
+  const [row] = await db
+    .update(stores)
+    .set({ securityStatus: isActive ? 'ACTIVE' : 'SUSPENDED' })
+    .where(eq(stores.id, storeId))
+    .returning()
   if (!row) throw new StoreError('Loja não encontrada', 404)
   return row
 }
