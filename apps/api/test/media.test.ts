@@ -22,7 +22,7 @@ describe('GET /media/:key', () => {
       httpMetadata: { contentType: 'image/png' },
     }
     const env = envWith({ get: vi.fn(async () => obj as unknown as R2ObjectBody) })
-    const res = await app.request('/media/logos/abc.png', {}, env)
+    const res = await app.request('/media/logos/11111111-1111-4111-8111-111111111111.png', {}, env)
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('image/png')
     expect(res.headers.get('cache-control')).toContain('public')
@@ -33,5 +33,14 @@ describe('GET /media/:key', () => {
     const env = envWith({ get: vi.fn(async () => null) })
     const res = await app.request('/media/nope.png', {}, env)
     expect(res.status).toBe(404)
+  })
+
+  it('never looks up private or malformed keys', async () => {
+    for (const key of ['returns/secret.jpg', 'unknown/a.png', '../returns/x.jpg']) {
+      const get = vi.fn()
+      const res = await app.request(`/media/${encodeURI(key)}`, {}, envWith({ get }))
+      expect(res.status).toBe(404)
+      expect(get).not.toHaveBeenCalled()
+    }
   })
 })
