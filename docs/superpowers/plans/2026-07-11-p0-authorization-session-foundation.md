@@ -110,7 +110,7 @@ Run:
 pnpm --filter @delivery/api exec drizzle-kit generate --name security-session-foundation
 ```
 
-Expected: CLI informa o SQL gerado e atualiza o snapshot e `meta/_journal.json`. Antes de editar, confirme no journal que a nova entrada sucede 0021 e que o snapshot novo aponta para `meta/0021_snapshot.json` por `prevId`. Use os caminhos mostrados por `git status --short`; não renomeie artefatos gerados. Verifique que o SQL adiciona `token_version`, cria enum/status, mapeia `is_active=false` para `SUSPENDED` e só então remove `is_active`. Como dados locais são descartáveis, recriar o banco é aceitável se o Drizzle não expressar a conversão com segurança.
+Expected: CLI informa o SQL gerado e atualiza o snapshot e `meta/_journal.json`. Antes de editar, confirme no journal que a nova entrada sucede 0021 e que o snapshot novo aponta para `meta/0021_snapshot.json` por `prevId`. Use os caminhos mostrados por `git status --short`; não renomeie artefatos gerados. Depois da geração, edite somente o SQL gerado para acrescentar a migração explícita: adicione `security_status` inicialmente sem remover `is_active`, execute `UPDATE stores SET security_status = CASE WHEN is_active THEN 'ACTIVE'::store_security_status ELSE 'SUSPENDED'::store_security_status END`, e só então remova `is_active`. O Drizzle não infere essa transformação de dados. Como dados locais são descartáveis, recriar o banco é aceitável se o Drizzle não expressar a conversão com segurança.
 
 - [ ] **Step 5: Update test truncation and run schema test**
 
@@ -713,7 +713,7 @@ Set `Cache-Control: no-store` for `/auth`, `/orders`, `/me`, `/driver`, `/store`
 
 - [ ] **Step 4: Gate diagnostics**
 
-Register middleware before docs/health handlers:
+Registre o middleware antes de montar `healthRoutes` e antes de declarar docs/OpenAPI; middleware registrado depois de uma rota pode não protegê-la:
 
 ```ts
 const localOnly = createMiddleware<AppContext>(async (c, next) => {
