@@ -94,14 +94,12 @@ describe('recordOrderLedger', () => {
     ])
   })
 
-  it('DELIVERY_FAILED with driver only credits driver fee', async () => {
+  it('DELIVERY_FAILED defers driver fee until return confirmation', async () => {
     const order = await makeOrder()
     await testDb.update(orders).set({ status: 'DELIVERY_FAILED', driverId }).where(eq(orders.id, order.id))
 
     await recordOrderLedger(testDb, order.id)
 
-    expect((await entries(order.id)).map((e) => ({ party: e.party, type: e.type, amountCents: e.amountCents }))).toEqual([
-      { party: 'DRIVER', type: 'DRIVER_DELIVERY_CREDIT', amountCents: 500 },
-    ])
+    expect(await entries(order.id)).toEqual([])
   })
 })

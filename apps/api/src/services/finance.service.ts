@@ -87,12 +87,12 @@ export async function recordOrderLedger(db: LedgerDb, orderId: string) {
     }
   }
 
-  if (order.driverId && !shift && deliveryFee > 0) {
+  if (order.status === 'DELIVERED' && order.driverId && !shift && deliveryFee > 0) {
     entries.push({
       party: 'DRIVER',
       type: 'DRIVER_DELIVERY_CREDIT',
       amountCents: deliveryFee,
-      description: order.status === 'DELIVERY_FAILED' ? 'Frete de entrega não realizada' : 'Frete do entregador',
+      description: 'Frete do entregador',
       uniqueKey: `${order.id}:driver-delivery-credit`,
       orderId: order.id,
       driverId: order.driverId,
@@ -124,6 +124,62 @@ export async function recordOrderLedger(db: LedgerDb, orderId: string) {
 
   await insertEntries(db, entries)
   return db.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, order.id))
+}
+
+export async function recordReturnLedger(db: LedgerDb, order: typeof orders.$inferSelect) {
+  if (!order.driverId || order.returnDriverPayCents == null || order.returnDriverPayCents <= 0) return
+  const [loadedShift] = order.shiftId
+    ? await db.select().from(driverShifts).where(eq(driverShifts.id, order.shiftId)).limit(1)
+    : []
+  const fixed = Boolean(
+    loadedShift
+    && loadedShift.storeId === order.storeId
+    && loadedShift.driverUserId === order.driverId,
+  )
+  if (!fixed) {
+    await insertEntries(db, [{
+      party: 'DRIVER', type: 'DRIVER_DELIVERY_CREDIT', amountCents: order.returnDriverPayCents,
+      description: 'Frete liberado após devolução',
+      uniqueKey: `${order.id}:driver-delivery-credit-on-return`,
+      orderId: order.id, driverId: order.driverId,
+    }])
+    return
+  }
+  await insertEntries(db, [
+    {
+      party: 'DRIVER', type: 'DRIVER_PER_DELIVERY_CREDIT', amountCents: order.returnDriverPayCents,
+      description: 'Extra liberado após devolução',
+      uniqueKey: `${order.id}:driver-per-delivery-on-return`,
+      orderId: order.id, driverId: order.driverId,
+    },
+    {
+      party: 'STORE', type: 'STORE_PER_DELIVERY_DEBIT', amountCents: -order.returnDriverPayCents,
+      description: 'Extra após devolução (entregador fixo)',
+      uniqueKey: `${order.id}:store-per-delivery-on-return`,
+      orderId: order.id, storeId: order.storeId,
+    },
+  ])
+}
+
+export async function recordHalfFee(
+  db: LedgerWriter,
+  input: { orderId: string; storeId: string; driverUserId: string; amountCents: number },
+) {
+  if (input.amountCents <= 0) return
+  await insertEntries(db, [
+    {
+      party: 'DRIVER', type: 'DRIVER_HALF_FEE_CREDIT', amountCents: input.amountCents,
+      description: 'Meia-taxa por deslocamento',
+      uniqueKey: `${input.orderId}:half-fee:${input.driverUserId}:driver`,
+      orderId: input.orderId, driverId: input.driverUserId,
+    },
+    {
+      party: 'STORE', type: 'STORE_HALF_FEE_DEBIT', amountCents: -input.amountCents,
+      description: 'Meia-taxa do entregador por deslocamento',
+      uniqueKey: `${input.orderId}:half-fee:${input.driverUserId}:store`,
+      orderId: input.orderId, storeId: input.storeId,
+    },
+  ])
 }
 
 export async function recordShiftDaily(

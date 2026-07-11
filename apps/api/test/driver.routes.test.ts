@@ -163,9 +163,7 @@ describe('driver flow via HTTP', () => {
     }, driverToken)
     expect(fail.status).toBe(200)
     expect(((await fail.json()) as { failReason: string }).failReason).toBe('WRONG_ADDRESS')
-    expect(await ledgerSummary(order.id)).toEqual([
-      { party: 'DRIVER', type: 'DRIVER_DELIVERY_CREDIT', amountCents: 500 },
-    ])
+    expect(await ledgerSummary(order.id)).toEqual([])
     expect((await req('/driver/available', {}, customerToken)).status).toBe(403)
     expect((await app.request('/driver/available', {}, env)).status).toBe(401)
     expect((await req('/driver/me/fcm-token', { method: 'POST', body: JSON.stringify({ token: 'tok-1234567890' }) }, driverToken)).status).toBe(200)

@@ -165,6 +165,15 @@ describe('refundOrderPaymentIfAny', () => {
     expect(provider.cancelPayment).toHaveBeenCalledWith('mp-1')
     expect((await getOrderPayment(testDb, order.id))!.status).toBe('CANCELLED')
   })
+
+  it('não marca REFUNDED quando o gateway está indisponível', async () => {
+    const order = await makeAwaitingPaymentOrder()
+    const provider = fakeProvider()
+    await createPixPaymentForOrder(testDb, provider, order, 'c@x.com', null)
+    await confirmPaymentApproved(testDb, 'mp-1')
+    await expect(refundOrderPaymentIfAny(testDb, null, order.id)).rejects.toMatchObject({ status: 503 })
+    expect((await getOrderPayment(testDb, order.id))!.status).toBe('APPROVED')
+  })
 })
 
 describe('expireStaleAwaitingPayment', () => {

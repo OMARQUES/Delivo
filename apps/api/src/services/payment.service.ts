@@ -1,5 +1,6 @@
 import { and, eq, lt, sql } from 'drizzle-orm'
 import { PIX_EXPIRATION_MINUTES } from '@delivery/shared/constants'
+import type { OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { orders, payments } from '../db/schema'
 import type { PaymentProvider } from '../lib/payment-provider'
@@ -109,19 +110,26 @@ export async function confirmPaymentApproved(
  * Cancelamento de pedido: estorna se pago; cancela no gateway se pendente.
  * Retorna true se estornou (pagamento aprovado existia).
  */
-export async function refundOrderPaymentIfAny(db: Db, provider: PaymentProvider | null, orderId: string): Promise<boolean> {
+export async function refundOrderPaymentIfAny(
+  db: Db,
+  provider: PaymentProvider | null,
+  orderId: string,
+  event: { status?: OrderStatus; note?: string } = {},
+): Promise<boolean> {
   const payment = await getOrderPayment(db, orderId)
   if (!payment) return false
   if (payment.status === 'APPROVED') {
-    if (provider) await provider.refundPayment(payment.providerPaymentId)
+    if (!provider) throw new PaymentError('Gateway indisponível para estorno', 503)
+    await provider.refundPayment(payment.providerPaymentId)
     await db.update(payments)
       .set({ status: 'REFUNDED', refundedAt: new Date() })
       .where(eq(payments.id, payment.id))
-    await addEvent(db, orderId, 'CANCELLED', 'SYSTEM', null, 'pagamento estornado')
+    await addEvent(db, orderId, event.status ?? 'CANCELLED', 'SYSTEM', null, event.note ?? 'pagamento estornado')
     return true
   }
   if (payment.status === 'PENDING') {
-    if (provider) await provider.cancelPayment(payment.providerPaymentId)
+    if (!provider) throw new PaymentError('Gateway indisponível para cancelamento', 503)
+    await provider.cancelPayment(payment.providerPaymentId)
     await db.update(payments).set({ status: 'CANCELLED' }).where(eq(payments.id, payment.id))
   }
   return false

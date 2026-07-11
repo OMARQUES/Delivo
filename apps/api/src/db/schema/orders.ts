@@ -64,6 +64,14 @@ export const orders = pgTable(
     /** O alvo individual recusou; a loja precisa redirecionar explicitamente. */
     driverRequestRefusedAt: timestamp('driver_request_refused_at', { withTimezone: true }),
     driverAssignedAt: timestamp('driver_assigned_at', { withTimezone: true }),
+    /** Chegada pré-coleta informada pelo entregador (GPS fica no evento). */
+    driverArrivedAt: timestamp('driver_arrived_at', { withTimezone: true }),
+    /** Devolução obrigatória após falha de entrega. */
+    returnPendingAt: timestamp('return_pending_at', { withTimezone: true }),
+    /** Frete/extra congelado na falha e liberado somente na devolução. */
+    returnDriverPayCents: integer('return_driver_pay_cents'),
+    returnedAt: timestamp('returned_at', { withTimezone: true }),
+    returnConfirmedBy: uuid('return_confirmed_by'),
     /** DELIVERY_FAILED: motivo (enum em shared) */
     failReason: text('fail_reason'),
     idempotencyKey: text('idempotency_key').notNull(),

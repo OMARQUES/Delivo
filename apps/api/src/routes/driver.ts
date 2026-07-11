@@ -1,6 +1,6 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
-import { AvailabilitySchema, DeliveryFailSchema, FcmTokenSchema, StartShiftSchema } from '@delivery/shared/schemas'
+import { AvailabilitySchema, DeliveryFailSchema, DriverArrivalSchema, FcmTokenSchema, StartShiftSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import {
@@ -9,6 +9,7 @@ import {
   acceptShiftDelivery,
   collectDelivery,
   completeDelivery,
+  confirmArrival,
   ensureDriverProfile,
   failDelivery,
   listAvailableDeliveries,
@@ -33,6 +34,7 @@ import {
   confirmLink, confirmLinkTermsChange, listDriverLinks, rejectLinkTermsChange, StoreDriverError,
 } from '../services/store-driver.service'
 import { endShift, getActiveShift, ShiftError, startShift } from '../services/shift.service'
+import { createPaymentProvider } from '../lib/mercadopago'
 
 export const driverRoutes = createRouter()
 
@@ -126,6 +128,17 @@ driverRoutes.openapi(createRoute({
 }), async (c) => c.json(await refuseBatch(
   c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
 ).catch(rethrow), 200))
+
+driverRoutes.openapi(
+  createRoute({
+    method: 'post', path: '/driver/orders/{id}/arrived',
+    request: { params: IdParam, body: { content: { 'application/json': { schema: DriverArrivalSchema } } } },
+    responses: { 200: { description: 'Chegada registrada', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await confirmArrival(
+    c.get('db'), c.get('auth')!.sub, c.req.valid('param').id, c.req.valid('json'),
+  ).catch(rethrow), 200),
+)
 
 driverRoutes.openapi(
   createRoute({
@@ -272,5 +285,8 @@ driverRoutes.openapi(
     responses: { 200: { description: 'Falha registrada', content: { 'application/json': { schema: Out } } } },
   }),
   async (c) =>
-    c.json(await failDelivery(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id, c.req.valid('json')).catch(rethrow), 200),
+    c.json(await failDelivery(
+      c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
+      c.req.valid('json'), createPaymentProvider(c.env),
+    ).catch(rethrow), 200),
 )

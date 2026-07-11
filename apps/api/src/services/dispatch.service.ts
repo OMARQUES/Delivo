@@ -1,10 +1,12 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
-import type { DeliveryFailInput } from '@delivery/shared/schemas'
+import type { DeliveryFailInput, DriverArrivalInput } from '@delivery/shared/schemas'
 import type { OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
+import type { PaymentProvider } from '../lib/payment-provider'
 import { driverShifts, drivers, orderItems, orders, stores, users } from '../db/schema'
 import { addEvent } from './order-status.service'
-import { recordOrderLedger } from './finance.service'
+import { recordHalfFee, recordOrderLedger } from './finance.service'
+import { refundOrderPaymentIfAny } from './payment.service'
 
 export class DispatchError extends Error {
   constructor(
@@ -137,7 +139,7 @@ export async function acceptDelivery(db: Db, driverUserId: string, orderId: stri
 export async function releaseDelivery(db: Db, driverUserId: string, orderId: string) {
   const rows = await db
     .update(orders)
-    .set({ driverId: null, driverAssignedAt: null, shiftId: null })
+    .set({ driverId: null, driverAssignedAt: null, shiftId: null, driverArrivedAt: null })
     .where(and(
       eq(orders.id, orderId),
       eq(orders.driverId, driverUserId),
@@ -251,6 +253,57 @@ export async function collectDelivery(db: Db, driverUserId: string, orderId: str
   return rows[0]!
 }
 
+export async function confirmArrival(db: Db, driverUserId: string, orderId: string, gps: DriverArrivalInput) {
+  return db.transaction(async (tx) => {
+    const [arrived] = await tx.update(orders).set({ driverArrivedAt: new Date() }).where(and(
+      eq(orders.id, orderId),
+      eq(orders.driverId, driverUserId),
+      isNull(orders.batchId),
+      isNull(orders.driverArrivedAt),
+      inArray(orders.status, ACCEPTABLE),
+    )).returning()
+    if (!arrived) throw new DispatchError('Não é possível confirmar chegada para este pedido', 409)
+    const coords = gps.lat != null && gps.lng != null ? ` (${gps.lat.toFixed(6)},${gps.lng.toFixed(6)})` : ''
+    await addEvent(tx, orderId, arrived.status, 'DRIVER', driverUserId, `chegou na loja${coords}`)
+    return arrived
+  })
+}
+
+export async function storeReleaseDriver(db: Db, storeId: string, orderId: string, actorId: string) {
+  return db.transaction(async (tx) => {
+    const [order] = await tx.select().from(orders).where(and(
+      eq(orders.id, orderId), eq(orders.storeId, storeId),
+    )).for('update')
+    if (!order) throw new DispatchError('Pedido não encontrado', 404)
+    if (order.batchId) throw new DispatchError('Desvincule o pacote inteiro pelo fluxo de pacotes', 409)
+    if (!order.driverId || !ACCEPTABLE.includes(order.status)) {
+      throw new DispatchError('Entregador não pode mais ser desvinculado', 409)
+    }
+    const releasedDriverId = order.driverId
+    const halfFee = order.shiftId == null && order.driverArrivedAt != null
+      ? Math.round((order.deliveryFeeCents ?? 0) / 2)
+      : 0
+    const nextStatus = order.status === 'AWAITING_DRIVER' ? 'READY' as const : order.status
+    const [released] = await tx.update(orders).set({
+      status: nextStatus,
+      driverId: null, driverAssignedAt: null, shiftId: null, driverArrivedAt: null,
+      driverRequestedAt: null, driverRequestTarget: null,
+      requestedDriverId: null, driverRequestRefusedAt: null,
+    }).where(and(
+      eq(orders.id, orderId),
+      eq(orders.driverId, releasedDriverId),
+      inArray(orders.status, ACCEPTABLE),
+    )).returning()
+    if (!released) throw new DispatchError('Pedido mudou — recarregue', 409)
+    await recordHalfFee(tx, { orderId, storeId, driverUserId: releasedDriverId, amountCents: halfFee })
+    await addEvent(
+      tx, orderId, nextStatus, 'STORE', actorId,
+      halfFee > 0 ? 'entregador desvinculado após chegada (meia-taxa)' : 'entregador desvinculado',
+    )
+    return released
+  })
+}
+
 export async function completeDelivery(db: Db, driverUserId: string, orderId: string) {
   return db.transaction(async (tx) => {
     const [candidate] = await tx.select({ shiftId: orders.shiftId }).from(orders).where(and(
@@ -277,20 +330,47 @@ export async function completeDelivery(db: Db, driverUserId: string, orderId: st
   })
 }
 
-export async function failDelivery(db: Db, driverUserId: string, orderId: string, input: DeliveryFailInput) {
-  const rows = await db
-    .update(orders)
-    .set({ status: 'DELIVERY_FAILED', failReason: input.reason })
-    .where(and(
-      eq(orders.id, orderId),
-      eq(orders.driverId, driverUserId),
-      eq(orders.status, 'OUT_FOR_DELIVERY'),
-    ))
-    .returning()
-  if (rows.length === 0) throw new DispatchError('Pedido não está em rota', 409)
-  await addEvent(db, orderId, 'DELIVERY_FAILED', 'DRIVER', driverUserId, input.note ?? input.reason)
-  await recordOrderLedger(db, orderId)
-  return rows[0]!
+export async function failDelivery(
+  db: Db,
+  driverUserId: string,
+  orderId: string,
+  input: DeliveryFailInput,
+  provider: PaymentProvider | null = null,
+) {
+  const [existing] = await db.select().from(orders).where(and(
+    eq(orders.id, orderId), eq(orders.driverId, driverUserId),
+  )).limit(1)
+  let failed = existing
+  if (existing?.status !== 'DELIVERY_FAILED' || existing.returnPendingAt == null) {
+    failed = await db.transaction(async (tx) => {
+      const [candidate] = await tx.select().from(orders).where(and(
+        eq(orders.id, orderId), eq(orders.driverId, driverUserId), eq(orders.status, 'OUT_FOR_DELIVERY'),
+      )).limit(1)
+      if (!candidate) throw new DispatchError('Pedido não está em rota', 409)
+      let returnDriverPayCents = candidate.deliveryFeeCents ?? 0
+      if (candidate.shiftId) {
+        const [shift] = await tx.select().from(driverShifts).where(eq(driverShifts.id, candidate.shiftId)).for('update')
+        if (shift && shift.storeId === candidate.storeId && shift.driverUserId === driverUserId) {
+          returnDriverPayCents = shift.perDeliveryCents
+        }
+      }
+      const now = new Date()
+      const [updated] = await tx.update(orders).set({
+        status: 'DELIVERY_FAILED', failReason: input.reason,
+        returnPendingAt: now, returnDriverPayCents,
+      }).where(and(
+        eq(orders.id, orderId), eq(orders.driverId, driverUserId), eq(orders.status, 'OUT_FOR_DELIVERY'),
+      )).returning()
+      if (!updated) throw new DispatchError('Pedido não está em rota', 409)
+      await addEvent(tx, orderId, 'DELIVERY_FAILED', 'DRIVER', driverUserId, input.note ?? input.reason)
+      return updated
+    })
+  }
+  if (!failed) throw new DispatchError('Pedido não está em rota', 409)
+  await refundOrderPaymentIfAny(db, provider, orderId, {
+    status: 'DELIVERY_FAILED', note: 'pagamento estornado após falha de entrega',
+  })
+  return failed
 }
 
 const DRIVER_ACTIVE: OrderStatus[] = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER', 'OUT_FOR_DELIVERY']

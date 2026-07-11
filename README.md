@@ -69,6 +69,7 @@ Backend usa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `PUBLIC_API_URL` em `apps/a
 - ✅ Pacote de Entregas — loja agrupa pedidos (1 coleta, vários destinos) e oferta ao pool; entregador coleta 1x e quebra em entregas individuais
 - ✅ Entregadores Próprios (④a) — vínculo, turno com geofence, dispatch exclusivo e diária + extra por entrega
 - ✅ Dispatch Direcionado (④b) — pool/próprios/específico para pedidos e pacotes, recusa e escalada explícita
+- ✅ Devolução + Meia-taxa — estorno na falha, pagamento na devolução e compensação de deslocamento freelance
 9. Capacitor — build Android driver, FCM nativo
 10. Admin & Relatórios — gestão, import CSV, faturamento, mini-ERP
 11. Design & Identidade Visual — marca/nome definitivo, design system, refatoração UI/UX das telas existentes

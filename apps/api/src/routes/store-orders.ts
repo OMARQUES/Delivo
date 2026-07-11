@@ -17,6 +17,8 @@ import {
 import { getStoreByOwner } from '../services/store.service'
 import { AmendmentError, proposeAmendment, withdrawAmendment } from '../services/amendment.service'
 import { BatchError, broadcastBatch, cancelBatch, createBatch, listStoreBatches } from '../services/batch.service'
+import { DispatchError, storeReleaseDriver } from '../services/dispatch.service'
+import { confirmOrderReturn, ReturnError } from '../services/return.service'
 
 export const storeOrderRoutes = createRouter()
 
@@ -26,6 +28,8 @@ function rethrow(e: unknown): never {
   if (e instanceof AmendmentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof BatchError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof OrderError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof DispatchError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof ReturnError) throw new HTTPException(e.status, { message: e.message })
   throw e
 }
 
@@ -57,6 +61,26 @@ async function pushForTarget(
   )
   try { c.executionCtx.waitUntil(push) } catch { await push }
 }
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post', path: '/store/me/orders/{id}/confirm-return', request: { params: IdParam },
+    responses: { 200: { description: 'Devolução confirmada', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await confirmOrderReturn(
+    c.get('db'), await ownStoreId(c), c.req.valid('param').id, c.get('auth')!.sub,
+  ).catch(rethrow), 200),
+)
+
+storeOrderRoutes.openapi(
+  createRoute({
+    method: 'post', path: '/store/me/orders/{id}/release-driver', request: { params: IdParam },
+    responses: { 200: { description: 'Entregador desvinculado', content: { 'application/json': { schema: Out } } } },
+  }),
+  async (c) => c.json(await storeReleaseDriver(
+    c.get('db'), await ownStoreId(c), c.req.valid('param').id, c.get('auth')!.sub,
+  ).catch(rethrow), 200),
+)
 
 storeOrderRoutes.openapi(
   createRoute({

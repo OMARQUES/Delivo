@@ -33,6 +33,9 @@ type Delivery = {
   note: string | null
   createdAt: string
   batchId: string | null
+  driverArrivedAt: string | null
+  returnPendingAt: string | null
+  returnedAt: string | null
 }
 
 const active = ref<Delivery[]>([])
@@ -70,6 +73,23 @@ async function act(o: Delivery, action: 'collect' | 'deliver' | 'release') {
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
   }
+}
+
+async function arrive(o: Delivery) {
+  error.value = ''
+  let body: { lat?: number; lng?: number } = {}
+  try {
+    const position = await new Promise<GeolocationPosition>((resolve, reject) =>
+      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 8_000 }),
+    )
+    body = { lat: position.coords.latitude, lng: position.coords.longitude }
+  } catch {
+    // GPS best-effort: a chegada ainda pode ser registrada sem coordenadas.
+  }
+  try {
+    await api(`/driver/orders/${o.id}/arrived`, { method: 'POST', body: JSON.stringify(body) })
+    await load()
+  } catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
 }
 
 async function actBatch(batchId: string, action: 'collect' | 'release') {
@@ -166,6 +186,8 @@ const toDeliver = computed(() => active.value.filter(inRoute))
           <div class="mt-2 flex flex-wrap gap-2 text-sm">
             <a :href="waze(o.storeLat, o.storeLng)" target="_blank" class="rounded border px-2 py-1 underline">Waze loja</a>
             <a :href="`https://wa.me/55${o.storePhone}`" target="_blank" class="rounded border px-2 py-1 underline">WhatsApp loja</a>
+            <button v-if="!o.driverArrivedAt" class="rounded border border-blue-500 px-2 py-1 text-blue-700" @click="arrive(o)">📍 Cheguei na loja</button>
+            <span v-else class="rounded bg-blue-100 px-2 py-1 text-xs">📍 chegada registrada</span>
             <button v-if="collectible(o)" class="rounded bg-black px-2 py-1 text-white" @click="act(o, 'collect')">Coletei</button>
             <span v-else-if="waiting(o)" class="rounded bg-yellow-100 px-2 py-1 text-xs">aguardando ficar pronto...</span>
             <button class="rounded border border-red-400 px-2 py-1 text-red-600" @click="act(o, 'release')">Liberar</button>
@@ -199,8 +221,8 @@ const toDeliver = computed(() => active.value.filter(inRoute))
     <details>
       <summary class="cursor-pointer font-semibold">Histórico ({{ doneList.length }})</summary>
       <ul class="mt-2 space-y-1 text-sm">
-        <li v-for="o in doneList" :key="o.id" class="flex justify-between rounded border p-2">
-          <span>{{ o.storeName }} -> {{ o.customerName }} · {{ ORDER_STATUS_LABELS[o.status] }}</span>
+        <li v-for="o in doneList" :key="o.id" class="flex justify-between gap-2 rounded border p-2">
+          <span>{{ o.storeName }} -> {{ o.customerName }} · {{ ORDER_STATUS_LABELS[o.status] }}<span v-if="o.status === 'DELIVERY_FAILED' && o.returnPendingAt && !o.returnedAt" class="mt-1 block rounded bg-yellow-100 p-1 text-xs text-yellow-800">⚠️ Devolva o produto na loja — pagamento liberado após confirmação.</span><span v-else-if="o.returnedAt" class="mt-1 block text-xs text-green-700">Devolução confirmada · pagamento liberado</span></span>
           <span>{{ o.deliveryFeeCents != null ? formatBRL(o.deliveryFeeCents) : '-' }}</span>
         </li>
       </ul>

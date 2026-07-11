@@ -3,7 +3,9 @@
 | Item | Origem | Dono futuro |
 |---|---|---|
 | GPS do início do turno confia no device; detecção de mock/root ainda não existe | Plano ④a | Plano 9 (Capacitor/anti-fraude) |
-| Falha de entrega própria + devolução + eventual meia-taxa não fazem parte do ledger atual | Emenda pós-Plano ④a | Fluxo de devolução |
+| GPS de “cheguei na loja” é best-effort e apenas auditado no evento; detecção de mock/root ainda não existe | Emenda Devolução | Plano 9 (Capacitor/anti-fraude) |
+| Meia-taxa cobre apenas freelance; entregador fixo mantém a diária do turno | Emenda Devolução | Decisão aceita |
+| Devolução nunca é autoconfirmada; loja ou suporte precisam confirmar manualmente | Emenda Devolução | Decisão aceita |
 | Data operacional do turno usa `America/Sao_Paulo`; lojas em outros fusos exigirão timezone por loja | Review Plano ④a | Antes de expansão multi-fuso |
 | Escala avançada com valor e horário diferentes por dia exige termos financeiros por item da agenda e editor próprio | Plano ④a-2 | Evolução futura de escalas |
 | Pacote: coleta exige TODOS os pedidos READY (sem coleta parcial) | Plano ③ | Se lojas pedirem coleta parcial |
@@ -12,7 +14,6 @@
 | FCM: 1 token por entregador (último dispositivo vence); sem retry/cleanup de tokens inválidos | Plano Dispatch T13 | Plano Capacitor |
 | Re-broadcast automático (3-5min) + alerta à loja (10min sem aceite) não implementados — broadcast é a lista viva + FCM one-shot | Plano Dispatch | Plano 8/hardening (cron existe, falta canal loja) |
 | Ofertas/contrapropostas de valor para entregas continuam fora do dispatch direcionado | Plano ④b | Plano ④c |
-| DELIVERY_FAILED: frete do entregador mantido = regra do ledger (Plano 8); resolution/suporte manual | Spec §5.7 | Plano Financeiro |
 | `updatedAt` via `$onUpdate` é ORM-level; raw SQL bypassa. Avaliar trigger `moddatetime` | Review Task 4 | Plano Financeiro (ledger) |
 | `/docs` + `/openapi.json` expostos sem gate | Review Task 3 | Task 9 (deploy prod) |
 | `viewport-fit=cover` no index.html do driver (notch Android) | Review Task 6 | Plano Capacitor |
@@ -60,9 +61,8 @@
 | Alertas do driver: avaliar FCM-only (push-to-sync: refetch em push/focus/online, toast global via store de eventos, notificationclick no SW, guard permissão↔disponibilidade, polling lento 60-120s de segurança ou remoção total) — SUJEITO a validação de necessidade em testes reais no Capacitor; WebSocket descartado (FCM já é push persistente) | Discussão pós-Plano 7 | Plano 9 (Capacitor) |
 | Polling em 1s (todas as telas) — escolha pra testes locais; RECALIBRAR antes de prod (1s × N usuários = carga alta; valores anteriores: 10-15s) | Ajuste dev 2026-07-10 | Antes do deploy prod |
 | Estorno parcial (amendment) roda PÓS-commit: se gateway falhar, amendment fica APPROVED sem estorno e sem flag "estorno devido" — replay manual é seguro (idempotency key `refund-{id}-{cents}`), mas não há retry automático nem consulta de pendências | Plano 5b (audit) | Plano 8 (ledger/reconciliação) |
-| Ledger gravado PÓS-commit da transição de status (`recordOrderLedger` fora da tx do UPDATE): se falhar após DELIVERED/DELIVERY_FAILED commitado, pedido fica sem lançamento e não há retry (não dá pra re-entregar); idempotente por `uniqueKey` = re-run manual seguro. Mesma classe do estorno pós-commit | Plano 8 (audit) | Hardening/reconciliação (embrulhar em tx ou job de conferência) |
-| DELIVERY_FAILED + pagamento na entrega (CASH/maquininha) com entregador freelance: driver recebe o frete mas NINGUÉM é debitado — plataforma absorve. No DELIVERED cash a loja é debitada do frete; no FAILED não. Decisão de negócio pendente | Plano 8 (audit) | Definir com operação |
-| DELIVERY_FAILED + pagamento online: sem estorno automático, plataforma retém o subtotal, loja não recebe crédito. Política de estorno/retenção em falha a definir | Plano 8 (audit) | Definir com operação |
+| Ledger de DELIVERED agora é atômico com a transição; outros efeitos externos pós-commit ainda dependem de retry/reconciliação | Plano 8 + Emenda Devolução | Hardening/reconciliação |
+| DELIVERY_FAILED cash/maquininha freelance: frete é liberado na devolução sem débito da loja; plataforma absorve por decisão de negócio | Emenda Devolução | Decisão aceita |
 | `markStoreInvoicePaid`/`markStorePayoutPaid`/`markDriverPayoutPaid` sem guard `status='OPEN'` — remarcar sobrescreve `paidAt`. Menor | Plano 8 (audit) | Oportunista |
 | Comissão não é snapshotada na entry do ledger (só o valor final é congelado) — perde trilha da alíquota usada | Plano 8 (audit) | Se auditoria fiscal exigir |
 | Pacote com TODOS os pedidos cancelados fica órfão ACCEPTED (loja não cancela mais; driver só faz release → volta ao pool mostrando "0 entregas") — cosmético, sem risco de dinheiro | Plano ③ (audit) | Hardening (auto-cancelar pacote vazio) |

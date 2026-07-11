@@ -33,6 +33,9 @@ type OrderRow = {
   addressText: string | null
   note: string | null
   taxId: string | null
+  driverArrivedAt: string | null
+  returnPendingAt: string | null
+  returnedAt: string | null
 }
 type Batch = {
   id: string
@@ -184,6 +187,28 @@ async function withdrawRequest(o: OrderRow) {
   error.value = ''
   try { await api(`/store/me/orders/${o.id}/request-withdraw`, { method: 'POST' }); await load() }
   catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
+
+async function releaseDriver(o: OrderRow) {
+  const warning = o.driverArrivedAt
+    ? 'O entregador já registrou chegada. Se for freelance, será lançada meia-taxa. Desvincular?'
+    : 'Desvincular este entregador e limpar o chamado?'
+  if (!confirm(warning)) return
+  error.value = ''
+  try { await api(`/store/me/orders/${o.id}/release-driver`, { method: 'POST' }); await load() }
+  catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
+
+async function confirmReturn(o: OrderRow) {
+  if (!confirm('Confirmar que os produtos retornaram à loja e liberar o pagamento do entregador?')) return
+  error.value = ''
+  try { await api(`/store/me/orders/${o.id}/confirm-return`, { method: 'POST' }); await load() }
+  catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
+}
+
+function returnAge(iso: string) {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60_000))
+  return minutes < 60 ? `${minutes}min` : `${Math.floor(minutes / 60)}h ${minutes % 60}min`
 }
 
 async function requestSpecific(o: OrderRow, driverUserId: string) {
@@ -416,6 +441,12 @@ const groups = computed(() => {
               entregue ao entregador
             </span>
             <span v-else-if="o.driverId" class="rounded bg-green-100 px-2 py-1 text-xs">entregador a caminho</span>
+            <span v-if="o.driverArrivedAt" class="rounded bg-blue-100 px-2 py-1 text-xs">📍 entregador chegou</span>
+            <button
+              v-if="o.driverId && !o.batchId && ['ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER'].includes(o.status)"
+              class="rounded border border-red-400 px-2 py-1 text-red-600"
+              @click="releaseDriver(o)"
+            >Desvincular entregador</button>
             <button class="rounded border px-2 py-1" @click="openDetail(o)">Detalhes</button>
             <button
               v-if="!['DELIVERED', 'CANCELLED', 'DELIVERY_FAILED'].includes(o.status)"
@@ -433,8 +464,8 @@ const groups = computed(() => {
     <details class="mt-6">
       <summary class="cursor-pointer font-semibold">Concluídos/cancelados recentes ({{ done.length }})</summary>
       <ul class="mt-2 space-y-1 text-sm">
-        <li v-for="o in done" :key="o.id" class="flex justify-between rounded border p-2">
-          <span>{{ o.customerName }} · {{ ORDER_STATUS_LABELS[o.status] }}</span>
+        <li v-for="o in done" :key="o.id" class="flex justify-between gap-2 rounded border p-2" :class="o.returnPendingAt && !o.returnedAt && 'border-yellow-500 bg-yellow-50'">
+          <span>{{ o.customerName }} · {{ ORDER_STATUS_LABELS[o.status] }}<span v-if="o.returnPendingAt && !o.returnedAt" class="mt-1 block text-xs text-yellow-800">📦 Devolução pendente há {{ returnAge(o.returnPendingAt) }} <button class="ml-2 rounded bg-black px-2 py-1 text-white" @click="confirmReturn(o)">Confirmar devolução</button></span><span v-else-if="o.returnedAt" class="block text-xs text-green-700">Devolução confirmada</span></span>
           <span>{{ formatBRL(o.totalCents) }}</span>
         </li>
       </ul>

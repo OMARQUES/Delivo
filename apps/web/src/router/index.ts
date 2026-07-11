@@ -66,6 +66,11 @@ export const router = createRouter({
           name: 'admin-finance',
           component: () => import('../views/admin/AdminFinanceView.vue'),
         },
+        {
+          path: 'devolucoes',
+          name: 'admin-returns',
+          component: () => import('../views/admin/AdminReturnsView.vue'),
+        },
       ],
     },
     { path: '/busca', name: 'search', component: () => import('../views/SearchView.vue') },

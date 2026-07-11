@@ -17,10 +17,13 @@ describe('finance constants', () => {
       'STORE_DAILY_RATE_DEBIT',
       'DRIVER_PER_DELIVERY_CREDIT',
       'DRIVER_DAILY_RATE_CREDIT',
+      'DRIVER_HALF_FEE_CREDIT',
+      'STORE_HALF_FEE_DEBIT',
     ])
     expect(LEDGER_ENTRY_LABELS.STORE_COMMISSION_DEBIT).toBe('Comissão da plataforma')
     expect(LEDGER_ENTRY_LABELS.DRIVER_DELIVERY_CREDIT).toBe('Frete do entregador')
     expect(LEDGER_ENTRY_LABELS.DRIVER_DAILY_RATE_CREDIT).toBe('Diária do turno')
+    expect(LEDGER_ENTRY_LABELS.DRIVER_HALF_FEE_CREDIT).toBe('Meia-taxa (deslocamento)')
   })
 
   it('exposes finance document statuses with labels', () => {

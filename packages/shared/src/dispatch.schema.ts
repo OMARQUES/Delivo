@@ -10,5 +10,11 @@ export const DeliveryFailSchema = z.object({
 })
 export type DeliveryFailInput = z.infer<typeof DeliveryFailSchema>
 
+export const DriverArrivalSchema = z.object({
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+}).refine((value) => (value.lat == null) === (value.lng == null), 'Informe latitude e longitude juntas')
+export type DriverArrivalInput = z.infer<typeof DriverArrivalSchema>
+
 export const FcmTokenSchema = z.object({ token: z.string().min(10).max(4096) })
 export type FcmTokenInput = z.infer<typeof FcmTokenSchema>
