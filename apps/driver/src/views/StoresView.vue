@@ -6,7 +6,7 @@ import { api } from '../lib/api'
 // recarrega a barra de turno do layout (o botão "Iniciar turno" depende dos vínculos confirmados)
 const reloadDriverBar = inject<() => Promise<void> | void>('reloadDriverBar', () => {})
 
-type ScheduleItem = { dow: number; start: string; end: string }
+type ScheduleItem = ({ dow: number } | { date: string }) & { start: string; end: string }
 type Link = {
   id: string
   status: 'INVITED' | 'CONFIRMED'
@@ -23,7 +23,7 @@ type Link = {
 const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 function daysLabel(schedule: ScheduleItem[]) {
   if (!schedule?.length) return 'Sem dias definidos'
-  return `${schedule.map((s) => DOW[s.dow]).join(', ')} · ${schedule[0]!.start}–${schedule[0]!.end}`
+  return `${schedule.map((s) => 'date' in s ? s.date.split('-').reverse().slice(0, 2).join('/') : DOW[s.dow]).join(', ')} · ${schedule[0]!.start}–${schedule[0]!.end}`
 }
 const links = ref<Link[]>([])
 const error = ref('')

@@ -15,6 +15,14 @@ export class StoreDriverError extends Error {
   }
 }
 
+export function isLinkExpired(link: { expiresAt: Date | null }, now = new Date()) {
+  return link.expiresAt != null && link.expiresAt <= now
+}
+
+export function isLinkActive(link: { status: string; expiresAt: Date | null }, now = new Date()) {
+  return link.status !== 'REMOVED' && !isLinkExpired(link, now)
+}
+
 function isUniqueViolation(error: unknown) {
   let current: unknown = error
   for (let depth = 0; depth < 4 && typeof current === 'object' && current !== null; depth += 1) {
@@ -39,7 +47,7 @@ export async function inviteDriver(db: Db, storeId: string, phone: string, terms
     if (existing.status !== 'REMOVED') throw new StoreDriverError('Entregador já vinculado à loja', 409)
     const [revived] = await db.update(storeDrivers)
       .set({
-        status: 'INVITED', ...terms,
+        status: 'INVITED', ...terms, expiresAt: null,
         pendingDailyRateCents: null, pendingPerDeliveryCents: null,
         pendingSchedule: null, pendingProposedAt: null,
         updatedAt: new Date(),
@@ -165,7 +173,8 @@ export async function listStoreDrivers(db: Db, storeId: string) {
     .innerJoin(users, eq(storeDrivers.driverUserId, users.id))
     .where(and(eq(storeDrivers.storeId, storeId), ne(storeDrivers.status, 'REMOVED')))
     .orderBy(desc(storeDrivers.createdAt))
-  return rows.map((row) => ({ ...row.link, driverName: row.driverName, driverPhone: row.driverPhone }))
+  return rows.filter((row) => isLinkActive(row.link))
+    .map((row) => ({ ...row.link, driverName: row.driverName, driverPhone: row.driverPhone }))
 }
 
 export async function listDriverLinks(db: Db, driverUserId: string) {
@@ -174,5 +183,6 @@ export async function listDriverLinks(db: Db, driverUserId: string) {
     .innerJoin(stores, eq(storeDrivers.storeId, stores.id))
     .where(and(eq(storeDrivers.driverUserId, driverUserId), inArray(storeDrivers.status, ['INVITED', 'CONFIRMED'])))
     .orderBy(desc(storeDrivers.createdAt))
-  return rows.map((row) => ({ ...row.link, storeName: row.storeName, storeAddressText: row.storeAddressText }))
+  return rows.filter((row) => isLinkActive(row.link))
+    .map((row) => ({ ...row.link, storeName: row.storeName, storeAddressText: row.storeAddressText }))
 }

@@ -1,7 +1,7 @@
-import { and, eq, inArray, isNotNull, isNull, lt } from 'drizzle-orm'
+import { and, eq, gt, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm'
 import { canTransition, type DriverRequestTarget, type OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { driverShifts, drivers, orders } from '../db/schema'
+import { driverShifts, drivers, orders, storeDrivers } from '../db/schema'
 import type { PaymentProvider } from '../lib/payment-provider'
 import { OrderError } from './order.service'
 import { addEvent } from './order-events'
@@ -86,10 +86,14 @@ async function setDriverRequestTarget(
     if (target === 'GENERAL' && order.driverRequestTarget === 'GENERAL') return order
     if (target === 'SPECIFIC') {
       if (!requestedDriverId) throw new OrderError('Escolha o entregador', 400)
-      const [active] = await tx.select({ id: driverShifts.id }).from(driverShifts).where(and(
+      const [active] = await tx.select({ id: driverShifts.id }).from(driverShifts)
+        .innerJoin(storeDrivers, and(eq(storeDrivers.storeId, driverShifts.storeId), eq(storeDrivers.driverUserId, driverShifts.driverUserId)))
+        .where(and(
         eq(driverShifts.storeId, storeId),
         eq(driverShifts.driverUserId, requestedDriverId),
         eq(driverShifts.status, 'ACTIVE'),
+        eq(storeDrivers.status, 'CONFIRMED'),
+        or(isNull(storeDrivers.expiresAt), gt(storeDrivers.expiresAt, new Date())),
       )).limit(1)
       if (!active) throw new OrderError('Entregador não está em turno nesta loja', 409)
     }
@@ -165,7 +169,8 @@ export async function listShiftDriverTokens(db: Db, storeId: string, driverUserI
   if (driverUserId) filters.push(eq(driverShifts.driverUserId, driverUserId))
   const rows = await db.select({ fcmToken: drivers.fcmToken }).from(driverShifts)
     .innerJoin(drivers, eq(drivers.userId, driverShifts.driverUserId))
-    .where(and(...filters))
+    .innerJoin(storeDrivers, and(eq(storeDrivers.storeId, driverShifts.storeId), eq(storeDrivers.driverUserId, driverShifts.driverUserId)))
+    .where(and(...filters, eq(storeDrivers.status, 'CONFIRMED'), or(isNull(storeDrivers.expiresAt), gt(storeDrivers.expiresAt, new Date()))))
   return rows.map((row) => row.fcmToken!).filter(Boolean)
 }
 

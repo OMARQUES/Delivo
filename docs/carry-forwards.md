@@ -14,7 +14,8 @@
 | apps/driver duplica lib/api.ts + stores/auth.ts do web (cópia deliberada) — extrair pra package shared quando doer | Plano Dispatch T8 | Oportunista |
 | FCM: 1 token por entregador (último dispositivo vence); sem retry/cleanup de tokens inválidos | Plano Dispatch T13 | Plano Capacitor |
 | Re-broadcast automático (3-5min) + alerta à loja (10min sem aceite) não implementados — broadcast é a lista viva + FCM one-shot | Plano Dispatch | Plano 8/hardening (cron existe, falta canal loja) |
-| Ofertas/contrapropostas de valor para entregas continuam fora do dispatch direcionado | Plano ④b | Plano ④c |
+| Recorrência avançada de vagas (ex.: 1ª segunda do mês) está fora do MVP; semanal e datas específicas estão prontas | Plano ④c | Se houver demanda |
+| Ofertas não enviam push; o entregador descobre novas vagas pela aba “Vagas” | Plano ④c | Avaliar FCM após validar uso |
 | `updatedAt` via `$onUpdate` é ORM-level; raw SQL bypassa. Avaliar trigger `moddatetime` | Review Task 4 | Plano Financeiro (ledger) |
 | `/docs` + `/openapi.json` expostos sem gate | Review Task 3 | Task 9 (deploy prod) |
 | `viewport-fit=cover` no index.html do driver (notch Android) | Review Task 6 | Plano Capacitor |

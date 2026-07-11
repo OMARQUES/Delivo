@@ -17,6 +17,7 @@ import {
   SHIFT_STATUSES,
   STORE_DRIVER_STATUSES,
 } from '@delivery/shared/constants'
+import type { ScheduleItem } from '@delivery/shared'
 import { stores } from './stores'
 import { users } from './users'
 
@@ -24,7 +25,7 @@ export const storeDriverStatus = pgEnum('store_driver_status', STORE_DRIVER_STAT
 export const shiftStatus = pgEnum('shift_status', SHIFT_STATUSES)
 export const shiftClosedBy = pgEnum('shift_closed_by', SHIFT_CLOSED_BY)
 
-export type DriverSchedule = { dow: number; start: string; end: string }[]
+export type DriverSchedule = ScheduleItem[]
 
 export const storeDrivers = pgTable(
   'store_drivers',
@@ -40,6 +41,7 @@ export const storeDrivers = pgTable(
     pendingPerDeliveryCents: integer('pending_per_delivery_cents'),
     pendingSchedule: jsonb('pending_schedule').$type<DriverSchedule>(),
     pendingProposedAt: timestamp('pending_proposed_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   },

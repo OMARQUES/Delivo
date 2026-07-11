@@ -2,11 +2,9 @@ import { z } from 'zod'
 import { normalizePhone } from './auth.schema'
 
 const TimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
-export const DriverScheduleSchema = z.array(z.object({
-  dow: z.number().int().min(0).max(6),
-  start: TimeSchema,
-  end: TimeSchema,
-})).max(14)
+const WeeklyScheduleItemSchema = z.object({ dow: z.number().int().min(0).max(6), start: TimeSchema, end: TimeSchema })
+const DatedScheduleItemSchema = z.object({ date: z.iso.date(), start: TimeSchema, end: TimeSchema })
+export const DriverScheduleSchema = z.array(z.union([WeeklyScheduleItemSchema, DatedScheduleItemSchema])).max(30)
 
 export const StoreDriverTermsSchema = z.object({
   dailyRateCents: z.number().int().min(0).max(1_000_000),

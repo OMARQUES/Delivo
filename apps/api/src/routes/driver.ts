@@ -43,6 +43,7 @@ import {
   markDriverReturned,
   ReturnError,
 } from '../services/return.service'
+import { acceptOffer, dismissOffer, listOpenOffers, OfferError } from '../services/offer.service'
 
 export const driverRoutes = createRouter()
 
@@ -55,6 +56,7 @@ function rethrow(e: unknown): never {
   if (e instanceof ShiftError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof ReturnError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof OfferError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof PaymentProviderError)
     throw new HTTPException(503, { message: 'Falha registrada; o estorno do cliente será reprocessado (gateway indisponível)' })
   throw e
@@ -62,6 +64,21 @@ function rethrow(e: unknown): never {
 
 const Out = z.object({}).passthrough()
 const IdParam = z.object({ id: z.uuid() })
+
+driverRoutes.openapi(createRoute({
+  method: 'get', path: '/driver/offers',
+  responses: { 200: { description: 'Ofertas abertas', content: { 'application/json': { schema: z.array(Out) } } } },
+}), async (c) => c.json(await listOpenOffers(c.get('db'), c.get('auth')!.sub), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/offers/{id}/accept', request: { params: IdParam },
+  responses: { 200: { description: 'Oferta aceita', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await acceptOffer(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200))
+
+driverRoutes.openapi(createRoute({
+  method: 'post', path: '/driver/offers/{id}/dismiss', request: { params: IdParam },
+  responses: { 200: { description: 'Oferta dispensada', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await dismissOffer(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow), 200))
 
 driverRoutes.openapi(createRoute({
   method: 'get', path: '/driver/links',

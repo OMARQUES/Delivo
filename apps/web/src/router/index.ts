@@ -43,6 +43,11 @@ export const router = createRouter({
           name: 'store-drivers',
           component: () => import('../views/store/StoreDriversView.vue'),
         },
+        {
+          path: 'vagas',
+          name: 'store-offers',
+          component: () => import('../views/store/StoreOffersView.vue'),
+        },
       ],
     },
     {

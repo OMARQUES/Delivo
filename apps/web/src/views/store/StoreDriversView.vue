@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { formatBRL, parseBRLToCents } from '@delivery/shared/constants'
 import { api } from '../../lib/api'
 
-type ScheduleItem = { dow: number; start: string; end: string }
+type ScheduleItem = ({ dow: number } | { date: string }) & { start: string; end: string }
 type Link = {
   id: string; driverUserId: string; driverName: string; driverPhone: string | null
   status: 'INVITED' | 'CONFIRMED'; dailyRateCents: number; perDeliveryCents: number
@@ -41,7 +41,7 @@ function scheduleFrom(days: number[], start: string, end: string): ScheduleItem[
 function daysLabel(schedule: ScheduleItem[]) {
   if (!schedule.length) return 'sem dias definidos'
   const first = schedule[0]!
-  return `${schedule.map((s) => DOW[s.dow]).join(', ')} · ${first.start}–${first.end}`
+  return `${schedule.map((s) => 'date' in s ? s.date.split('-').reverse().slice(0, 2).join('/') : DOW[s.dow]).join(', ')} · ${first.start}–${first.end}`
 }
 
 async function load() {
@@ -73,7 +73,7 @@ function openEdit(link: Link) {
   editing.value = link.id
   editForm.daily = (link.dailyRateCents / 100).toFixed(2).replace('.', ',')
   editForm.extra = (link.perDeliveryCents / 100).toFixed(2).replace('.', ',')
-  editForm.days = link.schedule.map((s) => s.dow)
+  editForm.days = link.schedule.flatMap((s) => 'dow' in s ? [s.dow] : [])
   editForm.start = link.schedule[0]?.start ?? '09:00'
   editForm.end = link.schedule[0]?.end ?? '18:00'
 }
@@ -150,7 +150,7 @@ onMounted(load)
             </span>
           </span>
           <span class="flex gap-2">
-            <button v-if="link.status === 'CONFIRMED'" class="rounded border px-2 py-1" @click="editing === link.id ? (editing = null) : openEdit(link)">{{ editing === link.id ? 'Fechar' : 'Propor alteração' }}</button>
+            <button v-if="link.status === 'CONFIRMED' && link.schedule.every((item) => 'dow' in item)" class="rounded border px-2 py-1" @click="editing === link.id ? (editing = null) : openEdit(link)">{{ editing === link.id ? 'Fechar' : 'Propor alteração' }}</button>
             <button class="rounded border border-red-400 px-2 py-1 text-red-600" @click="remove(link.id)">Remover</button>
           </span>
         </div>

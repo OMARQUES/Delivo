@@ -3,6 +3,7 @@ import { haversineKm, SHIFT_START_RADIUS_KM } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { driverShifts, orders, storeDrivers, stores, users, type DriverSchedule } from '../db/schema'
 import { recordPerDeliveryAdjustment, recordShiftDaily } from './finance.service'
+import { isLinkExpired } from './store-driver.service'
 
 export class ShiftError extends Error {
   constructor(message: string, public status: 400 | 404 | 409 = 409) {
@@ -21,7 +22,7 @@ function saoPauloParts(now: Date) {
 
 function scheduledEnd(schedule: DriverSchedule, now: Date) {
   const { date, weekday } = saoPauloParts(now)
-  const item = schedule.find((entry) => entry.dow === weekday)
+  const item = schedule.find((entry) => ('date' in entry ? entry.date === date : entry.dow === weekday))
   if (!item) return null
   const end = new Date(`${date}T${item.end}:00-03:00`)
   if (item.end <= item.start) end.setUTCDate(end.getUTCDate() + 1)
@@ -44,6 +45,7 @@ export async function startShift(db: Db, driverUserId: string, storeId: string, 
     eq(storeDrivers.status, 'CONFIRMED'),
   )).limit(1)
   if (!link) throw new ShiftError('Vínculo confirmado não encontrado', 404)
+  if (isLinkExpired(link)) throw new ShiftError('Vínculo expirado', 409)
   const [store] = await db.select({ lat: stores.lat, lng: stores.lng }).from(stores).where(eq(stores.id, storeId)).limit(1)
   if (!store) throw new ShiftError('Loja não encontrada', 404)
   if (haversineKm(store, gps) > SHIFT_START_RADIUS_KM) throw new ShiftError('Você está fora do raio da loja', 409)

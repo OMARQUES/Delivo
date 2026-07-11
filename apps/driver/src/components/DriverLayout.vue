@@ -13,7 +13,7 @@ const showPushButton = ref(pushConfigured())
 const pixKey = ref('')
 const pixMsg = ref('')
 const savingPix = ref(false)
-type ScheduleItem = { dow: number; start: string; end: string }
+type ScheduleItem = ({ dow: number } | { date: string }) & { start: string; end: string }
 type Shift = { id: string; storeName: string; storeAddressText: string; startedAt: string }
 type Link = { storeId: string; storeName: string; status: string; schedule: ScheduleItem[] }
 const shift = ref<Shift | null>(null)
@@ -37,25 +37,33 @@ const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 /** minuto-do-dia + dia-da-semana no fuso de São Paulo */
 function spNow(ts: number) {
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Sao_Paulo', hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit',
+    timeZone: 'America/Sao_Paulo', hour12: false, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   }).formatToParts(new Date(ts))
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
   const dow = WD.indexOf(get('weekday'))
-  return { dow, minutes: Number(get('hour')) * 60 + Number(get('minute')) }
+  return { dow, date: `${get('year')}-${get('month')}-${get('day')}`, minutes: Number(get('hour')) * 60 + Number(get('minute')) }
 }
 function toMin(hhmm: string) { const [h, m] = hhmm.split(':'); return Number(h) * 60 + Number(m) }
+function civilDay(date: string) { const [y, m, d] = date.split('-').map(Number); return Math.floor(Date.UTC(y!, m! - 1, d!) / 86_400_000) }
+function datePlus(date: string, delta: number) { return new Date((civilDay(date) + delta) * 86_400_000).toISOString().slice(0, 10) }
 
 /** próximo turno agendado (recorrência semanal) a partir de agora, no fuso SP */
 const nextShift = computed(() => {
   if (shift.value) return null
-  const { dow, minutes } = spNow(now.value)
+  const { dow, date, minutes } = spNow(now.value)
   let best: { store: string; item: ScheduleItem; minutesUntil: number } | null = null
   for (const link of links.value) {
     for (const item of link.schedule ?? []) {
       const start = toMin(item.start)
-      let delta = (item.dow - dow + 7) % 7
-      let until = delta * 1440 + (start - minutes)
-      if (until <= 0) until += 7 * 1440 // já passou hoje → semana que vem
+      let until: number
+      if ('date' in item) {
+        until = (civilDay(item.date) - civilDay(date)) * 1440 + start - minutes
+        if (until <= 0) continue
+      } else {
+        const delta = (item.dow - dow + 7) % 7
+        until = delta * 1440 + (start - minutes)
+        if (until <= 0) until += 7 * 1440
+      }
       if (!best || until < best.minutesUntil) best = { store: link.storeName, item, minutesUntil: until }
     }
   }
@@ -65,12 +73,14 @@ const nextShift = computed(() => {
 /** janela de hoje em andamento (início já passou, ainda não terminou) — sem trava, só aviso */
 const openWindow = computed(() => {
   if (shift.value) return null
-  const { dow, minutes } = spNow(now.value)
+  const { dow, date, minutes } = spNow(now.value)
   for (const link of links.value) {
-    for (const item of (link.schedule ?? []).filter((s) => s.dow === dow)) {
+    for (const item of link.schedule ?? []) {
       const start = toMin(item.start); let end = toMin(item.end)
-      if (end <= start) end += 1440
-      if (minutes >= start && minutes < end) return { store: link.storeName, item }
+      const today = 'date' in item ? item.date === date : item.dow === dow
+      if (today && minutes >= start && (end > start ? minutes < end : true)) return { store: link.storeName, item }
+      const yesterday = 'date' in item ? item.date === datePlus(date, -1) : item.dow === (dow + 6) % 7
+      if (yesterday && end <= start && minutes < end) return { store: link.storeName, item }
     }
   }
   return null
@@ -81,7 +91,8 @@ const nextLabel = computed(() => {
   if (!n) return ''
   const h = Math.floor(n.minutesUntil / 60); const m = n.minutesUntil % 60
   const tempo = h > 0 ? `${h}h ${m}min` : `${m}min`
-  return `${n.store} · ${DOW[n.item.dow]} ${n.item.start} — em ${tempo}`
+  const when = 'date' in n.item ? n.item.date.split('-').reverse().slice(0, 2).join('/') : DOW[n.item.dow]
+  return `${n.store} · ${when} ${n.item.start} — em ${tempo}`
 })
 // lembrete: falta 1h ou menos pro próximo turno
 const soon = computed(() => nextShift.value != null && nextShift.value.minutesUntil <= 60)
@@ -169,6 +180,7 @@ async function logout() {
         <RouterLink to="/entregas" class="underline">Minhas entregas</RouterLink>
         <RouterLink to="/financeiro" class="underline">Ganhos</RouterLink>
         <RouterLink to="/lojas" class="underline">Minhas lojas</RouterLink>
+        <RouterLink to="/vagas" class="underline">Vagas</RouterLink>
         <RouterLink to="/perfil" class="underline">Meus dados</RouterLink>
       </nav>
       <div class="flex items-center gap-2">

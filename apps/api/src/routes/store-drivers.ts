@@ -1,7 +1,7 @@
 import type { Context } from 'hono'
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
-import { AdjustActiveShiftSchema, InviteStoreDriverSchema, UpdateStoreDriverTermsSchema } from '@delivery/shared/schemas'
+import { AdjustActiveShiftSchema, InviteStoreDriverSchema, OfferCreateSchema, UpdateStoreDriverTermsSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import type { AppContext } from '../env'
 import { authMiddleware, requireRole } from '../middleware/auth'
@@ -10,6 +10,7 @@ import {
   inviteDriver, listStoreDrivers, proposeLinkTerms, removeLink, StoreDriverError,
 } from '../services/store-driver.service'
 import { listActiveStoreShifts, releaseShift, ShiftError, updateActiveShift } from '../services/shift.service'
+import { closeOffer, createOffer, listStoreOffers, OfferError } from '../services/offer.service'
 
 export const storeDriverRoutes = createRouter()
 storeDriverRoutes.use('/store/*', authMiddleware, requireRole('STORE'))
@@ -21,7 +22,7 @@ async function ownStoreId(c: Context<AppContext>) {
 }
 
 function rethrow(error: unknown): never {
-  if (error instanceof StoreDriverError || error instanceof ShiftError) {
+  if (error instanceof StoreDriverError || error instanceof ShiftError || error instanceof OfferError) {
     throw new HTTPException(error.status, { message: error.message })
   }
   throw error
@@ -29,6 +30,22 @@ function rethrow(error: unknown): never {
 
 const Out = z.object({}).passthrough()
 const IdParam = z.object({ id: z.uuid() })
+
+storeDriverRoutes.openapi(createRoute({
+  method: 'post', path: '/store/me/offers',
+  request: { body: { content: { 'application/json': { schema: OfferCreateSchema } } } },
+  responses: { 201: { description: 'Oferta criada', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await createOffer(c.get('db'), await ownStoreId(c), c.req.valid('json')), 201))
+
+storeDriverRoutes.openapi(createRoute({
+  method: 'get', path: '/store/me/offers',
+  responses: { 200: { description: 'Ofertas da loja', content: { 'application/json': { schema: z.array(Out) } } } },
+}), async (c) => c.json(await listStoreOffers(c.get('db'), await ownStoreId(c)), 200))
+
+storeDriverRoutes.openapi(createRoute({
+  method: 'post', path: '/store/me/offers/{id}/close', request: { params: IdParam },
+  responses: { 200: { description: 'Oferta encerrada', content: { 'application/json': { schema: Out } } } },
+}), async (c) => c.json(await closeOffer(c.get('db'), await ownStoreId(c), c.req.valid('param').id).catch(rethrow), 200))
 
 storeDriverRoutes.openapi(createRoute({
   method: 'get', path: '/store/me/drivers',
