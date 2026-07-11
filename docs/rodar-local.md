@@ -16,6 +16,12 @@ Migrations (quando o schema muda):
 ```bash
 pnpm --filter @delivery/api db:migrate
 ```
+> ⚠️ **Sempre rode isto depois de puxar um plano que adiciona migration** (ex.: uma
+> feature nova do Codex). Os testes migram o `delivery_test` sozinhos, mas o banco de
+> DEV (`delivery`) que a API usa NÃO — sem `db:migrate` as telas novas dão 500
+> ("column/relation does not exist"). Conferir pendências:
+> `docker compose exec -T postgres psql -U postgres -d delivery -c "select count(*) from drizzle.__drizzle_migrations"`
+> comparado ao nº de arquivos em `apps/api/drizzle/*.sql`.
 
 ## Serviços (um terminal cada)
 
