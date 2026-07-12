@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import type { ApiError } from '../lib/api'
+import TurnstileWidget from '../components/TurnstileWidget.vue'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
@@ -9,12 +11,14 @@ const identifier = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+const turnstileRequired = ref(false)
+const turnstileToken = ref<string | null>(null)
 
 async function submit() {
   error.value = ''
   loading.value = true
   try {
-    await auth.login(identifier.value, password.value)
+    await auth.login(identifier.value, password.value, turnstileToken.value ?? undefined)
     if (auth.role !== 'DRIVER') {
       await auth.logout()
       error.value = 'Esta conta não é de entregador'
@@ -23,6 +27,10 @@ async function submit() {
     await router.replace('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro ao entrar'
+    if ((e as Partial<ApiError>).code === 'TURNSTILE_REQUIRED') {
+      turnstileRequired.value = true
+      turnstileToken.value = null
+    }
   } finally {
     loading.value = false
   }
@@ -35,8 +43,9 @@ async function submit() {
     <form class="mt-4 space-y-3" @submit.prevent="submit">
       <input v-model="identifier" type="text" required placeholder="Telefone (ou email, se cadastrou)" class="w-full rounded border p-2" autocomplete="username" />
       <input v-model="password" type="password" required placeholder="Senha" class="w-full rounded border p-2" autocomplete="current-password" />
+      <TurnstileWidget v-if="turnstileRequired" action="login" @update:token="turnstileToken = $event" />
       <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
-      <button type="submit" :disabled="loading" class="w-full rounded bg-black p-2 font-semibold text-white disabled:opacity-50">
+      <button type="submit" :disabled="loading || (turnstileRequired && !turnstileToken)" class="w-full rounded bg-black p-2 font-semibold text-white disabled:opacity-50">
         {{ loading ? 'Entrando...' : 'Entrar' }}
       </button>
     </form>
