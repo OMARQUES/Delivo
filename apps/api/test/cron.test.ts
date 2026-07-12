@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { lte, sql } from 'drizzle-orm'
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
@@ -8,6 +8,8 @@ import { createCategory, createProduct, replaceProductOptions } from '../src/ser
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { cancelStalePendingOrders } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { rateLimitBuckets } from '../src/db/schema'
+import { deleteExpiredRateLimitBuckets } from '../src/security/rate-limit-cleanup'
 
 const storeInput: StoreCreateInput = {
   name: 'Pizzaria',
@@ -121,5 +123,40 @@ describe('cancelStalePendingOrders', () => {
     const n = await cancelStalePendingOrders(testDb, 30)
     expect(n).toBe(0)
     expect((await getCustomerOrder(testDb, customerId, awaiting.id))!.status).toBe('AWAITING_PAYMENT')
+  })
+})
+
+describe('deleteExpiredRateLimitBuckets', () => {
+  it('deletes expired buckets in bounded batches and leaves live buckets', async () => {
+    await truncateAll()
+    const now = new Date('2026-07-12T12:00:00.000Z')
+    await testDb.insert(rateLimitBuckets).values([
+      ...Array.from({ length: 1_002 }, (_, i) => ({
+        scope: 'auth:login',
+        keyHash: `expired-${i}`,
+        windowStart: new Date(now.getTime() - (i + 1) * 60_000),
+        count: 1,
+        expiresAt: new Date(now.getTime() - (i + 1) * 1_000),
+      })),
+      {
+        scope: 'auth:login',
+        keyHash: 'live',
+        windowStart: now,
+        count: 1,
+        expiresAt: new Date(now.getTime() + 60_000),
+      },
+    ])
+
+    await expect(deleteExpiredRateLimitBuckets(testDb, now, 1_000)).resolves.toBe(1_000)
+    const [remaining] = await testDb
+      .select({ count: sql<number>`count(*)::int` })
+      .from(rateLimitBuckets)
+      .where(lte(rateLimitBuckets.expiresAt, now))
+    expect(remaining!.count).toBe(2)
+
+    await expect(deleteExpiredRateLimitBuckets(testDb, now, 1_000)).resolves.toBe(2)
+    const rows = await testDb.select().from(rateLimitBuckets)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.keyHash).toBe('live')
   })
 })

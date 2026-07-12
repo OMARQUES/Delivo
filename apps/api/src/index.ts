@@ -5,6 +5,7 @@ import { createPaymentProvider } from './lib/mercadopago'
 import { cancelStalePendingOrders } from './services/order-status.service'
 import { expireStaleAwaitingPayment } from './services/payment.service'
 import { autoApproveStaleShiftDailies } from './services/shift.service'
+import { deleteExpiredRateLimitBuckets } from './security/rate-limit-cleanup'
 
 export default {
   fetch: app.fetch,
@@ -18,6 +19,8 @@ export default {
       if (expired > 0) console.log(`cron: ${expired} pagamentos expirados`)
       const dailies = await autoApproveStaleShiftDailies(db)
       if (dailies > 0) console.log(`cron: ${dailies} diárias de turno aprovadas automaticamente`)
+      const buckets = await deleteExpiredRateLimitBuckets(db)
+      if (buckets > 0) console.log(`cron: ${buckets} rate limit buckets expirados removidos`)
     } finally {
       await client.end()
     }
