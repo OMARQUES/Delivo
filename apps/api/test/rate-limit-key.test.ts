@@ -6,6 +6,8 @@ describe('rate limit keys', () => {
   it('normalizes email login identifiers before hashing', async () => {
     const normalized = normalizeLoginKey(' Ana@Email.COM ')
     expect(normalized).toBe('ana@email.com')
+    expect(await hashRateLimitKey('secret', 'login-id', ' Ana@Email.COM '))
+      .toBe(await hashRateLimitKey('secret', 'login-id', 'ana@email.com'))
     expect(await hashRateLimitKey('secret', 'login-id', normalized))
       .toBe(await hashRateLimitKey('secret', 'login-id', 'ana@email.com'))
   })
@@ -24,6 +26,11 @@ describe('rate limit keys', () => {
     expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/)
     expect(first).not.toContain('ana')
     expect(first).not.toContain('email.com')
+  })
+
+  it('preserves opaque subjects outside identity scopes', async () => {
+    expect(await hashRateLimitKey('secret', 'refresh-fingerprint-10m', 'Token-A'))
+      .not.toBe(await hashRateLimitKey('secret', 'refresh-fingerprint-10m', 'token-a'))
   })
 })
 

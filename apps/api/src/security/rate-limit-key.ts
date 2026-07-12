@@ -11,11 +11,23 @@ export function normalizeLoginKey(raw: string): string {
   return normalized.includes('@') ? normalized : normalized.replace(/\D/g, '')
 }
 
+function isLoginIdentityScope(scope: string): boolean {
+  return scope === 'login-id'
+    || scope === 'register-id'
+    || scope.includes('-identity-')
+    || scope.endsWith('-identity')
+}
+
+export function normalizeRateLimitSubject(scope: string, subject: string): string {
+  return isLoginIdentityScope(scope) ? normalizeLoginKey(subject) : subject
+}
+
 export async function hashRateLimitKey(
   secret: string,
   scope: string,
-  normalizedSubject: string,
+  subject: string,
 ): Promise<string> {
+  const normalizedSubject = normalizeRateLimitSubject(scope, subject)
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(secret),
