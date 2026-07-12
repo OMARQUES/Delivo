@@ -14,7 +14,11 @@ import { setAvailability, setFcmToken } from '../src/services/dispatch.service'
 import { eq } from 'drizzle-orm'
 
 const env = {
+  APP_ENV: 'local' as const,
   JWT_SECRET: 'test-secret',
+  RATE_LIMIT_HMAC_SECRET: 'rate-secret',
+  TURNSTILE_SECRET_KEY: 'turnstile-secret',
+  TURNSTILE_EXPECTED_HOSTNAMES: 'localhost',
   ALLOWED_ORIGINS: 'http://localhost:5173',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: {} as R2Bucket,

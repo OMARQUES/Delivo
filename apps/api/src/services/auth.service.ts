@@ -11,6 +11,8 @@ import {
   signAccessToken,
 } from '../lib/tokens'
 
+const DUMMY_PASSWORD_HASH = 'pbkdf2$100000$BwcHBwcHBwcHBwcHBwcHBw$mdYCrNcRSwFlHgsgl9HK3YnDB2AaT90NWiNZ9jZFctg'
+
 /** Erro de auth com status HTTP — rotas convertem em HTTPException. */
 export class AuthError extends Error {
   constructor(
@@ -143,14 +145,20 @@ export async function loginUser(db: Db, input: LoginInput, secret: string) {
       ),
     )
     .limit(1)
-  if (!user) throw new AuthError('Credenciais inválidas', 401)
+  if (!user) {
+    await verifyPassword(input.password, DUMMY_PASSWORD_HASH)
+    throw new AuthError('Credenciais inválidas', 401)
+  }
 
   const [provider] = await db
     .select()
     .from(authProviders)
     .where(and(eq(authProviders.userId, user.id), eq(authProviders.provider, 'PASSWORD')))
     .limit(1)
-  if (!provider?.passwordHash) throw new AuthError('Credenciais inválidas', 401)
+  if (!provider?.passwordHash) {
+    await verifyPassword(input.password, DUMMY_PASSWORD_HASH)
+    throw new AuthError('Credenciais inválidas', 401)
+  }
   if (!(await verifyPassword(input.password, provider.passwordHash)))
     throw new AuthError('Credenciais inválidas', 401)
 

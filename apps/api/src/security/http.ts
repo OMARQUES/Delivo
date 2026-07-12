@@ -19,3 +19,4 @@ export class SecurityHttpError extends Error {
 export const RATE_LIMITED_MESSAGE = 'Muitas tentativas. Tente novamente mais tarde.'
 export const SECURITY_CHECK_UNAVAILABLE_MESSAGE = 'Verificação de segurança temporariamente indisponível.'
 export const TURNSTILE_INVALID_MESSAGE = 'Verificação de segurança inválida.'
+export const TURNSTILE_REQUIRED_MESSAGE = 'Verificação de segurança necessária.'

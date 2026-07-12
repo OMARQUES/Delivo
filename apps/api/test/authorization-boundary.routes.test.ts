@@ -18,6 +18,9 @@ import { createStoreWithOwner, updateStore, setStoreSecurityStatus } from '../sr
 
 const env = {
   JWT_SECRET: 'test-secret',
+  RATE_LIMIT_HMAC_SECRET: 'rate-secret',
+  TURNSTILE_SECRET_KEY: 'turnstile-secret',
+  TURNSTILE_EXPECTED_HOSTNAMES: 'localhost',
   ALLOWED_ORIGINS: 'http://localhost:5173',
   APP_ENV: 'local',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,

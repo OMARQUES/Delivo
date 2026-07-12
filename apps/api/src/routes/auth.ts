@@ -10,8 +10,18 @@ import {
   rotateRefreshToken,
 } from '../services/auth.service'
 import { revokeAllSessions, revokeSessionFamily } from '../services/security-session.service'
+import {
+  clearLoginFailures,
+  protectLogin,
+  protectRefresh,
+  protectRegistration,
+  recordLoginFailure,
+} from '../security/auth-abuse'
 
 export const authRoutes = createRouter()
+
+const RequiredTurnstileToken = z.string().trim().min(1).max(2048)
+const RegisterRouteSchema = RegisterSchema.extend({ turnstileToken: RequiredTurnstileToken })
 
 const UserShape = z.object({
   id: z.string(),
@@ -36,11 +46,13 @@ authRoutes.openapi(
   createRoute({
     method: 'post',
     path: '/auth/register',
-    request: { body: { content: { 'application/json': { schema: RegisterSchema } } } },
+    request: { body: { content: { 'application/json': { schema: RegisterRouteSchema } } } },
     responses: { 201: { description: 'Criado', content: { 'application/json': { schema: TokenResponse } } } },
   }),
   async (c) => {
-    const result = await registerUser(c.get('db'), c.req.valid('json'), c.env.JWT_SECRET).catch(rethrow)
+    const input = c.req.valid('json')
+    await protectRegistration(c, input)
+    const result = await registerUser(c.get('db'), input, c.env.JWT_SECRET).catch(rethrow)
     return c.json(result, 201)
   },
 )
@@ -53,8 +65,18 @@ authRoutes.openapi(
     responses: { 200: { description: 'OK', content: { 'application/json': { schema: TokenResponse } } } },
   }),
   async (c) => {
-    const result = await loginUser(c.get('db'), c.req.valid('json'), c.env.JWT_SECRET).catch(rethrow)
-    return c.json(result, 200)
+    const input = c.req.valid('json')
+    await protectLogin(c, input)
+    try {
+      const result = await loginUser(c.get('db'), input, c.env.JWT_SECRET)
+      await clearLoginFailures(c, input.identifier)
+      return c.json(result, 200)
+    } catch (e) {
+      if (e instanceof AuthError && e.status === 401) {
+        await recordLoginFailure(c, input.identifier)
+      }
+      rethrow(e)
+    }
   },
 )
 
@@ -67,6 +89,7 @@ authRoutes.openapi(
   }),
   async (c) => {
     const { refreshToken } = c.req.valid('json')
+    await protectRefresh(c, refreshToken)
     const result = await rotateRefreshToken(c.get('db'), refreshToken, c.env.JWT_SECRET).catch(rethrow)
     return c.json(result, 200)
   },

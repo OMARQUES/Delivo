@@ -8,6 +8,7 @@ import {
   AuthError,
 } from '../src/services/auth.service'
 import { createStoreWithOwner, setStoreSecurityStatus } from '../src/services/store.service'
+import { authProviders, users } from '../src/db/schema'
 
 const SECRET = 'test-secret'
 const ana = {
@@ -76,6 +77,25 @@ describe('loginUser', () => {
     ).rejects.toThrow('Credenciais inválidas')
     await expect(
       loginUser(testDb, { identifier: 'nao@existe.com', password: 'senha123' }, SECRET),
+    ).rejects.toThrow('Credenciais inválidas')
+  })
+
+  it('rejects an existing non-password account with the same invalid-credentials error', async () => {
+    const [user] = await testDb.insert(users).values({
+      name: 'Google User',
+      email: 'google@example.test',
+      role: 'CUSTOMER',
+      status: 'ACTIVE',
+    }).returning()
+    if (!user) throw new Error('test user was not created')
+    await testDb.insert(authProviders).values({
+      userId: user.id,
+      provider: 'GOOGLE',
+      providerUserId: 'google-sub',
+    })
+
+    await expect(
+      loginUser(testDb, { identifier: 'google@example.test', password: 'senha123' }, SECRET),
     ).rejects.toThrow('Credenciais inválidas')
   })
 

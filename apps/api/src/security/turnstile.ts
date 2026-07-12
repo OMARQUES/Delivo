@@ -121,3 +121,17 @@ export class CloudflareTurnstileVerifier implements TurnstileVerifier {
     }
   }
 }
+
+export function createTurnstileVerifier(env: Env): TurnstileVerifier {
+  const secret = env.TURNSTILE_SECRET_KEY?.trim()
+  const expectedHostnames = (env.TURNSTILE_EXPECTED_HOSTNAMES ?? '')
+    .split(',')
+    .map((hostname) => hostname.trim())
+    .filter(Boolean)
+  if (!secret || expectedHostnames.length === 0) unavailable()
+  return new CloudflareTurnstileVerifier({
+    secret,
+    expectedHostnames,
+    environment: env.APP_ENV,
+  })
+}
