@@ -80,6 +80,16 @@ export async function updateProduct(db: Db, storeId: string, id: string, input: 
   return row
 }
 
+export async function assertOwnedProduct(db: Db, storeId: string, id: string) {
+  const [row] = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(and(eq(products.id, id), eq(products.storeId, storeId)))
+    .limit(1)
+  if (!row) throw new CatalogError('Produto não encontrado', 404)
+  return row
+}
+
 export async function updateOption(db: Db, storeId: string, optionId: string, input: OptionUpdateInput) {
   if (input.isAvailable === undefined && input.priceCents === undefined)
     throw new CatalogError('Nada para atualizar', 400)

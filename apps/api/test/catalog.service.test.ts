@@ -5,7 +5,7 @@ import { createStoreWithOwner } from '../src/services/store.service'
 import {
   CatalogError, createCategory, deleteCategory, deleteProduct, createProduct,
   updateOption, updateProduct, replaceProductOptions, getStoreCatalog, getPublicMenu,
-  searchProducts, importCsvCatalog, setProductPhoto,
+  searchProducts, importCsvCatalog, setProductPhoto, assertOwnedProduct,
 } from '../src/services/catalog.service'
 
 const storeInput: StoreCreateInput = {
@@ -115,6 +115,17 @@ describe('products + options tree', () => {
     await deleteProduct(testDb, storeId, p.id)
     const catalog = await getStoreCatalog(testDb, storeId)
     expect(catalog[0]!.products).toHaveLength(0)
+  })
+
+  it('assertOwnedProduct allows own product and rejects another store product', async () => {
+    const p = await makeProduct()
+    await expect(assertOwnedProduct(testDb, storeId, p.id)).resolves.toMatchObject({ id: p.id })
+    const other = await createStoreWithOwner(testDb, {
+      ...storeInput,
+      slug: 'outra-loja',
+      owner: { ...storeInput.owner, email: 'outra-catalog@email.com' },
+    })
+    await expect(assertOwnedProduct(testDb, other.id, p.id)).rejects.toMatchObject({ status: 404 })
   })
 })
 

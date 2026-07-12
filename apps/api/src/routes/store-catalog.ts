@@ -11,11 +11,16 @@ import { createRouter } from '../app-factory'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreByOwner, StoreError } from '../services/store.service'
 import {
+  assertOwnedProduct,
   CatalogError, createCategory, createProduct, deleteCategory, deleteProduct,
   getStoreCatalog, replaceProductOptions, setProductPhoto, updateCategory, updateOption, updateProduct,
 } from '../services/catalog.service'
 import type { AppContext } from '../env'
 import type { Context } from 'hono'
+import { consumeAll } from '../security/auth-abuse'
+import { resolveClientIp } from '../security/client-ip'
+import { POLICIES } from '../security/rate-limit-policies'
+import { readLimitedArrayBuffer } from '../security/request-body'
 
 export const storeCatalogRoutes = createRouter()
 
@@ -123,7 +128,10 @@ storeCatalogRoutes.put('/store/me/products/:id/photo', async (c) => {
   const id = c.req.param('id')
   const type = c.req.header('Content-Type') ?? ''
   if (!IMAGE_TYPES.includes(type)) throw new HTTPException(400, { message: 'Envie png, jpeg ou webp' })
-  const body = await c.req.arrayBuffer()
+  await assertOwnedProduct(c.get('db'), storeId, id).catch(rethrow)
+  await consumeAll(c, [POLICIES.productUploadPrincipalHour, POLICIES.productUploadPrincipalDay], c.get('auth')!.sub)
+  await consumeAll(c, [POLICIES.productUploadIpHour], resolveClientIp(c.env.APP_ENV, c.req.raw.headers))
+  const body = await readLimitedArrayBuffer(c.req.raw, MAX_PHOTO_BYTES, 'Imagem vazia ou maior que 2MB')
   if (body.byteLength === 0 || body.byteLength > MAX_PHOTO_BYTES)
     throw new HTTPException(400, { message: 'Imagem vazia ou maior que 2MB' })
   const key = `products/${crypto.randomUUID()}.${type.split('/')[1]}`

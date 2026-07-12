@@ -5,7 +5,16 @@ import type { AppContext } from '../env'
 const GLOBAL_MAX_BYTES = 6 * 1024 * 1024
 const JSON_MAX_BYTES = 256 * 1024
 
-export const globalBodyLimit = bodyLimit({ maxSize: GLOBAL_MAX_BYTES })
+function isUploadPath(path: string) {
+  return path.endsWith('/logo') || path.endsWith('/photo') || path.endsWith('/return-photo')
+}
+
+const globalNonUploadBodyLimit = bodyLimit({ maxSize: GLOBAL_MAX_BYTES })
+
+export const globalBodyLimit = createMiddleware<AppContext>((c, next) => {
+  if (isUploadPath(c.req.path)) return next()
+  return globalNonUploadBodyLimit(c, next)
+})
 const jsonBodyLimit = bodyLimit({ maxSize: JSON_MAX_BYTES })
 
 export const securityBaseline = createMiddleware<AppContext>(async (c, next) => {
@@ -14,7 +23,7 @@ export const securityBaseline = createMiddleware<AppContext>(async (c, next) => 
   const isUnsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
   const hasBody = c.req.raw.body !== null
   const isJson = Boolean(contentType && /^application\/json(?:;\s*charset=utf-8)?$/i.test(contentType))
-  const isUpload = c.req.path.endsWith('/logo') || c.req.path.endsWith('/photo') || c.req.path.endsWith('/return-photo')
+  const isUpload = isUploadPath(c.req.path)
   const isCsv = c.req.path.endsWith('/catalog/import')
   const isWebhook = c.req.path.startsWith('/webhooks/')
   if (isUnsafe && hasBody && !isUpload && !isCsv && !isWebhook && !isJson) {

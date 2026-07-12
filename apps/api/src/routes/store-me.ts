@@ -4,6 +4,10 @@ import { StoreUpdateSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreByOwner, setStoreLogo, updateStore, StoreError } from '../services/store.service'
+import { consumeAll } from '../security/auth-abuse'
+import { resolveClientIp } from '../security/client-ip'
+import { POLICIES } from '../security/rate-limit-policies'
+import { readLimitedArrayBuffer } from '../security/request-body'
 
 export const storeMeRoutes = createRouter()
 
@@ -50,7 +54,9 @@ storeMeRoutes.put('/store/me/logo', async (c) => {
   if (!store) throw new HTTPException(404, { message: 'Loja não encontrada' })
   const type = c.req.header('Content-Type') ?? ''
   if (!IMAGE_TYPES.includes(type)) throw new HTTPException(400, { message: 'Envie png, jpeg ou webp' })
-  const body = await c.req.arrayBuffer()
+  await consumeAll(c, [POLICIES.logoUploadPrincipalHour, POLICIES.logoUploadPrincipalDay], c.get('auth')!.sub)
+  await consumeAll(c, [POLICIES.logoUploadIpHour], resolveClientIp(c.env.APP_ENV, c.req.raw.headers))
+  const body = await readLimitedArrayBuffer(c.req.raw, MAX_LOGO_BYTES, 'Imagem vazia ou maior que 2MB')
   if (body.byteLength === 0 || body.byteLength > MAX_LOGO_BYTES)
     throw new HTTPException(400, { message: 'Imagem vazia ou maior que 2MB' })
   const ext = type.split('/')[1]

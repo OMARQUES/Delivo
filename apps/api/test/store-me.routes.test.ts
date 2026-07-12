@@ -9,10 +9,16 @@ vi.mock('../src/db/client', async () => {
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
 import { createStoreWithOwner } from '../src/services/store.service'
+import { PostgresRateLimiter } from '../src/security/rate-limit'
+import { POLICIES, type RateLimitPolicy } from '../src/security/rate-limit-policies'
 
 const put = vi.fn(async () => ({}))
 const env = {
+  APP_ENV: 'local' as const,
   JWT_SECRET: 'test-secret',
+  RATE_LIMIT_HMAC_SECRET: 'rate-secret',
+  TURNSTILE_SECRET_KEY: 'turnstile-secret',
+  TURNSTILE_EXPECTED_HOSTNAMES: 'localhost',
   ALLOWED_ORIGINS: 'http://localhost:5173',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: { put } as unknown as R2Bucket,
@@ -35,6 +41,23 @@ async function makeStore() {
   const store = await createStoreWithOwner(testDb, input)
   const token = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
   return { store, token }
+}
+
+async function exhaust(policy: RateLimitPolicy, subject: string) {
+  const limiter = new PostgresRateLimiter(testDb, env.RATE_LIMIT_HMAC_SECRET)
+  for (let i = 0; i < policy.limit; i++) await limiter.consume(policy, subject)
+}
+
+function throwingBody() {
+  return new ReadableStream({
+    pull() {
+      throw new Error('body was read')
+    },
+  }) as unknown as BodyInit
+}
+
+function streamingInit(init: RequestInit & { duplex: 'half' }) {
+  return init as RequestInit
 }
 
 describe('GET/PATCH /store/me', () => {
@@ -100,5 +123,18 @@ describe('PUT /store/me/logo', () => {
       body: 'nope',
     }, env)
     expect(res.status).toBe(400)
+  })
+
+  it('rate-limits logo upload before reading body or writing R2', async () => {
+    const { store, token } = await makeStore()
+    await exhaust(POLICIES.logoUploadPrincipalHour, store.ownerUserId)
+    const res = await app.request('/store/me/logo', streamingInit({
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' },
+      body: throwingBody(),
+      duplex: 'half',
+    }), env)
+    expect(res.status).toBe(429)
+    expect(put).not.toHaveBeenCalled()
   })
 })

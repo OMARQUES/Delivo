@@ -73,8 +73,8 @@ describe('security baseline', () => {
     }, env)
     expect(json.status).toBe(413)
 
-    const global = await app.request('/store/me/logo', {
-      method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: new Uint8Array(6 * 1024 * 1024 + 1),
+    const global = await app.request('/health', {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(6 * 1024 * 1024 + 1),
     }, env)
     expect(global.status).toBe(413)
 

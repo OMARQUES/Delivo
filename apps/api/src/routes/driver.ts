@@ -46,6 +46,10 @@ import {
 import { acceptOffer, dismissOffer, listOpenOffers, OfferError } from '../services/offer.service'
 import { decideActiveShiftTerms, decideShiftAuthorization, listDriverAuthorizations, ShiftProposalError } from '../services/shift-proposal.service'
 import { toDriverActionResult } from '../services/driver-delivery.dto'
+import { consumeAll } from '../security/auth-abuse'
+import { resolveClientIp } from '../security/client-ip'
+import { POLICIES } from '../security/rate-limit-policies'
+import { readLimitedArrayBuffer } from '../security/request-body'
 
 export const driverRoutes = createRouter()
 
@@ -374,7 +378,9 @@ driverRoutes.put('/driver/orders/:id/return-photo', async (c) => {
   }
 
   await getDriverPendingReturn(c.get('db'), driverId, orderId).catch(rethrow)
-  const body = await c.req.arrayBuffer()
+  await consumeAll(c, [POLICIES.returnUploadDriverHour, POLICIES.returnUploadDriverDay], driverId)
+  await consumeAll(c, [POLICIES.returnUploadIpHour], resolveClientIp(c.env.APP_ENV, c.req.raw.headers))
+  const body = await readLimitedArrayBuffer(c.req.raw, MAX_RETURN_PHOTO_BYTES, 'Imagem vazia ou maior que 5MB')
   if (body.byteLength === 0 || body.byteLength > MAX_RETURN_PHOTO_BYTES) {
     throw new HTTPException(400, { message: 'Imagem vazia ou maior que 5MB' })
   }

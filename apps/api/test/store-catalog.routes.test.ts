@@ -10,10 +10,17 @@ vi.mock('../src/db/client', async () => {
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
 import { createStoreWithOwner } from '../src/services/store.service'
+import { PostgresRateLimiter } from '../src/security/rate-limit'
+import { POLICIES, type RateLimitPolicy } from '../src/security/rate-limit-policies'
 
 const put = vi.fn(async () => ({}))
 const env = {
-  JWT_SECRET: 'test-secret', ALLOWED_ORIGINS: 'http://localhost:5173',
+  APP_ENV: 'local' as const,
+  JWT_SECRET: 'test-secret',
+  RATE_LIMIT_HMAC_SECRET: 'rate-secret',
+  TURNSTILE_SECRET_KEY: 'turnstile-secret',
+  TURNSTILE_EXPECTED_HOSTNAMES: 'localhost',
+  ALLOWED_ORIGINS: 'http://localhost:5173',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: { put } as unknown as R2Bucket,
 }
@@ -26,6 +33,7 @@ const storeInput: StoreCreateInput = {
 
 let token: string
 let storeId: string
+let ownerUserId: string
 
 beforeAll(migrateTestDb)
 beforeEach(async () => {
@@ -33,6 +41,7 @@ beforeEach(async () => {
   put.mockClear()
   const store = await createStoreWithOwner(testDb, storeInput)
   storeId = store.id
+  ownerUserId = store.ownerUserId
   void storeId
   token = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
 })
@@ -44,6 +53,23 @@ function req(path: string, init: RequestInit = {}, accessToken = token) {
     ...(init.headers as Record<string, string>),
   }
   return app.request(path, { ...init, headers }, env)
+}
+
+async function exhaust(policy: RateLimitPolicy, subject: string) {
+  const limiter = new PostgresRateLimiter(testDb, env.RATE_LIMIT_HMAC_SECRET)
+  for (let i = 0; i < policy.limit; i++) await limiter.consume(policy, subject)
+}
+
+function throwingBody() {
+  return new ReadableStream({
+    pull() {
+      throw new Error('body was read')
+    },
+  }) as unknown as BodyInit
+}
+
+function streamingInit(init: RequestInit & { duplex: 'half' }) {
+  return init as RequestInit
 }
 
 async function makeCategory(name = 'Pizzas') {
@@ -114,6 +140,20 @@ describe('products routes', () => {
     expect(((await photo.json()) as { photoKey: string }).photoKey).toMatch(/^products\//)
 
     expect((await req(`/store/me/products/${prod.id}`, { method: 'DELETE' })).status).toBe(204)
+  })
+
+  it('rate-limits product photo before reading body or writing R2', async () => {
+    const cat = await makeCategory()
+    const prod = await makeProduct(cat.id)
+    await exhaust(POLICIES.productUploadPrincipalHour, ownerUserId)
+    const photo = await req(`/store/me/products/${prod.id}/photo`, streamingInit({
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/png' },
+      body: throwingBody(),
+      duplex: 'half',
+    }))
+    expect(photo.status).toBe(429)
+    expect(put).not.toHaveBeenCalled()
   })
 
   it('PATCH {} → 400 and does not reactivate paused product', async () => {

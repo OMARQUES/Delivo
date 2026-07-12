@@ -13,11 +13,18 @@ import { createTestSession } from './helpers/test-db'
 import { ledgerEntries, orderEvents, orders, users } from '../src/db/schema'
 import { registerUser } from '../src/services/auth.service'
 import { createStoreWithOwner } from '../src/services/store.service'
+import { PostgresRateLimiter } from '../src/security/rate-limit'
+import { POLICIES, type RateLimitPolicy } from '../src/security/rate-limit-policies'
 
 const bucketPut = vi.fn(async () => undefined)
 const bucketDelete = vi.fn(async () => undefined)
 const env = {
-  JWT_SECRET: 'test-secret', ALLOWED_ORIGINS: 'http://localhost:5173',
+  APP_ENV: 'local' as const,
+  JWT_SECRET: 'test-secret',
+  RATE_LIMIT_HMAC_SECRET: 'rate-secret',
+  TURNSTILE_SECRET_KEY: 'turnstile-secret',
+  TURNSTILE_EXPECTED_HOSTNAMES: 'localhost',
+  ALLOWED_ORIGINS: 'http://localhost:5173',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: { put: bucketPut, delete: bucketDelete } as unknown as R2Bucket,
 }
@@ -75,6 +82,23 @@ function req(path: string, init: RequestInit, token: string) {
   return app.request(path, {
     ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers as Record<string, string>) },
   }, env)
+}
+
+async function exhaust(policy: RateLimitPolicy, subject: string) {
+  const limiter = new PostgresRateLimiter(testDb, env.RATE_LIMIT_HMAC_SECRET)
+  for (let i = 0; i < policy.limit; i++) await limiter.consume(policy, subject)
+}
+
+function throwingBody() {
+  return new ReadableStream({
+    pull() {
+      throw new Error('body was read')
+    },
+  }) as unknown as BodyInit
+}
+
+function streamingInit(init: RequestInit & { duplex: 'half' }) {
+  return init as RequestInit
 }
 
 describe('rotas de devolução', () => {
@@ -148,6 +172,19 @@ describe('rotas de devolução', () => {
     expect((await req(`/driver/orders/${other.id}/return-photo`, {
       method: 'PUT', body: new Uint8Array([1]), headers: { 'Content-Type': 'image/jpeg' },
     }, driverToken)).status).toBe(404)
+  })
+
+  it('rate-limits return photo before reading body or writing R2', async () => {
+    const order = await failedOrder()
+    await exhaust(POLICIES.returnUploadDriverHour, driverId)
+    const res = await req(`/driver/orders/${order.id}/return-photo`, streamingInit({
+      method: 'PUT',
+      body: throwingBody(),
+      headers: { 'Content-Type': 'image/jpeg' },
+      duplex: 'half',
+    }), driverToken)
+    expect(res.status).toBe(429)
+    expect(bucketPut).not.toHaveBeenCalled()
   })
 
   it('mantém dois slots sob uploads concorrentes e remove objetos que perderem a corrida', async () => {
