@@ -112,6 +112,14 @@ describe('auth store', () => {
     expect(sessionStorage.getItem(`delivery.auth.verification.${verificationId}`)).toBeNull()
   })
 
+  it('rejects non-active CUSTOMER confirmation before persistence', async () => {
+    mockFetchOnce(200, { kind: 'CUSTOMER_SESSION', user: { ...user, status: 'BLOCKED' }, ...tokens })
+    const store = useAuthStore()
+    await expect(store.confirmEmail(verificationId, '123456')).rejects.toThrow('Resposta de autenticação inválida')
+    expect(store.isAuthenticated).toBe(false)
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
+  })
+
   it('resends with optional Turnstile and stores only replacement timing', async () => {
     const replacement = { ...flow, expiresAt: new Date(Date.now() + 20 * 60_000).toISOString() }
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(

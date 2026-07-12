@@ -26,6 +26,10 @@ type Persisted = { user: SessionUser; accessToken: string; refreshToken: string 
 /** Single-flight: só um refresh em voo; 401s paralelos aguardam a mesma promise. */
 let refreshInFlight: Promise<boolean> | null = null
 
+function isActiveSession(value: AuthResponse): boolean {
+  return value.user.status === 'ACTIVE' && Boolean(value.accessToken) && Boolean(value.refreshToken)
+}
+
 function flowKey(verificationId: string) {
   if (!UUID.test(verificationId)) throw new Error('Fluxo de verificação inválido')
   return `${FLOW_PREFIX}${verificationId}`
@@ -76,7 +80,9 @@ export function clearVerificationTiming(verificationId: string) {
 function load(): Persisted | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as Persisted) : null
+    if (!raw) return null
+    const saved = JSON.parse(raw) as Persisted
+    return isActiveSession(saved) ? saved : null
   } catch {
     return null
   }
@@ -107,6 +113,7 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     setSession(r: AuthResponse) {
+      if (!isActiveSession(r)) throw new Error('Resposta de autenticação inválida')
       this.user = r.user
       this.accessToken = r.accessToken
       this.refreshToken = r.refreshToken
@@ -135,7 +142,7 @@ export const useAuthStore = defineStore('auth', {
         method: 'POST', body: JSON.stringify({ verificationId, code }),
       })
       if (result.kind === 'CUSTOMER_SESSION') {
-        if (result.user.role !== 'CUSTOMER' || !result.accessToken || !result.refreshToken) {
+        if (result.user.role !== 'CUSTOMER') {
           throw new Error('Resposta de autenticação inválida')
         }
         this.setSession(result)
