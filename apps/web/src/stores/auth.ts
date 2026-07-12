@@ -26,8 +26,12 @@ type Persisted = { user: SessionUser; accessToken: string; refreshToken: string 
 /** Single-flight: só um refresh em voo; 401s paralelos aguardam a mesma promise. */
 let refreshInFlight: Promise<boolean> | null = null
 
-function isActiveSession(value: AuthResponse): boolean {
-  return value.user.status === 'ACTIVE' && Boolean(value.accessToken) && Boolean(value.refreshToken)
+function isActiveSession(value: unknown): value is AuthResponse {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<AuthResponse>
+  return Boolean(candidate.user && candidate.user.status === 'ACTIVE')
+    && typeof candidate.accessToken === 'string' && candidate.accessToken.length > 0
+    && typeof candidate.refreshToken === 'string' && candidate.refreshToken.length > 0
 }
 
 function flowKey(verificationId: string) {

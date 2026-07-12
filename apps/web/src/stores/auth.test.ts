@@ -43,6 +43,13 @@ describe('auth store', () => {
     expect(localStorage.getItem('delivery.auth')).toBeNull()
   })
 
+  it('fails closed on malformed successful login response', async () => {
+    mockFetchOnce(200, {})
+    const store = useAuthStore()
+    await expect(store.login('x@y.com', 'senha123')).rejects.toThrow('Resposta de autenticação inválida')
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
+  })
+
   it('hydrates from localStorage on init', () => {
     localStorage.setItem('delivery.auth', JSON.stringify({ ...tokens, user }))
     const store = useAuthStore()
