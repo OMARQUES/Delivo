@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq, isNull } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 import { createAddress } from '../src/services/address.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -47,13 +47,13 @@ beforeEach(async () => {
     deliveryFeeMode: 'FIXED', deliveryFixedFeeCents: 500,
   })
   await testDb.update(stores).set({ commissionBps: 1000 }).where(eq(stores.id, storeId))
-  const customer = await registerUser(testDb, customerInput, 'secret')
+  const customer = await createVerifiedTestAccount(testDb, customerInput, 'secret')
   customerId = customer.user.id
   addressId = (await createAddress(testDb, customerId, { addressText: 'Rua B', lat: -23.56, lng: -51.9 })).id
   const category = await createCategory(testDb, storeId, { name: 'Itens' })
   productId = (await createProduct(testDb, storeId, { categoryId: category.id, name: 'Item', basePriceCents: 10_000, isAvailable: true })).id
-  driverId = (await registerUser(testDb, { ...customerInput, name: 'Fixo', phone: '44911111111', role: 'DRIVER' }, 'secret')).user.id
-  freelanceId = (await registerUser(testDb, { ...customerInput, name: 'Freela', phone: '44922222222', role: 'DRIVER' }, 'secret')).user.id
+  driverId = (await createVerifiedTestAccount(testDb, { ...customerInput, name: 'Fixo', phone: '44911111111', role: 'DRIVER' }, 'secret')).user.id
+  freelanceId = (await createVerifiedTestAccount(testDb, { ...customerInput, name: 'Freela', phone: '44922222222', role: 'DRIVER' }, 'secret')).user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverId))
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, freelanceId))
   await setAvailability(testDb, driverId, true)

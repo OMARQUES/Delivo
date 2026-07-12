@@ -2,7 +2,9 @@ import { sql } from 'drizzle-orm'
 import { integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 
 export const userRole = pgEnum('user_role', ['CUSTOMER', 'STORE', 'DRIVER', 'ADMIN'])
-export const userStatus = pgEnum('user_status', ['ACTIVE', 'PENDING', 'PENDING_EMAIL', 'PENDING_APPROVAL', 'BLOCKED'])
+export const userStatus = pgEnum('user_status', ['PENDING_EMAIL', 'PENDING_APPROVAL', 'ACTIVE', 'BLOCKED'])
+export type UserRole = (typeof userRole.enumValues)[number]
+export type UserStatus = (typeof userStatus.enumValues)[number]
 export const registrationSource = pgEnum('registration_source', [
   'SELF_SERVICE',
   'ADMIN_PROVISIONED',
@@ -20,7 +22,7 @@ export const users = pgTable(
     termsAcceptedAt: timestamp('terms_accepted_at', { withTimezone: true }),
     name: text('name').notNull(),
     phone: text('phone'),
-    email: text('email'),
+    email: text('email').notNull(),
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     registrationSource: registrationSource('registration_source').notNull().default('SELF_SERVICE'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -32,7 +34,5 @@ export const users = pgTable(
   (t) => [
     // Case-insensitive uniqueness: Foo@x.com and foo@x.com are the same user.
     uniqueIndex('users_email_lower_unique').on(sql`lower(${t.email})`),
-    // Unique when present; multiple NULL phones allowed.
-    uniqueIndex('users_phone_unique').on(t.phone).where(sql`${t.phone} is not null`),
   ],
 )

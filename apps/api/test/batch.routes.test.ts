@@ -12,7 +12,7 @@ import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
 import { orders, users } from '../src/db/schema'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
@@ -72,7 +72,7 @@ beforeEach(async () => {
     deliveryFeeMode: 'FIXED',
     deliveryFixedFeeCents: 500,
   })
-  const customer = await registerUser(testDb, customerInput, env.JWT_SECRET)
+  const customer = await createVerifiedTestAccount(testDb, customerInput, env.JWT_SECRET)
   customerId = customer.user.id
   customerToken = customer.accessToken!
   addressId = (await createAddress(testDb, customerId, {
@@ -82,8 +82,8 @@ beforeEach(async () => {
   productId = (await createProduct(testDb, storeId, {
     categoryId: category.id, name: 'Pizza', basePriceCents: 3000, isAvailable: true,
   })).id
-  const driver = await registerUser(testDb, { ...customerInput, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
-  const driver2 = await registerUser(testDb, { ...customerInput, name: 'Edu', phone: '44922222222', role: 'DRIVER' }, env.JWT_SECRET)
+  const driver = await createVerifiedTestAccount(testDb, { ...customerInput, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
+  const driver2 = await createVerifiedTestAccount(testDb, { ...customerInput, name: 'Edu', phone: '44922222222', role: 'DRIVER' }, env.JWT_SECRET)
   await testDb.update(users).set({ status: 'ACTIVE' }).where(inArray(users.id, [driver.user.id, driver2.user.id]))
   driverToken = await createTestSession({ sub: driver.user.id, role: 'DRIVER', name: 'Duda' }, env.JWT_SECRET)
   driver2Token = await createTestSession({ sub: driver2.user.id, role: 'DRIVER', name: 'Edu' }, env.JWT_SECRET)

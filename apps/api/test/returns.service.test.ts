@@ -4,7 +4,7 @@ import type { StoreCreateInput } from '@delivery/shared/schemas'
 import type { PaymentProvider } from '../src/lib/payment-provider'
 import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import {
   acceptDelivery, acceptShiftDelivery, collectDelivery, confirmArrival,
@@ -43,11 +43,11 @@ beforeEach(async () => {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),
     deliveryFeeMode: 'FIXED', deliveryFixedFeeCents: 501,
   })
-  customerId = (await registerUser(testDb, person, 'secret')).user.id
+  customerId = (await createVerifiedTestAccount(testDb, person, 'secret')).user.id
   addressId = (await createAddress(testDb, customerId, { addressText: 'Rua Cliente', lat: -23.56, lng: -51.9 })).id
   const category = await createCategory(testDb, storeId, { name: 'Itens' })
   productId = (await createProduct(testDb, storeId, { categoryId: category.id, name: 'Item', basePriceCents: 5_000, isAvailable: true })).id
-  driverId = (await registerUser(testDb, { ...person, name: 'Driver', phone: '44911111111', role: 'DRIVER' }, 'secret')).user.id
+  driverId = (await createVerifiedTestAccount(testDb, { ...person, name: 'Driver', phone: '44911111111', role: 'DRIVER' }, 'secret')).user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverId))
   await setAvailability(testDb, driverId, true)
 })

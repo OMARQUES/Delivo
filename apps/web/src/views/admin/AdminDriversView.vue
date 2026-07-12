@@ -6,7 +6,7 @@ type Driver = {
   id: string
   name: string
   phone: string | null
-  status: 'ACTIVE' | 'PENDING' | 'BLOCKED'
+  status: 'ACTIVE' | 'PENDING_APPROVAL' | 'BLOCKED'
   isAvailable: boolean
 }
 
@@ -38,7 +38,7 @@ async function setStatus(d: Driver, status: 'ACTIVE' | 'BLOCKED') {
         <div>
           <p class="font-medium">
             {{ d.name }}
-            <span v-if="d.status === 'PENDING'" class="ml-1 rounded bg-yellow-100 px-1 text-xs">aguardando aprovação</span>
+            <span v-if="d.status === 'PENDING_APPROVAL'" class="ml-1 rounded bg-yellow-100 px-1 text-xs">aguardando aprovação</span>
             <span v-else-if="d.status === 'BLOCKED'" class="ml-1 rounded bg-red-100 px-1 text-xs">bloqueado</span>
             <span v-else-if="d.isAvailable" class="ml-1 rounded bg-green-100 px-1 text-xs">disponível</span>
           </p>
@@ -46,7 +46,7 @@ async function setStatus(d: Driver, status: 'ACTIVE' | 'BLOCKED') {
         </div>
         <span class="flex gap-2 text-sm">
           <button v-if="d.status !== 'ACTIVE'" class="rounded bg-black px-2 py-1 text-white" @click="setStatus(d, 'ACTIVE')">
-            {{ d.status === 'PENDING' ? 'Aprovar' : 'Desbloquear' }}
+            {{ d.status === 'PENDING_APPROVAL' ? 'Aprovar' : 'Desbloquear' }}
           </button>
           <button v-if="d.status === 'ACTIVE'" class="rounded border border-red-400 px-2 py-1 text-red-600" @click="setStatus(d, 'BLOCKED')">
             Bloquear

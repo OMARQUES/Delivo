@@ -1,10 +1,10 @@
 import { and, eq, isNull, or, sql } from 'drizzle-orm'
-import type { RegisterInput, LoginInput } from '@delivery/shared/schemas'
+import type { LoginInput } from '@delivery/shared/schemas'
 import { normalizePhone } from '@delivery/shared/schemas'
 import type { Db } from '../db/client'
 import { authProviders, refreshTokens, stores, users } from '../db/schema'
 import type { DbTx } from '../db/types'
-import { hashPassword, verifyPassword } from '../lib/password'
+import { verifyPassword } from '../lib/password'
 import {
   generateRefreshToken,
   hashToken,
@@ -39,9 +39,9 @@ export type PublicUser = {
   id: string
   name: string
   role: 'CUSTOMER' | 'STORE' | 'DRIVER' | 'ADMIN'
-  status: 'ACTIVE' | 'PENDING' | 'PENDING_EMAIL' | 'PENDING_APPROVAL' | 'BLOCKED'
+  status: 'ACTIVE' | 'PENDING_EMAIL' | 'PENDING_APPROVAL' | 'BLOCKED'
   phone: string | null
-  email: string | null
+  email: string
 }
 
 export function toPublicUser(u: typeof users.$inferSelect): PublicUser {
@@ -77,53 +77,6 @@ async function issueTokens(db: Db, user: PublicUser, tokenVersion: number, secre
   return db.transaction((tx) => issueSessionTokens(tx, user, tokenVersion, secret, new Date(), resolvedFamilyId))
 }
 
-export async function registerUser(db: Db, input: RegisterInput, secret: string) {
-  const email = input.email ? input.email.trim().toLowerCase() : null
-  const existing = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(
-      or(
-        eq(users.phone, input.phone),
-        email ? sql`lower(${users.email}) = ${email}` : sql`false`,
-      ),
-    )
-    .limit(1)
-  if (existing.length > 0) throw new AuthError('Telefone ou email já cadastrado', 409)
-
-  const status = input.role === 'DRIVER' ? ('PENDING' as const) : ('ACTIVE' as const)
-  let user: typeof users.$inferSelect | undefined
-  try {
-    const rows = await db
-      .insert(users)
-      .values({
-        name: input.name,
-        phone: input.phone,
-        email,
-        role: input.role,
-        status,
-        termsAcceptedAt: new Date(),
-      })
-      .returning()
-    user = rows[0]
-  } catch (e) {
-    // Rede de segurança p/ corrida (TOCTOU): pre-check + INSERT não é atômico.
-    if (isUniqueViolation(e)) throw new AuthError('Telefone ou email já cadastrado', 409)
-    throw e
-  }
-  if (!user) throw new AuthError('Falha ao criar usuário', 400)
-
-  await db.insert(authProviders).values({
-    userId: user.id,
-    provider: 'PASSWORD',
-    passwordHash: await hashPassword(input.password),
-  })
-
-  const pub = toPublicUser(user)
-  if (status === 'PENDING') return { user: pub, accessToken: null, refreshToken: null }
-  return { user: pub, ...(await issueTokens(db, pub, user.tokenVersion, secret)) }
-}
-
 type AuthReader = Pick<Db, 'select'>
 
 async function assertLoginable(db: AuthReader, user: typeof users.$inferSelect) {
@@ -131,8 +84,6 @@ async function assertLoginable(db: AuthReader, user: typeof users.$inferSelect) 
   if (user.status === 'PENDING_EMAIL')
     throw new AuthError('Confirme seu email para entrar', 403)
   if (user.status === 'PENDING_APPROVAL')
-    throw new AuthError('Cadastro aguardando aprovação do administrador', 403)
-  if (user.status === 'PENDING')
     throw new AuthError('Cadastro aguardando aprovação do administrador', 403)
   if (user.role === 'STORE') {
     const [store] = await db
@@ -150,7 +101,7 @@ export async function loginUser(db: Db, input: LoginInput, secret: string) {
   const raw = input.identifier.trim()
   const asEmail = raw.toLowerCase()
   const asPhone = normalizePhone(raw)
-  const [user] = await db
+  const candidates = await db
     .select()
     .from(users)
     .where(
@@ -159,11 +110,12 @@ export async function loginUser(db: Db, input: LoginInput, secret: string) {
         asPhone.length >= 10 ? eq(users.phone, asPhone) : sql`false`,
       ),
     )
-    .limit(1)
-  if (!user) {
+    .limit(2)
+  if (candidates.length !== 1) {
     await verifyPassword(input.password, DUMMY_PASSWORD_HASH)
     throw new AuthError('Credenciais inválidas', 401)
   }
+  const user = candidates[0]!
 
   const [provider] = await db
     .select()

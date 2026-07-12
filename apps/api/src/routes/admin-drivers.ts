@@ -4,7 +4,7 @@ import { desc, eq } from 'drizzle-orm'
 import { createRouter } from '../app-factory'
 import { drivers, users } from '../db/schema'
 import { authMiddleware, requireRole } from '../middleware/auth'
-import { setDriverAccountStatus } from '../services/security-session.service'
+import { DriverAccountStatusError, setDriverAccountStatus } from '../services/security-session.service'
 
 export const adminDriverRoutes = createRouter()
 
@@ -49,7 +49,12 @@ adminDriverRoutes.openapi(
   async (c) => {
     const { id } = c.req.valid('param')
     const { status } = c.req.valid('json')
-    const updated = await setDriverAccountStatus(c.get('db'), id, status)
+    const updated = await setDriverAccountStatus(c.get('db'), id, status).catch((error) => {
+      if (error instanceof DriverAccountStatusError) {
+        throw new HTTPException(error.status, { message: error.message })
+      }
+      throw error
+    })
     if (!updated) throw new HTTPException(404, { message: 'Entregador não encontrado' })
     return c.json(updated, 200)
   },

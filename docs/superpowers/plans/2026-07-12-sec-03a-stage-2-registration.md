@@ -246,7 +246,7 @@ Make `users.email.notNull()`, drop `users_phone_unique`, keep `users_email_lower
 3. Set email NOT NULL.
 4. Drop only phone unique index; never drop phone column.
 
-Generate: `pnpm --filter @delivery/api db:generate -- --name sec_03a_email_identity`, inspect SQL, then add explicit precondition blocks before destructive casts.
+Generate: `pnpm --filter @delivery/api db:generate --name sec_03a_email_identity`, inspect SQL, then add explicit precondition blocks before destructive casts.
 
 - [ ] **Step 5: Add test factory and migrate old tests mechanically**
 
@@ -283,7 +283,7 @@ These commands target only the repository's named local Docker service and expli
 
 ```bash
 git add packages/shared apps/api
-git commit -m "feat(auth)!: require verified email accounts" -m "BREAKING CHANGE: registration returns a verification flow, login uses email only, user PENDING splits into PENDING_EMAIL/PENDING_APPROVAL, and phone is no longer unique."
+git commit -m "feat(auth)!: require verified email accounts" -m "BREAKING CHANGE: registration returns a verification flow, user PENDING becomes PENDING_APPROVAL, users.email is required, and phone is no longer unique. Migration requires an empty users table."
 ```
 
 ### Task 5: Email-only login and state-safe responses

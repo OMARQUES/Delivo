@@ -31,7 +31,7 @@ function clientIp(c: Context<AppContext>): string {
 
 export async function protectRegistration(
   c: Context<AppContext>,
-  input: { phone: string; email?: string; turnstileToken: string },
+  input: { email: string; turnstileToken: string },
 ): Promise<void> {
   const ip = clientIp(c)
   await consumeAll(c, [POLICIES.registerIpHour, POLICIES.registerIpDay], ip)
@@ -40,10 +40,7 @@ export async function protectRegistration(
     remoteIp: ip,
     action: 'register',
   })
-  const identities = [input.phone, input.email].filter((value): value is string => Boolean(value))
-  for (const identity of identities) {
-    await consumeAll(c, [POLICIES.registerIdentityHour, POLICIES.registerIdentityDay], identity)
-  }
+  await consumeAll(c, [POLICIES.registerIdentityHour, POLICIES.registerIdentityDay], input.email)
 }
 
 export async function protectLogin(

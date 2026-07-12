@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 import { createStoreWithOwner } from '../src/services/store.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { confirmLink, confirmLinkTermsChange, inviteDriver, proposeLinkTerms, removeLink } from '../src/services/store-driver.service'
 import { autoApproveStaleShiftDailies, decideShiftDaily, endShift, offerShiftReactivation, reactivateShift, startShift } from '../src/services/shift.service'
 import { createShiftAuthorization, decideActiveShiftTerms, decideShiftAuthorization, proposeActiveShiftTerms } from '../src/services/shift-proposal.service'
@@ -38,7 +38,7 @@ beforeEach(async () => {
   })
   storeId = store.id
   storeOwnerId = store.ownerUserId
-  const driver = await registerUser(testDb, { name: 'D', phone, password: 'senha123', role: 'DRIVER', acceptedTerms: true }, 'secret')
+  const driver = await createVerifiedTestAccount(testDb, { name: 'D', phone, password: 'senha123', role: 'DRIVER', acceptedTerms: true }, 'secret')
   driverId = driver.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverId))
 })

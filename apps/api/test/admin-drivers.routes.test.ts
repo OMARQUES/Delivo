@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createVerifiedTestAccount, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -8,7 +8,7 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
-import { loginUser, registerUser } from '../src/services/auth.service'
+import { loginUser } from '../src/services/auth.service'
 import { drivers, users } from '../src/db/schema'
 import { setAvailability, setFcmToken } from '../src/services/dispatch.service'
 import { eq } from 'drizzle-orm'
@@ -31,7 +31,7 @@ beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
   adminToken = await createTestSession({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Root' }, env.JWT_SECRET)
-  const d = await registerUser(testDb, {
+  const d = await createVerifiedTestAccount(testDb, {
     name: 'Duda',
     phone: '44911111111',
     password: 'senha123',
@@ -54,7 +54,7 @@ describe('/admin/drivers', () => {
     const list = await req('/admin/drivers')
     expect(list.status).toBe(200)
     const body = (await list.json()) as { id: string; status: string }[]
-    expect(body[0]).toMatchObject({ id: driverUserId, status: 'PENDING' })
+    expect(body[0]).toMatchObject({ id: driverUserId, status: 'PENDING_APPROVAL' })
 
     await expect(loginUser(testDb, { identifier: '44911111111', password: 'senha123' }, env.JWT_SECRET))
       .rejects.toThrow('aguardando aprovação')
@@ -73,7 +73,7 @@ describe('/admin/drivers', () => {
     const block = await req(`/admin/drivers/${driverUserId}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'BLOCKED' }) })
     expect(((await block.json()) as { status: string }).status).toBe('BLOCKED')
 
-    const customer = await registerUser(testDb, {
+    const customer = await createVerifiedTestAccount(testDb, {
       name: 'Ana',
       phone: '44999998888',
       password: 'senha123',
@@ -84,6 +84,39 @@ describe('/admin/drivers', () => {
 
     const custToken = customer.accessToken!
     expect((await req('/admin/drivers', {}, custToken)).status).toBe(403)
+  })
+
+  it('refuses activation without verified email and contact phone', async () => {
+    const missingVerification = crypto.randomUUID()
+    const missingPhone = crypto.randomUUID()
+    await testDb.insert(users).values([
+      {
+        id: missingVerification,
+        name: 'Unverified Driver',
+        email: 'unverified-driver@example.test',
+        phone: '44933334444',
+        role: 'DRIVER',
+        status: 'PENDING_APPROVAL',
+        emailVerifiedAt: null,
+      },
+      {
+        id: missingPhone,
+        name: 'No Phone Driver',
+        email: 'no-phone-driver@example.test',
+        phone: null,
+        role: 'DRIVER',
+        status: 'PENDING_APPROVAL',
+        emailVerifiedAt: new Date(),
+      },
+    ])
+
+    for (const id of [missingVerification, missingPhone]) {
+      const response = await req(`/admin/drivers/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'ACTIVE' }),
+      })
+      expect(response.status).toBe(409)
+    }
   })
 
   it('block followed by reactivation never resurrects old sessions', async () => {

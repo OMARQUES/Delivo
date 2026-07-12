@@ -5,7 +5,7 @@ export type SessionUser = {
   id: string
   name: string
   role: 'CUSTOMER' | 'STORE' | 'DRIVER' | 'ADMIN'
-  status: 'ACTIVE' | 'PENDING' | 'BLOCKED'
+  status: 'ACTIVE' | 'PENDING_EMAIL' | 'PENDING_APPROVAL' | 'BLOCKED'
   phone: string | null
   email: string | null
 }

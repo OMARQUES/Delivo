@@ -6,6 +6,12 @@ import type { AppContext } from './env'
 // instead of the library default {success:false, error} that bypasses onError.
 export const defaultHook: Hook<unknown, AppContext, string, unknown> = (result, c) => {
   if (!result.success) {
+    if (result.error.issues.some((issue) => issue.message.startsWith('PASSWORD_'))) {
+      return c.json({
+        error: 'A senha não atende à política de segurança.',
+        code: 'PASSWORD_POLICY_REJECTED',
+      }, 400)
+    }
     return c.json({ error: 'Validation failed', issues: result.error.issues }, 400)
   }
 }

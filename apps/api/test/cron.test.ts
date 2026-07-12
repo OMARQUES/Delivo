@@ -12,7 +12,7 @@ vi.mock('../src/db/client', async () => {
 import worker from '../src/index'
 import type { Env } from '../src/env'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { cancelStalePendingOrders } from '../src/services/order-status.service'
@@ -51,7 +51,7 @@ beforeEach(async () => {
     deliveryMaxKm: 8,
     minOrderCents: 5000,
   })
-  const customer = await registerUser(testDb, ana, 'test-secret')
+  const customer = await createVerifiedTestAccount(testDb, ana, 'test-secret')
   customerId = customer.user.id
   const addr = await createAddress(testDb, customerId, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })
   addressId = addr.id

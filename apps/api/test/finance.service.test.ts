@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
@@ -40,12 +40,12 @@ beforeEach(async () => {
     deliveryFixedFeeCents: 500,
   })
   await testDb.update(stores).set({ commissionBps: 1000 }).where(eq(stores.id, storeId))
-  const customer = await registerUser(testDb, ana, 'test-secret')
+  const customer = await createVerifiedTestAccount(testDb, ana, 'test-secret')
   customerId = customer.user.id
   addressId = (await createAddress(testDb, customerId, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })).id
   const cat = await createCategory(testDb, storeId, { name: 'Itens' })
   productId = (await createProduct(testDb, storeId, { categoryId: cat.id, name: 'Pizza', basePriceCents: 10000, isAvailable: true })).id
-  const driver = await registerUser(testDb, { ...ana, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, 'test-secret')
+  const driver = await createVerifiedTestAccount(testDb, { ...ana, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, 'test-secret')
   driverId = driver.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverId))
 })

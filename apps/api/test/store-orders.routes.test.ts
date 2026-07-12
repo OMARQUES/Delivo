@@ -14,7 +14,7 @@ import { ledgerEntries, orders, users } from '../src/db/schema'
 import type { PaymentProvider } from '../src/lib/payment-provider'
 import * as mp from '../src/lib/mercadopago'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { customerRequestCancel, requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
@@ -82,9 +82,9 @@ beforeEach(async () => {
     deliveryMaxKm: 8,
     minOrderCents: 5000,
   })
-  const customer = await registerUser(testDb, ana, env.JWT_SECRET)
+  const customer = await createVerifiedTestAccount(testDb, ana, env.JWT_SECRET)
   customerId = customer.user.id
-  const driver = await registerUser(testDb, { ...ana, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
+  const driver = await createVerifiedTestAccount(testDb, { ...ana, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
   driverUserId = driver.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverUserId))
   const addr = await createAddress(testDb, customerId, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })

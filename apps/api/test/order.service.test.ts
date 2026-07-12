@@ -3,7 +3,7 @@ import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { OrderError, quoteOrder, createOrder, getCustomerOrder, listCustomerOrders } from '../src/services/order.service'
 
@@ -39,7 +39,7 @@ beforeEach(async () => {
     deliveryMaxKm: 8,
     minOrderCents: 5000,
   })
-  const customer = await registerUser(testDb, ana, 'test-secret')
+  const customer = await createVerifiedTestAccount(testDb, ana, 'test-secret')
   customerId = customer.user.id
   const addr = await createAddress(testDb, customerId, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })
   addressId = addr.id

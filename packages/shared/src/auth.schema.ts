@@ -73,15 +73,7 @@ export const ResendVerificationSchema = z
   })
   .strict()
 
-export const RegisterSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  phone: z.string().transform(normalizePhone).pipe(z.string().min(10).max(13)),
-  email: z.string().trim().toLowerCase().pipe(z.email()).optional(),
-  password: z.string().min(8).max(128),
-  role: z.enum(['CUSTOMER', 'DRIVER']).default('CUSTOMER'),
-  acceptedTerms: z.literal(true),
-  turnstileToken: TurnstileTokenSchema,
-})
+export const RegisterSchema = StartRegistrationSchema
 export type RegisterInput = z.infer<typeof RegisterSchema>
 
 export const LoginSchema = z.object({

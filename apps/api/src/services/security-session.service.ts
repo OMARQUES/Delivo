@@ -22,6 +22,15 @@ export class PrincipalError extends Error {
   }
 }
 
+export class DriverAccountStatusError extends Error {
+  readonly status = 409
+
+  constructor() {
+    super('Entregador precisa confirmar o email e informar telefone antes da ativação')
+    this.name = 'DriverAccountStatusError'
+  }
+}
+
 export async function resolveLivePrincipal(db: Db, p: AccessTokenPayload, now = new Date()) {
   const [row] = await db
     .select({
@@ -103,6 +112,9 @@ export async function setDriverAccountStatus(
       .where(and(eq(users.id, userId), eq(users.role, 'DRIVER')))
       .for('update')
     if (!current) return null
+    if (status === 'ACTIVE' && (!current.emailVerifiedAt || !current.phone?.trim())) {
+      throw new DriverAccountStatusError()
+    }
 
     const [updated] = status === 'BLOCKED' && current.status !== 'BLOCKED'
       ? await tx

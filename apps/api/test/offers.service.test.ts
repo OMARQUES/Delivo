@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 import { createStoreWithOwner } from '../src/services/store.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { acceptOffer, createOffer, dismissOffer, listOpenOffers, listStoreOffers } from '../src/services/offer.service'
 import { driverOffers, offerAcceptances, storeDrivers, users } from '../src/db/schema'
 import { listDriverLinks, listStoreDrivers } from '../src/services/store-driver.service'
@@ -20,7 +20,7 @@ beforeEach(async () => {
   storeB = (await createStoreWithOwner(testDb, { ...base, phone: '4433335555', name: 'B', slug: 'oferta-b', owner: { name: 'B', email: 'b@offers.test', password: 'senha123' } })).id
   drivers = []
   for (let index = 0; index < 3; index += 1) {
-    const user = await registerUser(testDb, { name: `Driver ${index}`, phone: `4491111111${index}`, password: 'senha123', role: 'DRIVER', acceptedTerms: true }, 'secret')
+    const user = await createVerifiedTestAccount(testDb, { name: `Driver ${index}`, phone: `4491111111${index}`, password: 'senha123', role: 'DRIVER', acceptedTerms: true }, 'secret')
     await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, user.user.id))
     drivers.push(user.user.id)
   }

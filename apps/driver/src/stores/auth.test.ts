@@ -25,7 +25,7 @@ describe('driver auth store', () => {
   })
 
   it('register always sends role DRIVER and Turnstile token', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ user: { ...driver, status: 'PENDING' }, accessToken: null, refreshToken: null }), { status: 200 }))
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ user: { ...driver, status: 'PENDING_APPROVAL' }, accessToken: null, refreshToken: null }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     const store = useAuthStore()
 

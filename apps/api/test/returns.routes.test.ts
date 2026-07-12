@@ -11,7 +11,7 @@ vi.mock('../src/db/client', async () => {
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
 import { ledgerEntries, orderEvents, orders, users } from '../src/db/schema'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createStoreWithOwner } from '../src/services/store.service'
 import { PostgresRateLimiter } from '../src/security/rate-limit'
 import { POLICIES, type RateLimitPolicy } from '../src/security/rate-limit-policies'
@@ -55,10 +55,10 @@ beforeEach(async () => {
   storeToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'Lojista' }, env.JWT_SECRET)
   otherStoreToken = await createTestSession({ sub: other.ownerUserId, role: 'STORE', name: 'Outra' }, env.JWT_SECRET)
   adminToken = await createTestSession({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Admin' }, env.JWT_SECRET)
-  const customer = await registerUser(testDb, {
+  const customer = await createVerifiedTestAccount(testDb, {
     name: 'Cliente', phone: '44999999999', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true,
   }, env.JWT_SECRET)
-  const driver = await registerUser(testDb, {
+  const driver = await createVerifiedTestAccount(testDb, {
     name: 'Driver', phone: '44911111111', password: 'senha123', role: 'DRIVER', acceptedTerms: true,
   }, env.JWT_SECRET)
   customerId = customer.user.id; driverId = driver.user.id
@@ -121,7 +121,7 @@ describe('rotas de devolução', () => {
     const order = await failedOrder()
     expect((await req(`/driver/orders/${order.id}/returned`, { method: 'POST' }, customerToken)).status).toBe(403)
 
-    const other = await registerUser(testDb, {
+    const other = await createVerifiedTestAccount(testDb, {
       name: 'Outro driver', phone: '44922222222', password: 'senha123', role: 'DRIVER', acceptedTerms: true,
     }, env.JWT_SECRET)
     await testDb.update(users).set({ status: 'ACTIVE' })

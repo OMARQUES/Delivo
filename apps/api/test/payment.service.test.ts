@@ -4,7 +4,7 @@ import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { orders } from '../src/db/schema'
@@ -63,7 +63,7 @@ beforeEach(async () => {
     deliveryFixedFeeCents: 500,
     minOrderCents: 1000,
   })
-  const customer = await registerUser(testDb, ana, 'test-secret')
+  const customer = await createVerifiedTestAccount(testDb, ana, 'test-secret')
   customerId = customer.user.id
   const addr = await createAddress(testDb, customerId, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })
   addressId = addr.id

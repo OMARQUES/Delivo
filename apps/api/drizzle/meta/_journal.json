@@ -176,6 +176,13 @@
       "when": 1783876426721,
       "tag": "0024_sec_03a_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1783893592947,
+      "tag": "0025_sec_03a_email_identity",
+      "breakpoints": true
     }
   ]
 }

@@ -7,7 +7,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 
 const env = {
   JWT_SECRET: 'test-secret', ALLOWED_ORIGINS: 'http://localhost:5173',
@@ -21,7 +21,7 @@ const addr = { addressText: 'Rua A, 123 - Centro', reference: 'Portão azul', la
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const r = await registerUser(testDb, ana, env.JWT_SECRET)
+  const r = await createVerifiedTestAccount(testDb, ana, env.JWT_SECRET)
   token = r.accessToken!
 })
 afterAll(closeTestDb)
@@ -46,7 +46,7 @@ describe('/me/addresses', () => {
 
   it('401 anon; cannot delete another user address (404)', async () => {
     expect((await app.request('/me/addresses', {}, env)).status).toBe(401)
-    const other = await registerUser(testDb, { ...ana, phone: '44911112222' }, env.JWT_SECRET)
+    const other = await createVerifiedTestAccount(testDb, { ...ana, phone: '44911112222' }, env.JWT_SECRET)
     const post = await req('/me/addresses', { method: 'POST', body: JSON.stringify(addr) })
     const { id } = (await post.json()) as { id: string }
     expect((await req(`/me/addresses/${id}`, { method: 'DELETE' }, other.accessToken!)).status).toBe(404)

@@ -11,7 +11,7 @@ vi.mock('../src/db/client', async () => {
 import { app } from '../src/app'
 import { orders, users } from '../src/db/schema'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { createStoreWithOwner, updateStore, setStoreSecurityStatus } from '../src/services/store.service'
@@ -53,7 +53,7 @@ async function seedOpenStore(n: string) {
 }
 
 async function seedOrderFor(storeId: string, storeSlug: string) {
-  const customer = await registerUser(
+  const customer = await createVerifiedTestAccount(
     testDb,
     { name: 'Cliente', phone: `44${Math.floor(100000000 + Math.random() * 800000000)}`, password: 'senha123', role: 'CUSTOMER', acceptedTerms: true },
     env.JWT_SECRET,
@@ -98,7 +98,7 @@ describe('cross-tenant isolation — foreign resources are inaccessible', () => 
     const a = await seedOpenStore('a')
     const { customer, addressId, order } = await seedOrderFor(a.store.id, a.store.slug)
     void customer
-    const other = await registerUser(testDb, { name: 'Outro', phone: '44900001111', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
+    const other = await createVerifiedTestAccount(testDb, { name: 'Outro', phone: '44900001111', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
 
     expect((await req(`/orders/${order.id}`, other.accessToken!)).status).toBe(404)
     blocked((await req(`/orders/${order.id}/cancel`, other.accessToken!, { method: 'POST', body: '{}' })).status)
@@ -108,7 +108,7 @@ describe('cross-tenant isolation — foreign resources are inaccessible', () => 
   it('driver B cannot read or act on an order assigned to driver A', async () => {
     const a = await seedOpenStore('a')
     const { order } = await seedOrderFor(a.store.id, a.store.slug)
-    const driverA = await registerUser(testDb, { name: 'DriverA', phone: '44911112222', password: 'senha123', role: 'DRIVER', acceptedTerms: true }, env.JWT_SECRET)
+    const driverA = await createVerifiedTestAccount(testDb, { name: 'DriverA', phone: '44911112222', password: 'senha123', role: 'DRIVER', acceptedTerms: true }, env.JWT_SECRET)
     await testDb.update(orders).set({ driverId: driverA.user.id, status: 'OUT_FOR_DELIVERY' }).where(eq(orders.id, order.id))
     const driverB = await createTestSession({ sub: crypto.randomUUID(), role: 'DRIVER', name: 'DriverB' }, env.JWT_SECRET)
 
@@ -122,7 +122,7 @@ describe('security-event transitions — old credentials fail immediately', () =
   const forbidden = (status: number) => expect([401, 403]).toContain(status)
 
   it('device logout revokes access and refresh of that family', async () => {
-    const u = await registerUser(testDb, { name: 'U', phone: '44900000001', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
+    const u = await createVerifiedTestAccount(testDb, { name: 'U', phone: '44900000001', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
     expect((await req('/auth/me', u.accessToken!)).status).toBe(200)
     expect((await req('/auth/logout', u.accessToken!, { method: 'POST', body: '{}' })).status).toBe(204)
     forbidden((await req('/auth/me', u.accessToken!)).status)
@@ -130,14 +130,14 @@ describe('security-event transitions — old credentials fail immediately', () =
   })
 
   it('logout-all revokes every family', async () => {
-    const u = await registerUser(testDb, { name: 'U', phone: '44900000002', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
+    const u = await createVerifiedTestAccount(testDb, { name: 'U', phone: '44900000002', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
     expect((await req('/auth/logout-all', u.accessToken!, { method: 'POST', body: '{}' })).status).toBe(204)
     forbidden((await req('/auth/me', u.accessToken!)).status)
     forbidden((await req('/auth/refresh', null, { method: 'POST', body: JSON.stringify({ refreshToken: u.refreshToken }) })).status)
   })
 
   it('blocking the user invalidates access and refresh', async () => {
-    const u = await registerUser(testDb, { name: 'U', phone: '44900000003', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
+    const u = await createVerifiedTestAccount(testDb, { name: 'U', phone: '44900000003', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
     await testDb.update(users).set({ status: 'BLOCKED' }).where(eq(users.id, u.user.id))
     forbidden((await req('/auth/me', u.accessToken!)).status)
     forbidden((await req('/auth/refresh', null, { method: 'POST', body: JSON.stringify({ refreshToken: u.refreshToken }) })).status)
@@ -145,7 +145,7 @@ describe('security-event transitions — old credentials fail immediately', () =
 
   it('suspending a store invalidates the owner access and refresh', async () => {
     const store = await createStoreWithOwner(testDb, storeInput('sus'))
-    const login = await registerUser(testDb, { name: 'x', phone: '44900000004', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
+    const login = await createVerifiedTestAccount(testDb, { name: 'x', phone: '44900000004', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
     // Promote the fresh login user into the store owner seat so it carries a real refresh family.
     void login
     const owner = await testDb.select().from(users).where(eq(users.id, store.ownerUserId)).limit(1)

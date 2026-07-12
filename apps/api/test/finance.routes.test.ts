@@ -12,7 +12,7 @@ import { createTestSession } from './helpers/test-db'
 import { ledgerEntries, orders, users } from '../src/db/schema'
 import { eq } from 'drizzle-orm'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
@@ -57,11 +57,11 @@ beforeEach(async () => {
     deliveryFeeMode: 'FIXED',
     deliveryFixedFeeCents: 500,
   })
-  const customer = await registerUser(testDb, ana, env.JWT_SECRET)
+  const customer = await createVerifiedTestAccount(testDb, ana, env.JWT_SECRET)
   const addressId = (await createAddress(testDb, customer.user.id, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })).id
   const cat = await createCategory(testDb, storeId, { name: 'Itens' })
   const productId = (await createProduct(testDb, storeId, { categoryId: cat.id, name: 'Pizza', basePriceCents: 10000, isAvailable: true })).id
-  const driver = await registerUser(testDb, { ...ana, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
+  const driver = await createVerifiedTestAccount(testDb, { ...ana, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
   driverId = driver.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverId))
   driverToken = await createTestSession({ sub: driverId, role: 'DRIVER', name: 'Duda' }, env.JWT_SECRET)
@@ -197,7 +197,7 @@ describe('finance routes', () => {
     expect(JSON.stringify(body)).not.toContain('não vazar esta observação')
     expect(JSON.stringify(body)).not.toContain('12345678901')
 
-    const other = await registerUser(testDb, {
+    const other = await createVerifiedTestAccount(testDb, {
       ...ana, name: 'Outro', phone: '44922222222', role: 'DRIVER',
     }, env.JWT_SECRET)
     await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, other.user.id))

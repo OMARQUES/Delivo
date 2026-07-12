@@ -1,9 +1,11 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 const verifyTurnstileMock = vi.hoisted(() => vi.fn(async () => undefined))
+const sendEmailMock = vi.hoisted(() => vi.fn(async () => ({ providerMessageId: 'email-test-id' })))
+const hashPasswordCall = vi.hoisted(() => vi.fn())
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -18,14 +20,32 @@ vi.mock('../src/security/turnstile', async () => {
   }
 })
 
+vi.mock('../src/email/resend-sender', async () => {
+  const actual = await vi.importActual<typeof import('../src/email/resend-sender')>('../src/email/resend-sender')
+  return { ...actual, createResendSender: vi.fn(() => ({ send: sendEmailMock })) }
+})
+
+vi.mock('../src/lib/password', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/password')>('../src/lib/password')
+  return {
+    ...actual,
+    hashPassword: async (password: string) => {
+      hashPasswordCall(password)
+      return actual.hashPassword(password)
+    },
+  }
+})
+
 import { app } from '../src/app'
 import { authMiddleware, requireRole } from '../src/middleware/auth'
 import { signAccessToken } from '../src/lib/tokens'
 import { errorHandler } from '../src/middleware/error-handler'
-import { refreshTokens, users } from '../src/db/schema'
+import { authChallenges, authProviders, pendingRegistrations, refreshTokens, users } from '../src/db/schema'
 import { PostgresRateLimiter } from '../src/security/rate-limit'
 import { POLICIES } from '../src/security/rate-limit-policies'
 import { SecurityHttpError, TURNSTILE_INVALID_MESSAGE } from '../src/security/http'
+import { hashPassword } from '../src/lib/password'
+import { deriveAuthCode } from '../src/security/auth-code'
 
 const env = {
   APP_ENV: 'local' as const,
@@ -34,6 +54,10 @@ const env = {
   TURNSTILE_SECRET_KEY: 'turnstile-secret',
   TURNSTILE_EXPECTED_HOSTNAMES: 'localhost',
   ALLOWED_ORIGINS: 'http://localhost:5173',
+  RESEND_API_KEY: 're_test_key',
+  AUTH_CODE_SECRET: 'route-auth-code-secret-with-32-bytes',
+  EMAIL_FROM: 'Test <test@example.com>',
+  PUBLIC_WEB_URL: 'http://localhost:5173/verificar-email',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: {} as R2Bucket,
 }
@@ -41,7 +65,8 @@ const ana = {
   name: 'Ana',
   phone: '(44) 99999-8888',
   email: 'Ana@Email.com',
-  password: 'senha123',
+  password: 'safe customer password',
+  role: 'CUSTOMER' as const,
   acceptedTerms: true,
   turnstileToken: 'turnstile-token',
 }
@@ -60,31 +85,103 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
   )
 }
 
+function postWithEnv(path: string, body: unknown, overrides: Partial<typeof env>) {
+  return app.request(
+    path,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    { ...env, ...overrides },
+  )
+}
+
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
   verifyTurnstileMock.mockReset()
   verifyTurnstileMock.mockResolvedValue(undefined)
+  sendEmailMock.mockReset()
+  sendEmailMock.mockResolvedValue({ providerMessageId: 'email-test-id' })
+  hashPasswordCall.mockClear()
 })
 afterAll(closeTestDb)
 
-describe('POST /auth/register', () => {
-  it('registers customer, 201 with user + tokens, email normalized', async () => {
-    const res = await post('/auth/register', ana)
-    expect(res.status).toBe(201)
-    const body = (await res.json()) as AuthBody
-    expect(body.user.email).toBe('ana@email.com')
-    expect(body.user).not.toHaveProperty('tokenVersion')
-    expect(body.accessToken).toBeTruthy()
+async function seedAccount(input: Partial<{
+  name: string
+  email: string
+  phone: string | null
+  password: string
+  role: 'CUSTOMER' | 'DRIVER'
+  status: 'ACTIVE' | 'PENDING_APPROVAL' | 'BLOCKED'
+}> = {}) {
+  const values = {
+    name: input.name ?? 'Ana',
+    email: input.email ?? 'ana@email.com',
+    phone: input.phone === undefined ? '44999998888' : input.phone,
+    password: input.password ?? 'senha123',
+    role: input.role ?? 'CUSTOMER',
+    status: input.status ?? 'ACTIVE',
+  }
+  const [user] = await testDb.insert(users).values({
+    name: values.name,
+    email: values.email,
+    phone: values.phone,
+    role: values.role,
+    status: values.status,
+    emailVerifiedAt: new Date(),
+    termsAcceptedAt: new Date(),
+  }).returning()
+  if (!user) throw new Error('verified account fixture was not created')
+  await testDb.insert(authProviders).values({
+    userId: user.id,
+    provider: 'PASSWORD',
+    passwordHash: await hashPassword(values.password),
   })
-  it('409 on duplicate, 400 on invalid body', async () => {
-    await post('/auth/register', ana)
-    expect((await post('/auth/register', ana)).status).toBe(409)
+  hashPasswordCall.mockClear()
+  return user
+}
+
+async function challengeAndCode(verificationId: string) {
+  const [challenge] = await testDb.select().from(authChallenges).where(and(
+    eq(authChallenges.pendingRegistrationId, verificationId),
+    isNull(authChallenges.consumedAt),
+    isNull(authChallenges.invalidatedAt),
+  )).orderBy(desc(authChallenges.createdAt), desc(authChallenges.id)).limit(1)
+  if (!challenge) throw new Error('registration challenge not found')
+  const code = await deriveAuthCode(env.AUTH_CODE_SECRET, {
+    challengeId: challenge.id,
+    purpose: challenge.purpose,
+  })
+  return { challenge, code }
+}
+
+describe('POST /auth/register', () => {
+  it('returns only a detached 202 verification flow', async () => {
+    const res = await post('/auth/register', ana)
+    expect(res.status).toBe(202)
+    const body = await res.json() as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(['expiresAt', 'resendAt', 'verificationId'])
+    expect(body).not.toHaveProperty('user')
+    expect(body).not.toHaveProperty('accessToken')
+    expect(body).not.toHaveProperty('refreshToken')
+    expect(await testDb.select().from(users)).toHaveLength(0)
+    expect(await testDb.select().from(pendingRegistrations)).toHaveLength(1)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('returns the same 202 shape for an existing account without pending state', async () => {
+    await seedAccount()
+    const res = await post('/auth/register', ana)
+    expect(res.status).toBe(202)
+    expect(Object.keys(await res.json() as object).sort()).toEqual(['expiresAt', 'resendAt', 'verificationId'])
+    expect(await testDb.select().from(pendingRegistrations)).toHaveLength(0)
+  })
+
+  it('returns generic validation for malformed bodies', async () => {
     const bad = await post('/auth/register', { name: 'x' })
     expect(bad.status).toBe(400)
     expect(await bad.json()).toMatchObject({ error: 'Validation failed' })
   })
-  it('verifies Turnstile and does not create an account after invalid challenge', async () => {
+
+  it('runs Turnstile before password hashing or identity writes', async () => {
     verifyTurnstileMock.mockRejectedValueOnce(
       new SecurityHttpError(403, 'TURNSTILE_INVALID', TURNSTILE_INVALID_MESSAGE),
     )
@@ -98,20 +195,118 @@ describe('POST /auth/register', () => {
       remoteIp: '127.0.0.1',
       action: 'register',
     }))
+    expect(hashPasswordCall).not.toHaveBeenCalled()
     const rows = await testDb.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = 'blocked@example.test'`)
     expect(rows).toHaveLength(0)
+    expect(await testDb.select().from(pendingRegistrations)).toHaveLength(0)
   })
-  it('driver → 201 sem tokens, PENDING', async () => {
-    const res = await post('/auth/register', { ...ana, role: 'DRIVER' })
-    const body = (await res.json()) as AuthBody
-    expect(body.user.status).toBe('PENDING')
-    expect(body.accessToken).toBeNull()
+
+  it('runs rate limiting before Turnstile and password hashing', async () => {
+    const limiter = new PostgresRateLimiter(testDb, env.RATE_LIMIT_HMAC_SECRET)
+    for (let i = 0; i < POLICIES.registerIpHour.limit; i++) {
+      await limiter.consume(POLICIES.registerIpHour, '127.0.0.1')
+    }
+    const res = await post('/auth/register', { ...ana, email: 'limited@example.test' })
+    expect(res.status).toBe(429)
+    expect(verifyTurnstileMock).not.toHaveBeenCalled()
+    expect(hashPasswordCall).not.toHaveBeenCalled()
+    expect(await testDb.select().from(pendingRegistrations)).toHaveLength(0)
+  })
+
+  it('fails closed before password hashing or writes when email delivery is unavailable', async () => {
+    const res = await postWithEnv('/auth/register', ana, { RESEND_API_KEY: undefined })
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({
+      error: 'Serviço de email temporariamente indisponível.',
+      code: 'EMAIL_DELIVERY_UNAVAILABLE',
+    })
+    expect(hashPasswordCall).not.toHaveBeenCalled()
+    expect(await testDb.select().from(pendingRegistrations)).toHaveLength(0)
+  })
+
+  it('returns the stable password-policy error without identity writes', async () => {
+    const res = await post('/auth/register', { ...ana, password: 'password' })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({
+      error: 'A senha não atende à política de segurança.',
+      code: 'PASSWORD_POLICY_REJECTED',
+    })
+    expect(verifyTurnstileMock).not.toHaveBeenCalled()
+    expect(hashPasswordCall).not.toHaveBeenCalled()
+    expect(await testDb.select().from(pendingRegistrations)).toHaveLength(0)
+  })
+})
+
+describe('POST /auth/verification/*', () => {
+  it('confirms CUSTOMER with a discriminated session result', async () => {
+    const started = await post('/auth/register', ana)
+    const flow = await started.json() as { verificationId: string }
+    const { code } = await challengeAndCode(flow.verificationId)
+
+    const confirmed = await post('/auth/verification/confirm', { verificationId: flow.verificationId, code })
+    expect(confirmed.status).toBe(200)
+    expect(await confirmed.json()).toMatchObject({
+      kind: 'CUSTOMER_SESSION',
+      user: { email: 'ana@email.com', status: 'ACTIVE' },
+      accessToken: expect.any(String),
+      refreshToken: expect.any(String),
+    })
+    expect(confirmed.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('confirms DRIVER as pending approval without tokens', async () => {
+    const started = await post('/auth/register', {
+      ...ana,
+      email: 'driver@example.test',
+      phone: '44911111111',
+      password: 'safe driver password',
+      role: 'DRIVER',
+    })
+    const flow = await started.json() as { verificationId: string }
+    const { code } = await challengeAndCode(flow.verificationId)
+    const confirmed = await post('/auth/verification/confirm', { verificationId: flow.verificationId, code })
+    expect(await confirmed.json()).toMatchObject({
+      kind: 'DRIVER_PENDING_APPROVAL',
+      user: { status: 'PENDING_APPROVAL' },
+    })
+  })
+
+  it('separates malformed-code validation from valid-shape wrong-code errors', async () => {
+    const started = await post('/auth/register', ana)
+    const flow = await started.json() as { verificationId: string }
+    const malformed = await post('/auth/verification/confirm', { verificationId: flow.verificationId, code: '12a456' })
+    expect(malformed.status).toBe(400)
+    const malformedBody = await malformed.json()
+    expect(malformedBody).toMatchObject({ error: 'Validation failed' })
+    expect(malformedBody).not.toHaveProperty('code')
+
+    const { code } = await challengeAndCode(flow.verificationId)
+    const wrong = `${code[0] === '0' ? '1' : '0'}${code.slice(1)}`
+    const invalid = await post('/auth/verification/confirm', { verificationId: flow.verificationId, code: wrong })
+    expect(invalid.status).toBe(400)
+    expect(await invalid.json()).toMatchObject({ code: 'CODE_INVALID_OR_EXPIRED' })
+  })
+
+  it('resends with stable public flow ID and a replaced internal challenge', async () => {
+    const started = await post('/auth/register', ana)
+    const flow = await started.json() as { verificationId: string }
+    const { challenge: oldChallenge } = await challengeAndCode(flow.verificationId)
+    await testDb.update(authChallenges)
+      .set({ createdAt: new Date(Date.now() - 61_000) })
+      .where(eq(authChallenges.id, oldChallenge.id))
+
+    const resent = await post('/auth/verification/resend', { verificationId: flow.verificationId })
+    expect(resent.status).toBe(202)
+    expect(await resent.json()).toMatchObject({ verificationId: flow.verificationId })
+    const { challenge: replacement } = await challengeAndCode(flow.verificationId)
+    expect(replacement.id).not.toBe(oldChallenge.id)
+    expect(resent.headers.get('cache-control')).toBe('no-store')
   })
 })
 
 describe('POST /auth/login + GET /auth/me', () => {
   it('login → tokens → /me com bearer', async () => {
-    await post('/auth/register', ana)
+    await seedAccount()
     const login = await post('/auth/login', { identifier: '44999998888', password: 'senha123' })
     expect(login.status).toBe(200)
     const loginBody = (await login.json()) as AuthBody
@@ -131,7 +326,7 @@ describe('POST /auth/login + GET /auth/me', () => {
     expect(await res.json()).toMatchObject({ error: 'Credenciais inválidas' })
   })
   it('requires Turnstile after five failures, then allows a challenged attempt and clears failures after success', async () => {
-    await post('/auth/register', ana)
+    await seedAccount()
     for (let i = 0; i < 5; i++) {
       const failed = await post('/auth/login', { identifier: 'ana@email.com', password: 'errada123' })
       expect(failed.status).toBe(401)
@@ -168,7 +363,7 @@ describe('POST /auth/login + GET /auth/me', () => {
   })
 
   it('keeps the tenth failed login as 401 and rate-limits the following attempt', async () => {
-    await post('/auth/register', { ...ana, phone: '44911112222', email: 'cooldown@example.test' })
+    await seedAccount({ phone: '44911112222', email: 'cooldown@example.test' })
     for (let i = 0; i < 9; i++) {
       const failed = await post('/auth/login', {
         identifier: 'cooldown@example.test',
@@ -200,7 +395,7 @@ describe('POST /auth/login + GET /auth/me', () => {
 
 describe('POST /auth/refresh + /auth/logout', () => {
   it('refresh rotates; reuse kills family; logout revokes the active access session', async () => {
-    await post('/auth/register', ana)
+    await seedAccount()
     const login = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
     const { refreshToken } = (await login.json()) as AuthBody
     const r1 = await post('/auth/refresh', { refreshToken })
@@ -217,7 +412,7 @@ describe('POST /auth/refresh + /auth/logout', () => {
   })
 
   it('logout-all invalidates every device immediately', async () => {
-    await post('/auth/register', ana)
+    await seedAccount()
     const first = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
     const second = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
     const { accessToken: accessA } = (await first.json()) as AuthBody
@@ -231,7 +426,7 @@ describe('POST /auth/refresh + /auth/logout', () => {
   })
 
   it('concurrent refresh reuse revokes the full session family', async () => {
-    await post('/auth/register', ana)
+    await seedAccount()
     const login = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
     const { refreshToken } = (await login.json()) as AuthBody
     const responses = await Promise.all([
@@ -245,7 +440,7 @@ describe('POST /auth/refresh + /auth/logout', () => {
   })
 
   it('rate-limited refresh does not mark the token used or revoke its family', async () => {
-    await post('/auth/register', { ...ana, phone: '44922223333', email: 'refresh@example.test' })
+    await seedAccount({ phone: '44922223333', email: 'refresh@example.test' })
     const login = await post('/auth/login', { identifier: 'refresh@example.test', password: 'senha123' })
     const { refreshToken } = (await login.json()) as AuthBody
     const limiter = new PostgresRateLimiter(testDb, env.RATE_LIMIT_HMAC_SECRET)

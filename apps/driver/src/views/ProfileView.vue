@@ -7,7 +7,7 @@ const user = computed(() => auth.user)
 
 const roleLabel = 'Entregador'
 const statusLabel = computed(() =>
-  user.value?.status === 'ACTIVE' ? 'Ativo' : user.value?.status === 'PENDING' ? 'Aguardando aprovação' : 'Bloqueado',
+  user.value?.status === 'ACTIVE' ? 'Ativo' : user.value?.status === 'PENDING_APPROVAL' ? 'Aguardando aprovação' : 'Bloqueado',
 )
 </script>
 

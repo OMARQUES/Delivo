@@ -163,6 +163,23 @@ export async function startRegistration(
   })
 }
 
+export async function registrationFlowEmail(
+  db: Db,
+  verificationId: string,
+  now = new Date(),
+): Promise<string | null> {
+  const [pending] = await db
+    .select({ email: pendingRegistrations.email })
+    .from(pendingRegistrations)
+    .where(and(
+      eq(pendingRegistrations.id, verificationId),
+      isNull(pendingRegistrations.consumedAt),
+      gt(pendingRegistrations.expiresAt, now),
+    ))
+    .limit(1)
+  return pending?.email ?? null
+}
+
 async function activeRegistrationChallenge(tx: DbTx, verificationId: string) {
   const [challenge] = await tx
     .select()

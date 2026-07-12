@@ -10,7 +10,7 @@ vi.mock('../src/db/client', async () => {
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
 import { users } from '../src/db/schema'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createStoreWithOwner } from '../src/services/store.service'
 
 const env = { JWT_SECRET: 'test-secret', ALLOWED_ORIGINS: 'http://localhost:5173', HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive, BUCKET: {} as R2Bucket }
@@ -23,7 +23,7 @@ beforeEach(async () => {
   const other = await createStoreWithOwner(testDb, { ...base, name: 'Outra', slug: 'outra-rota-oferta', phone: '4433335555', owner: { name: 'O', email: 'outra@rota-oferta.test', password: 'senha123' } })
   storeToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'L' }, env.JWT_SECRET)
   otherStoreToken = await createTestSession({ sub: other.ownerUserId, role: 'STORE', name: 'O' }, env.JWT_SECRET)
-  const driver = await registerUser(testDb, { name: 'D', phone: '44911111111', password: 'senha123', role: 'DRIVER', acceptedTerms: true }, env.JWT_SECRET)
+  const driver = await createVerifiedTestAccount(testDb, { name: 'D', phone: '44911111111', password: 'senha123', role: 'DRIVER', acceptedTerms: true }, env.JWT_SECRET)
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driver.user.id))
   driverToken = await createTestSession({ sub: driver.user.id, role: 'DRIVER', name: 'D' }, env.JWT_SECRET)
   customerToken = await createTestSession({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)

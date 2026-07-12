@@ -5,8 +5,11 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 import * as schema from '../../src/db/schema'
-import { refreshTokens, users } from '../../src/db/schema'
+import { authProviders, refreshTokens, users } from '../../src/db/schema'
+import type { UserRole, UserStatus } from '../../src/db/schema'
 import { signAccessToken } from '../../src/lib/tokens'
+import { hashPassword } from '../../src/lib/password'
+import { issueSessionTokens, toPublicUser } from '../../src/services/auth.service'
 
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/delivery_test'
@@ -60,6 +63,88 @@ export async function createTestSession(
     secret,
     familyId,
   )
+}
+
+type VerifiedUserInput = {
+  name: string
+  email: string
+  phone?: string | null
+  role?: UserRole
+  status?: UserStatus
+  password?: string
+}
+
+async function insertVerifiedTestUser(db: typeof testDb, input: VerifiedUserInput) {
+  const email = input.email.trim().toLowerCase()
+  if (!email) throw new Error('verified test user email is required')
+  if (input.status === 'PENDING_EMAIL') throw new Error('verified test user cannot be PENDING_EMAIL')
+  const role = input.role ?? 'CUSTOMER'
+  const status = input.status ?? (role === 'DRIVER' ? 'PENDING_APPROVAL' : 'ACTIVE')
+  const now = new Date()
+  return db.transaction(async (tx) => {
+    const [user] = await tx.insert(users).values({
+      name: input.name,
+      email,
+      phone: input.phone ?? null,
+      role,
+      status,
+      emailVerifiedAt: now,
+      termsAcceptedAt: now,
+      registrationSource: 'SELF_SERVICE',
+      createdAt: now,
+      updatedAt: now,
+    }).returning()
+    if (!user) throw new Error('verified test user was not created')
+    if (input.password !== undefined) {
+      await tx.insert(authProviders).values({
+        userId: user.id,
+        provider: 'PASSWORD',
+        passwordHash: await hashPassword(input.password),
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+    return user
+  })
+}
+
+export async function createVerifiedTestUser(input: VerifiedUserInput): Promise<typeof users.$inferSelect> {
+  return insertVerifiedTestUser(testDb, input)
+}
+
+type LegacyVerifiedAccountInput = {
+  name: string
+  email?: string
+  phone?: string | null
+  role?: 'CUSTOMER' | 'DRIVER'
+  password: string
+  acceptedTerms?: true
+}
+
+/** Compatibility helper while legacy tests migrate off the removed production createVerifiedTestAccount bypass. */
+export async function createVerifiedTestAccount(
+  db: typeof testDb,
+  input: LegacyVerifiedAccountInput,
+  jwtSecret: string,
+) {
+  const role = input.role ?? 'CUSTOMER'
+  const user = await insertVerifiedTestUser(db, {
+    name: input.name,
+    email: input.email ?? `test-${crypto.randomUUID()}@test.local`,
+    phone: input.phone,
+    role,
+    status: role === 'DRIVER' ? 'PENDING_APPROVAL' : 'ACTIVE',
+    password: input.password,
+  })
+  const publicUser = toPublicUser(user)
+  if (user.status !== 'ACTIVE') return { user: publicUser, accessToken: null, refreshToken: null }
+  const tokens = await db.transaction((tx) => issueSessionTokens(
+    tx,
+    publicUser,
+    user.tokenVersion,
+    jwtSecret,
+  ))
+  return { user: publicUser, ...tokens }
 }
 
 /** Agenda semanal cuja janela começou agora e termina em uma hora (fuso SP). */

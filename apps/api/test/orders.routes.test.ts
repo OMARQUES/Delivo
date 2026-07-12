@@ -13,7 +13,7 @@ import { orders, users } from '../src/db/schema'
 import { type CardPaymentResult, PaymentProviderError } from '../src/lib/payment-provider'
 import * as mp from '../src/lib/mercadopago'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { proposeAmendment } from '../src/services/amendment.service'
 import { createOrder, listCustomerOrders } from '../src/services/order.service'
@@ -67,10 +67,10 @@ beforeEach(async () => {
     deliveryMaxKm: 8,
     minOrderCents: 5000,
   })
-  const customer = await registerUser(testDb, ana, env.JWT_SECRET)
+  const customer = await createVerifiedTestAccount(testDb, ana, env.JWT_SECRET)
   customerId = customer.user.id
   customerToken = customer.accessToken!
-  const driver = await registerUser(testDb, { ...ana, name: 'Duda Motoboy', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
+  const driver = await createVerifiedTestAccount(testDb, { ...ana, name: 'Duda Motoboy', phone: '44911111111', role: 'DRIVER' }, env.JWT_SECRET)
   driverUserId = driver.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverUserId))
   const addr = await createAddress(testDb, customerId, { addressText: 'Rua B, 22', lat: -23.56, lng: -51.9 })
@@ -141,7 +141,7 @@ async function exhaust(policy: RateLimitPolicy, subject: string) {
 }
 
 async function createOtherCustomer(phone: string) {
-  const other = await registerUser(testDb, { ...ana, phone }, env.JWT_SECRET)
+  const other = await createVerifiedTestAccount(testDb, { ...ana, phone }, env.JWT_SECRET)
   const addr = await createAddress(testDb, other.user.id, { addressText: 'Rua C, 33', lat: -23.56, lng: -51.9 })
   return { token: other.accessToken!, addressId: addr.id }
 }
@@ -314,7 +314,7 @@ describe('GET /orders + /orders/:id', () => {
     expect(detail.status).toBe(200)
     const body = (await detail.json()) as { items: unknown[]; events: unknown[] }
     expect(body.items.length).toBe(1)
-    const other = await registerUser(testDb, { ...ana, phone: '44911112222' }, 'test-secret')
+    const other = await createVerifiedTestAccount(testDb, { ...ana, phone: '44911112222' }, 'test-secret')
     expect((await req(`/orders/${created.id}`, {}, other.accessToken!)).status).toBe(404)
   })
 
@@ -369,7 +369,7 @@ describe('customer amendment routes', () => {
     await proposeAmendment(testDb, storeId, customerId, o.id, {
       items: [{ orderItemId: detail.items[0]!.id, newQuantity: 1 }],
     })
-    const other = await registerUser(testDb, { ...ana, phone: '44911112222' }, 'test-secret')
+    const other = await createVerifiedTestAccount(testDb, { ...ana, phone: '44911112222' }, 'test-secret')
 
     const res = await req(`/orders/${o.id}/amendments/current/approve`, { method: 'POST' }, other.accessToken!)
     expect(res.status).toBe(404)

@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { closeTestDb, migrateTestDb, testDb } from './helpers/test-db'
 
 beforeAll(migrateTestDb)
@@ -44,15 +47,19 @@ async function columnIsNullable(tableName: string, columnName: string) {
   return rows[0]?.is_nullable === 'YES'
 }
 
+async function indexExists(indexName: string) {
+  const rows = await testDb.execute<{ exists: boolean }>(sql`
+    select exists(
+      select 1 from pg_indexes
+      where schemaname = 'public' and indexname = ${indexName}
+    ) as exists
+  `)
+  return rows[0]?.exists ?? false
+}
+
 describe('SEC-03A identity foundation schema', () => {
   it('adds compatible identity lifecycle enums and tables', async () => {
-    expect(await enumValues('user_status')).toEqual([
-      'ACTIVE',
-      'PENDING',
-      'PENDING_EMAIL',
-      'PENDING_APPROVAL',
-      'BLOCKED',
-    ])
+    expect(await enumValues('user_status')).toEqual(['PENDING_EMAIL', 'PENDING_APPROVAL', 'ACTIVE', 'BLOCKED'])
     expect(await enumValues('store_security_status')).toContain('PENDING_ACTIVATION')
     expect(await tableNames()).toEqual(expect.arrayContaining([
       'pending_registrations',
@@ -61,7 +68,25 @@ describe('SEC-03A identity foundation schema', () => {
       'email_outbox',
       'identity_security_events',
     ]))
-    expect(await columnIsNullable('users', 'email')).toBe(true)
+    expect(await columnIsNullable('users', 'email')).toBe(false)
+  })
+
+  it('enforces final email identity constraints', async () => {
+    expect(await columnIsNullable('users', 'email')).toBe(false)
+    expect(await indexExists('users_email_lower_unique')).toBe(true)
+    expect(await indexExists('users_phone_unique')).toBe(false)
+  })
+
+  it('keeps the destructive migration fail-closed and non-transforming', () => {
+    const migration = readFileSync(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../drizzle/0025_sec_03a_email_identity.sql',
+    ), 'utf8')
+    expect(migration).toContain('IF EXISTS (SELECT 1 FROM "users")')
+    expect(migration).toContain('RAISE EXCEPTION')
+    expect(migration).toContain('DROP INDEX "users_phone_unique"')
+    expect(migration).not.toMatch(/delete\s+from\s+"?users"?/i)
+    expect(migration).not.toMatch(/update\s+"?users"?/i)
   })
 
   it('rejects invalid identity security rows at the database level', async () => {

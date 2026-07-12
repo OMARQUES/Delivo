@@ -12,7 +12,7 @@ vi.mock('../src/db/client', async () => {
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
 import { shiftStartAuthorizations, users } from '../src/db/schema'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
 import { startShift } from '../src/services/shift.service'
 import { createStoreWithOwner } from '../src/services/store.service'
@@ -47,8 +47,8 @@ beforeEach(async () => {
   })
   otherStoreToken = await createTestSession({ sub: otherStore.ownerUserId, role: 'STORE', name: 'Outra' }, env.JWT_SECRET)
   const input = { name: 'D', phone: '44911111111', password: 'senha123', role: 'DRIVER' as const, acceptedTerms: true as const }
-  const driver = await registerUser(testDb, input, env.JWT_SECRET)
-  const other = await registerUser(testDb, { ...input, phone: '44922222222' }, env.JWT_SECRET)
+  const driver = await createVerifiedTestAccount(testDb, input, env.JWT_SECRET)
+  const other = await createVerifiedTestAccount(testDb, { ...input, phone: '44922222222' }, env.JWT_SECRET)
   driverId = driver.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(inArray(users.id, [driver.user.id, other.user.id]))
   driverToken = await createTestSession({ sub: driver.user.id, role: 'DRIVER', name: 'D' }, env.JWT_SECRET)

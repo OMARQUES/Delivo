@@ -3,7 +3,7 @@ import { eq, inArray } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
-import { registerUser } from '../src/services/auth.service'
+import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { acceptDelivery, completeDelivery, listAvailableDeliveries, setAvailability } from '../src/services/dispatch.service'
 import { createOrder } from '../src/services/order.service'
@@ -74,7 +74,7 @@ beforeEach(async () => {
       deliveryFixedFeeCents: 500,
     })
   }
-  const customer = await registerUser(testDb, person, 'test-secret')
+  const customer = await createVerifiedTestAccount(testDb, person, 'test-secret')
   customerId = customer.user.id
   addressId = (await createAddress(testDb, customerId, {
     addressText: 'Rua B, 22',
@@ -95,8 +95,8 @@ beforeEach(async () => {
     basePriceCents: 4000,
     isAvailable: true,
   })).id
-  const d1 = await registerUser(testDb, { ...person, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, 'test-secret')
-  const d2 = await registerUser(testDb, { ...person, name: 'Edu', phone: '44922222222', role: 'DRIVER' }, 'test-secret')
+  const d1 = await createVerifiedTestAccount(testDb, { ...person, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, 'test-secret')
+  const d2 = await createVerifiedTestAccount(testDb, { ...person, name: 'Edu', phone: '44922222222', role: 'DRIVER' }, 'test-secret')
   driver1 = d1.user.id
   driver2 = d2.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(inArray(users.id, [driver1, driver2]))

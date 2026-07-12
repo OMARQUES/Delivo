@@ -1,14 +1,28 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
-import { LoginSchema, RefreshSchema, RegisterSchema } from '@delivery/shared/schemas'
-import { createRouter } from '../app-factory'
-import { authMiddleware } from '../middleware/auth'
 import {
-  AuthError,
-  loginUser,
-  registerUser,
-  rotateRefreshToken,
-} from '../services/auth.service'
+  ConfirmVerificationSchema,
+  LoginSchema,
+  RefreshSchema,
+  RegisterSchema,
+  ResendVerificationSchema,
+} from '@delivery/shared/schemas'
+import type { Context } from 'hono'
+import { createRouter } from '../app-factory'
+import type { AppContext } from '../env'
+import { createResendSender } from '../email/resend-sender'
+import { resolveEmailConfig } from '../email/config'
+import { dispatchOutboxById } from '../email/outbox.service'
+import { authMiddleware } from '../middleware/auth'
+import { AuthError, loginUser, rotateRefreshToken } from '../services/auth.service'
+import {
+  confirmRegistration,
+  RegistrationError,
+  registrationFlowEmail,
+  resendRegistrationVerification,
+  startRegistration,
+  type IdentityContext,
+} from '../services/registration.service'
 import { revokeAllSessions, revokeSessionFamily } from '../services/security-session.service'
 import {
   clearLoginFailures,
@@ -17,43 +31,159 @@ import {
   protectRegistration,
   recordLoginFailure,
 } from '../security/auth-abuse'
+import { protectCodeAttempt, protectCodeSend } from '../security/identity-abuse'
+import {
+  CODE_INVALID_OR_EXPIRED_MESSAGE,
+  EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+  FLOW_INVALID_OR_EXPIRED_MESSAGE,
+  SecurityHttpError,
+} from '../security/http'
 
 export const authRoutes = createRouter()
-
-const RequiredTurnstileToken = z.string().trim().min(1).max(2048)
-const RegisterRouteSchema = RegisterSchema.extend({ turnstileToken: RequiredTurnstileToken })
 
 const UserShape = z.object({
   id: z.string(),
   name: z.string(),
   role: z.enum(['CUSTOMER', 'STORE', 'DRIVER', 'ADMIN']),
-  status: z.enum(['ACTIVE', 'PENDING', 'PENDING_EMAIL', 'PENDING_APPROVAL', 'BLOCKED']),
+  status: z.enum(['ACTIVE', 'PENDING_EMAIL', 'PENDING_APPROVAL', 'BLOCKED']),
   phone: z.string().nullable(),
-  email: z.string().nullable(),
+  email: z.email(),
 })
 const TokenResponse = z.object({
   user: UserShape,
-  accessToken: z.string().nullable(),
-  refreshToken: z.string().nullable(),
+  accessToken: z.string(),
+  refreshToken: z.string(),
 })
+const FlowShape = z.object({
+  verificationId: z.uuid(),
+  expiresAt: z.iso.datetime(),
+  resendAt: z.iso.datetime(),
+})
+const ConfirmationShape = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('CUSTOMER_SESSION'), user: UserShape, accessToken: z.string(), refreshToken: z.string() }),
+  z.object({ kind: z.literal('DRIVER_PENDING_APPROVAL'), user: UserShape }),
+])
 
 function rethrow(e: unknown): never {
   if (e instanceof AuthError) throw new HTTPException(e.status, { message: e.message })
+  if (e instanceof RegistrationError) {
+    const message = e.code === 'CODE_INVALID_OR_EXPIRED'
+      ? CODE_INVALID_OR_EXPIRED_MESSAGE
+      : FLOW_INVALID_OR_EXPIRED_MESSAGE
+    throw new SecurityHttpError(400, e.code, message)
+  }
   throw e
+}
+
+function requireAuthCodeSecret(c: Context<AppContext>): string {
+  const secret = c.env.AUTH_CODE_SECRET?.trim()
+  if (!secret) {
+    throw new SecurityHttpError(503, 'EMAIL_DELIVERY_UNAVAILABLE', EMAIL_DELIVERY_UNAVAILABLE_MESSAGE)
+  }
+  return secret
+}
+
+function identityContext(c: Context<AppContext>, authCodeSecret: string): IdentityContext {
+  return {
+    authCodeSecret,
+    jwtSecret: c.env.JWT_SECRET,
+    requestId: c.get('requestId'),
+  }
+}
+
+function emailDelivery(c: Context<AppContext>) {
+  try {
+    const config = resolveEmailConfig(c.env)
+    return { config, authCodeSecret: requireAuthCodeSecret(c) }
+  } catch (error) {
+    if (error instanceof SecurityHttpError) throw error
+    throw new SecurityHttpError(503, 'EMAIL_DELIVERY_UNAVAILABLE', EMAIL_DELIVERY_UNAVAILABLE_MESSAGE)
+  }
+}
+
+function syntheticRateLimitEmail(verificationId: string): string {
+  return `flow-${verificationId}@invalid.local`
 }
 
 authRoutes.openapi(
   createRoute({
     method: 'post',
     path: '/auth/register',
-    request: { body: { content: { 'application/json': { schema: RegisterRouteSchema } } } },
-    responses: { 201: { description: 'Criado', content: { 'application/json': { schema: TokenResponse } } } },
+    request: { body: { content: { 'application/json': { schema: RegisterSchema } } } },
+    responses: { 202: { description: 'Verificação iniciada', content: { 'application/json': { schema: FlowShape } } } },
   }),
   async (c) => {
     const input = c.req.valid('json')
     await protectRegistration(c, input)
-    const result = await registerUser(c.get('db'), input, c.env.JWT_SECRET).catch(rethrow)
-    return c.json(result, 201)
+    const email = emailDelivery(c)
+    const started = await startRegistration(c.get('db'), input, identityContext(c, email.authCodeSecret))
+    if (started.outboxId) {
+      await dispatchOutboxById(
+        c.get('db'),
+        createResendSender(email.config),
+        c.env,
+        started.outboxId,
+      ).catch(() => undefined)
+    }
+    return c.json(started.response, 202)
+  },
+)
+
+authRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/auth/verification/confirm',
+    request: { body: { content: { 'application/json': { schema: ConfirmVerificationSchema } } } },
+    responses: { 200: { description: 'Email confirmado', content: { 'application/json': { schema: ConfirmationShape } } } },
+  }),
+  async (c) => {
+    const input = c.req.valid('json')
+    await protectCodeAttempt(c, 'REGISTRATION_VERIFY', input.verificationId)
+    const result = await confirmRegistration(
+      c.get('db'),
+      input,
+      identityContext(c, requireAuthCodeSecret(c)),
+    ).catch(rethrow)
+    return c.json(result, 200)
+  },
+)
+
+authRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/auth/verification/resend',
+    request: { body: { content: { 'application/json': { schema: ResendVerificationSchema } } } },
+    responses: { 202: { description: 'Reenvio processado', content: { 'application/json': { schema: FlowShape } } } },
+  }),
+  async (c) => {
+    const input = c.req.valid('json')
+    const flowEmail = await registrationFlowEmail(c.get('db'), input.verificationId)
+    await protectCodeSend(
+      c,
+      'REGISTRATION_VERIFY',
+      flowEmail ?? syntheticRateLimitEmail(input.verificationId),
+      input.verificationId,
+      input.turnstileToken,
+    )
+    const email = emailDelivery(c)
+    const resent = await resendRegistrationVerification(
+      c.get('db'),
+      input,
+      identityContext(c, email.authCodeSecret),
+    ).catch(rethrow)
+    if (resent.outboxId) {
+      await dispatchOutboxById(
+        c.get('db'),
+        createResendSender(email.config),
+        c.env,
+        resent.outboxId,
+      ).catch(() => undefined)
+    }
+    return c.json({
+      verificationId: resent.verificationId,
+      expiresAt: resent.expiresAt,
+      resendAt: resent.resendAt,
+    }, 202)
   },
 )
 
@@ -72,9 +202,7 @@ authRoutes.openapi(
       await clearLoginFailures(c, input.identifier)
       return c.json(result, 200)
     } catch (e) {
-      if (e instanceof AuthError && e.status === 401) {
-        await recordLoginFailure(c, input.identifier)
-      }
+      if (e instanceof AuthError && e.status === 401) await recordLoginFailure(c, input.identifier)
       rethrow(e)
     }
   },

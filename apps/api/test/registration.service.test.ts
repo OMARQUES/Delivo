@@ -16,6 +16,7 @@ import { hashPassword, verifyPassword } from '../src/lib/password'
 import { deriveAuthCode } from '../src/security/auth-code'
 import {
   confirmRegistration,
+  registrationFlowEmail,
   RegistrationError,
   resendRegistrationVerification,
   startRegistration,
@@ -354,6 +355,19 @@ describe('detached registration', () => {
     expect(result).toMatchObject({ verificationId: started.response.verificationId, outboxId: null })
     expect(await testDb.select().from(authChallenges)).toHaveLength(1)
     expect(await testDb.select().from(emailOutbox)).toHaveLength(1)
+  })
+
+  it('resolves rate-limit identity only for an active unconsumed flow', async () => {
+    const started = await startRegistration(testDb, customerInput(), context())
+    expect(await registrationFlowEmail(testDb, started.response.verificationId, NOW)).toBe('ana@example.com')
+
+    const expiredAt = new Date(NOW.getTime() + DAY_MS + 1)
+    expect(await registrationFlowEmail(testDb, started.response.verificationId, expiredAt)).toBeNull()
+
+    await testDb.update(pendingRegistrations)
+      .set({ consumedAt: NOW, closeReason: 'CONFIRMED' })
+      .where(eq(pendingRegistrations.id, started.response.verificationId))
+    expect(await registrationFlowEmail(testDb, started.response.verificationId, NOW)).toBeNull()
   })
 
   it('does not persist raw secrets in identity rows', async () => {
