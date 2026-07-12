@@ -142,7 +142,7 @@ Required flows fail closed. Provider failures do not consume credentials, create
 - Worker secret: `TURNSTILE_SECRET_KEY`.
 - Worker variable: `TURNSTILE_EXPECTED_HOSTNAMES`, a non-empty comma-separated allowlist.
 - Frontend variables: `VITE_TURNSTILE_SITE_KEY` in web and driver.
-- Local development uses Cloudflare's official test sitekey and secret. There is no runtime bypass flag.
+- Local development uses Cloudflare's official test sitekey and secret. Siteverify responses produced by the official always-pass test secret currently identify `hostname: example.com`, set `metadata.result_with_testing_key: true`, and may omit `action`. Only when `APP_ENV === local` and that provider-owned testing marker is present may the verifier accept the documented test hostname and missing action. Staging and production always require the configured real hostname and exact action. There is no runtime bypass flag.
 - Staging and production fail closed when required configuration is missing.
 
 ## 7. Request flows
@@ -153,7 +153,7 @@ Required flows fail closed. Provider failures do not consume credentials, create
 2. Resolve the trusted source address.
 3. Consume registration IP limits before calling Siteverify.
 4. Require and validate a Turnstile token with action `register`.
-5. Consume normalized-identity hourly and daily limits.
+5. Consume hourly and daily identity limits for the normalized phone and, when present, the normalized email as independent subjects. This prevents rotating one field to bypass limits on the other.
 6. Call the existing registration service.
 
 SEC-02 does not redesign the current account activation response. SEC-03 will replace it with email-first pending verification.
