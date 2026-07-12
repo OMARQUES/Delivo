@@ -1,3 +1,5 @@
+import type { AuthChallengePurpose } from '../db/schema'
+
 export type RateLimitPolicy = Readonly<{
   scope: string
   subjectKind: 'identity' | 'opaque'
@@ -15,11 +17,37 @@ function policy(value: RateLimitPolicy): RateLimitPolicy {
   return Object.freeze(value)
 }
 
+function codePolicies(scope: string) {
+  return Object.freeze({
+    sendEmailMinute: policy({ scope: `identity-code-send-${scope}-email-minute`, subjectKind: 'identity', limit: 1, windowMs: MINUTE, retentionMs: HOUR }),
+    sendEmailHour: policy({ scope: `identity-code-send-${scope}-email-hour`, subjectKind: 'identity', limit: 5, windowMs: HOUR, retentionMs: DAY }),
+    sendEmailDay: policy({ scope: `identity-code-send-${scope}-email-day`, subjectKind: 'identity', limit: 10, windowMs: DAY, retentionMs: 2 * DAY }),
+    sendIpHour: policy({ scope: `identity-code-send-${scope}-ip-hour`, subjectKind: 'opaque', limit: 20, windowMs: HOUR, retentionMs: DAY }),
+    sendIpDay: policy({ scope: `identity-code-send-${scope}-ip-day`, subjectKind: 'opaque', limit: 50, windowMs: DAY, retentionMs: 2 * DAY }),
+    attemptIpHour: policy({ scope: `identity-code-attempt-${scope}-ip-hour`, subjectKind: 'opaque', limit: 30, windowMs: HOUR, retentionMs: DAY }),
+    resendFlowHour: policy({ scope: `identity-code-resend-${scope}-flow-hour`, subjectKind: 'opaque', limit: 10, windowMs: HOUR, retentionMs: DAY }),
+  })
+}
+
+export const CODE_RATE_LIMIT_POLICIES = Object.freeze({
+  REGISTRATION_VERIFY: codePolicies('registration-verify'),
+  STORE_ACTIVATION: codePolicies('store-activation'),
+  ADMIN_ACTIVATION: codePolicies('admin-activation'),
+  PASSWORD_RECOVERY: codePolicies('password-recovery'),
+} satisfies Record<AuthChallengePurpose, ReturnType<typeof codePolicies>>)
+
 export const POLICIES = Object.freeze({
   registerIdentityHour: policy({ scope: 'register-identity-hour', subjectKind: 'identity', limit: 3, windowMs: HOUR, retentionMs: DAY }),
   registerIdentityDay: policy({ scope: 'register-identity-day', subjectKind: 'identity', limit: 10, windowMs: DAY, retentionMs: 2 * DAY }),
   registerIpHour: policy({ scope: 'register-ip-hour', subjectKind: 'opaque', limit: 10, windowMs: HOUR, retentionMs: DAY }),
   registerIpDay: policy({ scope: 'register-ip-day', subjectKind: 'opaque', limit: 30, windowMs: DAY, retentionMs: 2 * DAY }),
+
+  recoveryStartEmailHour: policy({ scope: 'recovery-start-email-hour', subjectKind: 'identity', limit: 5, windowMs: HOUR, retentionMs: DAY }),
+  recoveryStartEmailDay: policy({ scope: 'recovery-start-email-day', subjectKind: 'identity', limit: 10, windowMs: DAY, retentionMs: 2 * DAY }),
+  recoveryStartIpHour: policy({ scope: 'recovery-start-ip-hour', subjectKind: 'opaque', limit: 10, windowMs: HOUR, retentionMs: DAY }),
+  recoveryStartIpDay: policy({ scope: 'recovery-start-ip-day', subjectKind: 'opaque', limit: 30, windowMs: DAY, retentionMs: 2 * DAY }),
+  recoveryVerifyIpHour: policy({ scope: 'recovery-verify-ip-hour', subjectKind: 'opaque', limit: 30, windowMs: HOUR, retentionMs: DAY }),
+  ticketUseIpHour: policy({ scope: 'identity-ticket-use-ip-hour', subjectKind: 'opaque', limit: 30, windowMs: HOUR, retentionMs: DAY }),
 
   loginIp15Minutes: policy({ scope: 'login-ip-15m', subjectKind: 'opaque', limit: 30, windowMs: 15 * MINUTE, retentionMs: HOUR }),
   loginFailureIdentity15Minutes: policy({ scope: 'login-failure-identity-15m', subjectKind: 'identity', limit: 5, windowMs: 15 * MINUTE, retentionMs: HOUR }),

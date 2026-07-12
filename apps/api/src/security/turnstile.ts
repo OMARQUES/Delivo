@@ -18,8 +18,10 @@ const SiteverifyResponseSchema = z.object({
   }).strict().optional(),
 }).strict()
 
+export type TurnstileAction = 'register' | 'login' | 'email_resend' | 'password_recovery'
+
 export interface TurnstileVerifier {
-  verify(input: { token: string; remoteIp: string; action: 'register' | 'login'; now?: Date }): Promise<void>
+  verify(input: { token: string; remoteIp: string; action: TurnstileAction; now?: Date }): Promise<void>
 }
 
 export type CloudflareTurnstileVerifierOptions = Readonly<{
@@ -73,7 +75,7 @@ export class CloudflareTurnstileVerifier implements TurnstileVerifier {
     this.timeoutMs = options.timeoutMs ?? 3_000
   }
 
-  async verify(input: { token: string; remoteIp: string; action: 'register' | 'login'; now?: Date }): Promise<void> {
+  async verify(input: { token: string; remoteIp: string; action: TurnstileAction; now?: Date }): Promise<void> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
 

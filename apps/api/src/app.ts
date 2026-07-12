@@ -4,6 +4,7 @@ import { logger } from 'hono/logger'
 import { createRouter } from './app-factory'
 import { dbMiddleware } from './middleware/db'
 import { errorHandler } from './middleware/error-handler'
+import { requestId } from './middleware/request-id'
 import { globalBodyLimit, localOnly, securityBaseline, securityHeaders } from './middleware/security-baseline'
 import { addressRoutes } from './routes/addresses'
 import { adminDriverRoutes } from './routes/admin-drivers'
@@ -25,6 +26,7 @@ import { webhookRoutes } from './routes/webhooks'
 
 export const app = createRouter()
 
+app.use('*', requestId())
 app.use('*', logger())
 app.use('*', globalBodyLimit)
 app.use('*', securityHeaders)

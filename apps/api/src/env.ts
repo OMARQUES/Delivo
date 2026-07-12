@@ -30,6 +30,7 @@ export type AppContext = {
   Bindings: Env
   Variables: {
     db: Db
+    requestId: string
     auth?: LivePrincipal
   }
 }
