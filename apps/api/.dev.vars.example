@@ -3,6 +3,14 @@ RATE_LIMIT_HMAC_SECRET=replace-with-at-least-32-random-bytes
 TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 TURNSTILE_EXPECTED_HOSTNAMES=localhost,127.0.0.1,example.com
 
+# Email auth (Resend)
+RESEND_API_KEY=
+AUTH_CODE_SECRET=replace-with-at-least-32-random-bytes
+EMAIL_FROM=Delivo <auth@example.com>
+PUBLIC_WEB_URL=http://localhost:5173
+# Opcional em local/staging; proibido em producao.
+EMAIL_ALLOWED_RECIPIENTS=
+
 # FCM (opcional - sem isso o push e silenciosamente pulado)
 FIREBASE_PROJECT_ID=
 FIREBASE_SERVICE_ACCOUNT=

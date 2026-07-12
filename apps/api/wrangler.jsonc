@@ -10,6 +10,9 @@
     "APP_ENV": "local",
     "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:5174",
     "TURNSTILE_EXPECTED_HOSTNAMES": "example.com",
+    "EMAIL_FROM": "",
+    "PUBLIC_WEB_URL": "http://localhost:5173",
+    "EMAIL_ALLOWED_RECIPIENTS": "",
     "MP_PUBLIC_KEY": ""
   },
   "r2_buckets": [

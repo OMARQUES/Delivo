@@ -10,6 +10,11 @@ export type Env = {
   TURNSTILE_SECRET_KEY: string
   TURNSTILE_EXPECTED_HOSTNAMES: string
   ALLOWED_ORIGINS: string
+  RESEND_API_KEY?: string
+  AUTH_CODE_SECRET?: string
+  EMAIL_FROM?: string
+  PUBLIC_WEB_URL?: string
+  EMAIL_ALLOWED_RECIPIENTS?: string
   FIREBASE_PROJECT_ID?: string
   FIREBASE_SERVICE_ACCOUNT?: string
   MP_ACCESS_TOKEN?: string
