@@ -36,11 +36,49 @@ describe('RegisterSchema', () => {
     expect(() => RegisterSchema.parse({ ...valid, password: '1234567' })).toThrow()
     expect(() => RegisterSchema.parse({ ...valid, phone: '123' })).toThrow()
   })
+
+  it('accepts a missing Turnstile token', () => {
+    expect(RegisterSchema.parse(valid).turnstileToken).toBeUndefined()
+  })
+
+  it('accepts and returns a supplied Turnstile token', () => {
+    expect(RegisterSchema.parse({ ...valid, turnstileToken: 'test-token' }).turnstileToken).toBe('test-token')
+  })
+
+  it('rejects Turnstile tokens longer than 2048 characters', () => {
+    expect(() => RegisterSchema.parse({ ...valid, turnstileToken: 'a'.repeat(2049) })).toThrow()
+  })
+
+  it('rejects empty and whitespace-only Turnstile tokens', () => {
+    expect(() => RegisterSchema.parse({ ...valid, turnstileToken: '' })).toThrow()
+    expect(() => RegisterSchema.parse({ ...valid, turnstileToken: '   ' })).toThrow()
+  })
 })
 
 describe('LoginSchema', () => {
   it('accepts identifier (email or phone) + password', () => {
     expect(LoginSchema.parse({ identifier: 'a@b.com', password: 'senha123' }).identifier).toBe('a@b.com')
     expect(LoginSchema.parse({ identifier: '(44) 99999-8888', password: 'senha123' })).toBeTruthy()
+  })
+
+  it('accepts a missing Turnstile token', () => {
+    const input = { identifier: 'a@b.com', password: 'senha123' }
+    expect(LoginSchema.parse(input).turnstileToken).toBeUndefined()
+  })
+
+  it('accepts and returns a supplied Turnstile token', () => {
+    const input = { identifier: 'a@b.com', password: 'senha123', turnstileToken: 'test-token' }
+    expect(LoginSchema.parse(input).turnstileToken).toBe('test-token')
+  })
+
+  it('rejects Turnstile tokens longer than 2048 characters', () => {
+    const input = { identifier: 'a@b.com', password: 'senha123', turnstileToken: 'a'.repeat(2049) }
+    expect(() => LoginSchema.parse(input)).toThrow()
+  })
+
+  it('rejects empty and whitespace-only Turnstile tokens', () => {
+    const input = { identifier: 'a@b.com', password: 'senha123' }
+    expect(() => LoginSchema.parse({ ...input, turnstileToken: '' })).toThrow()
+    expect(() => LoginSchema.parse({ ...input, turnstileToken: '   ' })).toThrow()
   })
 })
