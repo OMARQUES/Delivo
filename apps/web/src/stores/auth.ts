@@ -82,8 +82,11 @@ function load(): Persisted | null {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const saved = JSON.parse(raw) as Persisted
-    return isActiveSession(saved) ? saved : null
+    if (isActiveSession(saved)) return saved
+    localStorage.removeItem(STORAGE_KEY)
+    return null
   } catch {
+    localStorage.removeItem(STORAGE_KEY)
     return null
   }
 }

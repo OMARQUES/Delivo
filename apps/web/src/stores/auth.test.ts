@@ -50,6 +50,13 @@ describe('auth store', () => {
     expect(store.user?.role).toBe('CUSTOMER')
   })
 
+  it('removes an inactive persisted session during hydration', () => {
+    localStorage.setItem('delivery.auth', JSON.stringify({ ...tokens, user: { ...user, status: 'BLOCKED' } }))
+    const store = useAuthStore()
+    expect(store.isAuthenticated).toBe(false)
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
+  })
+
   it('logout clears state + storage and calls API', async () => {
     localStorage.setItem('delivery.auth', JSON.stringify({ ...tokens, user }))
     mockFetchOnce(204, null)
