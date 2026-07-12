@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createTestSession, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 const verifyTurnstileMock = vi.hoisted(() => vi.fn(async () => undefined))
 const sendEmailMock = vi.hoisted(() => vi.fn(async () => ({ providerMessageId: 'email-test-id' })))
@@ -46,6 +46,7 @@ import { POLICIES } from '../src/security/rate-limit-policies'
 import { SecurityHttpError, TURNSTILE_INVALID_MESSAGE } from '../src/security/http'
 import { hashPassword } from '../src/lib/password'
 import { deriveAuthCode } from '../src/security/auth-code'
+import { createStoreWithOwner } from '../src/services/store.service'
 
 const env = {
   APP_ENV: 'local' as const,
@@ -394,6 +395,82 @@ describe('POST /auth/login + GET /auth/me', () => {
       error: 'Muitas tentativas. Tente novamente mais tarde.',
       code: 'RATE_LIMITED',
     })
+  })
+})
+
+describe('PATCH /auth/me/contact', () => {
+  async function patchContact(token: string, body: unknown) {
+    return app.request('/auth/me/contact', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    }, env)
+  }
+
+  it('updates and clears only authenticated CUSTOMER contact with a minimal response', async () => {
+    const customer = await seedAccount({ email: 'contact@example.test', phone: null })
+    const token = await createTestSession(
+      { sub: customer.id, role: 'CUSTOMER', name: customer.name },
+      env.JWT_SECRET,
+    )
+
+    const updated = await patchContact(token, { phone: '(44) 99999-8888' })
+    expect(updated.status).toBe(200)
+    expect(await updated.json()).toEqual({ phone: '44999998888' })
+
+    const cleared = await patchContact(token, { phone: null })
+    expect(cleared.status).toBe(200)
+    expect(await cleared.json()).toEqual({ phone: null })
+    const [stored] = await testDb.select({ phone: users.phone }).from(users).where(eq(users.id, customer.id))
+    expect(stored?.phone).toBeNull()
+  })
+
+  it('allows two CUSTOMER accounts to share one contact phone', async () => {
+    const first = await seedAccount({ email: 'first-contact@example.test', phone: null })
+    const second = await seedAccount({ email: 'second-contact@example.test', phone: null })
+    const firstToken = await createTestSession({ sub: first.id, role: 'CUSTOMER', name: first.name }, env.JWT_SECRET)
+    const secondToken = await createTestSession({ sub: second.id, role: 'CUSTOMER', name: second.name }, env.JWT_SECRET)
+
+    expect((await patchContact(firstToken, { phone: '44999998888' })).status).toBe(200)
+    expect((await patchContact(secondToken, { phone: '44999998888' })).status).toBe(200)
+    const matching = await testDb.select({ id: users.id }).from(users).where(eq(users.phone, '44999998888'))
+    expect(matching.map((row) => row.id).sort()).toEqual([first.id, second.id].sort())
+  })
+
+  it('rejects unauthenticated and non-CUSTOMER principals', async () => {
+    expect((await app.request('/auth/me/contact', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: null }),
+    }, env)).status).toBe(401)
+
+    const store = await createStoreWithOwner(testDb, {
+      name: 'Contact Store', slug: 'contact-store', category: 'OUTROS', phone: '44900000000',
+      city: 'Test', addressText: 'Test, 1', lat: -23.5, lng: -51.9,
+      owner: { name: 'Store Owner', email: 'owner-contact@example.test', password: 'safe store password' },
+    })
+    const principals = [
+      { sub: crypto.randomUUID(), role: 'DRIVER' as const, name: 'Driver' },
+      { sub: crypto.randomUUID(), role: 'ADMIN' as const, name: 'Admin' },
+      { sub: store.ownerUserId, role: 'STORE' as const, name: 'Store Owner' },
+    ]
+    for (const principal of principals) {
+      const token = await createTestSession(principal, env.JWT_SECRET)
+      expect((await patchContact(token, { phone: '44999998888' })).status).toBe(403)
+    }
+  })
+
+  it('rejects attacker-controlled selectors without changing either account', async () => {
+    const attacker = await seedAccount({ email: 'attacker-contact@example.test', phone: null })
+    const victim = await seedAccount({ email: 'victim-contact@example.test', phone: '44911112222' })
+    const token = await createTestSession({ sub: attacker.id, role: 'CUSTOMER', name: attacker.name }, env.JWT_SECRET)
+
+    const response = await patchContact(token, { phone: '44999998888', userId: victim.id })
+    expect(response.status).toBe(400)
+    const rows = await testDb.select({ id: users.id, phone: users.phone }).from(users)
+      .where(sql`${users.id} in (${attacker.id}, ${victim.id})`)
+    expect(rows).toEqual(expect.arrayContaining([
+      { id: attacker.id, phone: null },
+      { id: victim.id, phone: '44911112222' },
+    ]))
   })
 })
 

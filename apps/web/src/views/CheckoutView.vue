@@ -6,12 +6,14 @@ import MapPicker from '../components/MapPicker.vue'
 import { api } from '../lib/api'
 import { cardConfigured, mountCardBrick, type CardFormData } from '../lib/mp-brick'
 import { useCartStore } from '../stores/cart'
+import { useAuthStore } from '../stores/auth'
 
 type Address = { id: string; label: string | null; addressText: string; reference: string | null; lat: number; lng: number }
 type Quote = { subtotalCents: number; deliveryFeeCents: number | null; totalCents: number; problems: string[] }
 
 const router = useRouter()
 const cart = useCartStore()
+const auth = useAuthStore()
 
 const fulfillment = ref<'DELIVERY' | 'PICKUP'>('DELIVERY')
 const addresses = ref<Address[]>([])
@@ -25,6 +27,11 @@ const note = ref('')
 const quote = ref<Quote | null>(null)
 const error = ref('')
 const submitting = ref(false)
+const showContactPrompt = ref(false)
+const contactPhone = ref('')
+const contactWarning = ref('')
+const savingContact = ref(false)
+const contactPromptHandled = ref(false)
 const idempotencyKey = crypto.randomUUID()
 let destroyBrick: (() => void) | null = null
 
@@ -131,12 +138,16 @@ async function saveNewAddress() {
 
 const canSubmit = computed(() => Boolean(quote.value && quote.value.problems.length === 0 && !submitting.value))
 
-async function submit() {
-  if (!canSubmit.value) return
+function hasRequiredPaymentDetails() {
   if (paymentMethod.value === 'CARD_ONLINE' && !cardData.value) {
     error.value = 'Preencha os dados do cartão'
-    return
+    return false
   }
+  return true
+}
+
+async function placeOrder() {
+  if (!canSubmit.value || !hasRequiredPaymentDetails()) return
   submitting.value = true
   error.value = ''
   try {
@@ -155,6 +166,42 @@ async function submit() {
     }
   } finally {
     submitting.value = false
+  }
+}
+
+async function submit() {
+  if (!canSubmit.value || !hasRequiredPaymentDetails()) return
+  if (auth.user?.role === 'CUSTOMER' && !auth.user.phone && !contactPromptHandled.value) {
+    showContactPrompt.value = true
+    return
+  }
+  await placeOrder()
+}
+
+async function continueWithoutContact() {
+  if (savingContact.value || submitting.value) return
+  contactPromptHandled.value = true
+  showContactPrompt.value = false
+  await placeOrder()
+}
+
+async function saveContactAndContinue() {
+  if (savingContact.value || submitting.value) return
+  if (!contactPhone.value.trim()) {
+    contactWarning.value = 'Informe um telefone ou continue sem cadastrar.'
+    return
+  }
+  savingContact.value = true
+  contactWarning.value = ''
+  try {
+    await auth.updateContactPhone(contactPhone.value)
+    contactPromptHandled.value = true
+    showContactPrompt.value = false
+    await placeOrder()
+  } catch (e) {
+    contactWarning.value = e instanceof Error ? e.message : 'Não foi possível salvar o telefone.'
+  } finally {
+    savingContact.value = false
   }
 }
 </script>
@@ -215,6 +262,28 @@ async function submit() {
 
     <input v-model="taxId" placeholder="CPF/CNPJ na nota (opcional)" class="w-full rounded border p-2" />
     <textarea v-model="note" placeholder="Observações do pedido (opcional)" class="w-full rounded border p-2"></textarea>
+
+    <section v-if="showContactPrompt" data-testid="contact-prompt" class="space-y-2 rounded border border-blue-200 bg-blue-50 p-3">
+      <p class="font-semibold">Deseja cadastrar um telefone para contato?</p>
+      <p class="text-sm text-gray-600">Opcional. A loja poderá usar este número se precisar falar sobre o pedido.</p>
+      <input
+        v-model="contactPhone"
+        data-testid="contact-phone"
+        type="tel"
+        autocomplete="tel"
+        placeholder="(44) 99999-8888"
+        class="w-full rounded border p-2"
+      />
+      <p v-if="contactWarning" class="text-sm text-amber-700">{{ contactWarning }}</p>
+      <div class="flex gap-2">
+        <button type="button" :disabled="savingContact || submitting" class="flex-1 rounded border p-2 disabled:opacity-50" @click="continueWithoutContact">
+          {{ contactWarning ? 'Continuar sem telefone' : 'Agora não' }}
+        </button>
+        <button type="button" :disabled="savingContact || submitting" class="flex-1 rounded bg-blue-700 p-2 text-white disabled:opacity-50" @click="saveContactAndContinue">
+          {{ savingContact ? 'Salvando…' : 'Salvar telefone e continuar' }}
+        </button>
+      </div>
+    </section>
 
     <section v-if="quote" class="rounded border p-3 text-sm">
       <p class="flex justify-between"><span>Subtotal</span><span>{{ formatBRL(quote.subtotalCents) }}</span></p>

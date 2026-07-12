@@ -72,6 +72,16 @@ export const useAuthStore = defineStore('auth', {
       if (r.accessToken) this.setSession(r)
       return r.user
     },
+    async updateContactPhone(phone: string | null) {
+      if (!this.user || this.user.role !== 'CUSTOMER') throw new Error('Sessão de cliente necessária')
+      const response = await api<{ phone: string | null }>('/auth/me/contact', {
+        method: 'PATCH',
+        body: JSON.stringify({ phone }),
+      })
+      this.user = { ...this.user, phone: response.phone }
+      this.persist()
+      return response.phone
+    },
     async tryRefresh(): Promise<boolean> {
       if (!this.refreshToken) return false
       if (refreshInFlight) return refreshInFlight

@@ -6,14 +6,17 @@ import {
   RefreshSchema,
   RegisterSchema,
   ResendVerificationSchema,
+  UpdateCustomerContactSchema,
 } from '@delivery/shared/schemas'
 import type { Context } from 'hono'
+import { and, eq } from 'drizzle-orm'
 import { createRouter } from '../app-factory'
+import { users } from '../db/schema'
 import type { AppContext } from '../env'
 import { createResendSender } from '../email/resend-sender'
 import { resolveEmailConfig } from '../email/config'
 import { dispatchOutboxById } from '../email/outbox.service'
-import { authMiddleware } from '../middleware/auth'
+import { authMiddleware, requireRole } from '../middleware/auth'
 import { AuthError, loginUser, rotateRefreshToken } from '../services/auth.service'
 import {
   confirmRegistration,
@@ -104,6 +107,34 @@ function emailDelivery(c: Context<AppContext>) {
 function syntheticRateLimitEmail(verificationId: string): string {
   return `flow-${verificationId}@invalid.local`
 }
+
+authRoutes.openapi(
+  createRoute({
+    method: 'patch',
+    path: '/auth/me/contact',
+    middleware: [authMiddleware, requireRole('CUSTOMER')] as const,
+    request: { body: { content: { 'application/json': { schema: UpdateCustomerContactSchema } } } },
+    responses: {
+      200: {
+        description: 'Contato atualizado',
+        content: { 'application/json': { schema: z.object({ phone: z.string().nullable() }) } },
+      },
+    },
+  }),
+  async (c) => {
+    const input = c.req.valid('json')
+    const [updated] = await c.get('db')
+      .update(users)
+      .set({ phone: input.phone })
+      .where(and(
+        eq(users.id, c.get('auth')!.sub),
+        eq(users.role, 'CUSTOMER'),
+      ))
+      .returning({ phone: users.phone })
+    if (!updated) throw new HTTPException(404, { message: 'Conta não encontrada' })
+    return c.json({ phone: updated.phone }, 200)
+  },
+)
 
 authRoutes.openapi(
   createRoute({
