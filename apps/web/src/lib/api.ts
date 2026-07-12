@@ -1,5 +1,5 @@
 /** Fetch wrapper: baseURL + bearer + refresh-on-401 (uma tentativa). */
-export type ApiError = { status: number; message: string }
+export type ApiError = { status: number; message: string; code?: string; retryAfter?: number }
 
 type TokenProvider = {
   getAccessToken: () => string | null
@@ -27,11 +27,21 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
   }
 
   if (res.status === 204) return undefined as T
-  const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: Array<{ message?: string; path?: Array<string | number> }> }
+  const body = (await res.json().catch(() => ({}))) as {
+    error?: string
+    code?: string
+    issues?: Array<{ message?: string; path?: Array<string | number> }>
+  }
   if (!res.ok) {
     const issue = body.issues?.[0]
     const field = issue?.path?.length ? `${issue.path.join('.')}: ` : ''
-    const err: ApiError = { status: res.status, message: issue?.message ? `${field}${issue.message}` : body.error ?? 'Erro inesperado' }
+    const retryAfter = Number.parseInt(res.headers.get('Retry-After') ?? '', 10)
+    const err: ApiError = {
+      status: res.status,
+      message: issue?.message ? `${field}${issue.message}` : body.error ?? 'Erro inesperado',
+      code: body.code,
+      retryAfter: Number.isFinite(retryAfter) ? retryAfter : undefined,
+    }
     throw Object.assign(new Error(err.message), err)
   }
   return body as T

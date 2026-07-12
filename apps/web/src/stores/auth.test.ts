@@ -62,4 +62,24 @@ describe('auth store', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(store.accessToken).toBe('acc-2')
   })
+
+  it('sends Turnstile tokens on login and registration', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ user, ...tokens }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useAuthStore()
+
+    await store.login('ana@email.com', 'senha123', 'login-token')
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>
+    expect(JSON.parse(String(calls[0]![1]!.body))).toMatchObject({ turnstileToken: 'login-token' })
+
+    await store.register({
+      name: 'Ana',
+      phone: '44',
+      email: 'ana@email.com',
+      password: 'senha123',
+      acceptedTerms: true,
+      turnstileToken: 'register-token',
+    })
+    expect(JSON.parse(String(calls[1]![1]!.body))).toMatchObject({ turnstileToken: 'register-token' })
+  })
 })

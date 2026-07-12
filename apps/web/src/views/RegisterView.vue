@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import TurnstileWidget from '../components/TurnstileWidget.vue'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
@@ -11,6 +12,7 @@ const phone = ref('')
 const email = ref('')
 const password = ref('')
 const acceptedTerms = ref(false)
+const turnstileToken = ref<string | null>(null)
 const error = ref('')
 const loading = ref(false)
 
@@ -24,6 +26,7 @@ async function submit() {
       email: email.value || undefined,
       password: password.value,
       acceptedTerms: acceptedTerms.value,
+      turnstileToken: turnstileToken.value ?? undefined,
     })
     if (auth.isAuthenticated) await router.replace('/')
     else error.value = 'Conta criada, mas requer aprovação. Aguarde liberação.'
@@ -47,8 +50,9 @@ async function submit() {
         <input v-model="acceptedTerms" type="checkbox" required class="mt-1" />
         <span>Li e aceito a política de privacidade (LGPD)</span>
       </label>
+      <TurnstileWidget action="register" @update:token="turnstileToken = $event" />
       <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
-      <button type="submit" :disabled="loading" class="w-full rounded bg-black p-2 font-semibold text-white disabled:opacity-50">
+      <button type="submit" :disabled="loading || !turnstileToken" class="w-full rounded bg-black p-2 font-semibold text-white disabled:opacity-50">
         {{ loading ? 'Criando…' : 'Criar conta' }}
       </button>
     </form>

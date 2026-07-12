@@ -63,11 +63,11 @@ export const useAuthStore = defineStore('auth', {
       this.refreshToken = null
       this.persist()
     },
-    async login(identifier: string, password: string) {
-      const r = await api<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password }) })
+    async login(identifier: string, password: string, turnstileToken?: string) {
+      const r = await api<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password, turnstileToken }) })
       this.setSession(r)
     },
-    async register(input: { name: string; phone: string; email?: string; password: string; acceptedTerms: boolean }) {
+    async register(input: { name: string; phone: string; email?: string; password: string; acceptedTerms: boolean; turnstileToken?: string }) {
       const r = await api<AuthResponse>('/auth/register', { method: 'POST', body: JSON.stringify(input) })
       if (r.accessToken) this.setSession(r)
       return r.user
