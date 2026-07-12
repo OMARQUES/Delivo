@@ -9,7 +9,7 @@ const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 
-const identifier = ref('')
+const email = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
@@ -28,7 +28,7 @@ async function submit() {
   error.value = ''
   loading.value = true
   try {
-    await auth.login(identifier.value, password.value, turnstileToken.value ?? undefined)
+    await auth.login(email.value, password.value, turnstileToken.value ?? undefined)
     await router.replace(destinationFor(auth.role))
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro ao entrar'
@@ -46,7 +46,7 @@ async function submit() {
   <main class="mx-auto max-w-sm p-4">
     <h1 class="text-2xl font-bold">Entrar</h1>
     <form class="mt-4 space-y-3" @submit.prevent="submit">
-      <input v-model="identifier" type="text" required placeholder="Email ou telefone" class="w-full rounded border p-2" autocomplete="username" />
+      <input v-model="email" type="email" required placeholder="Email" class="w-full rounded border p-2" autocomplete="email" />
       <input v-model="password" type="password" required placeholder="Senha" class="w-full rounded border p-2" autocomplete="current-password" />
       <TurnstileWidget v-if="turnstileRequired" action="login" @update:token="turnstileToken = $event" />
       <p v-if="error" class="text-sm text-red-600">{{ error }}</p>

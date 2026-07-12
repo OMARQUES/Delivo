@@ -21,7 +21,7 @@ beforeEach(() => {
 })
 
 describe('LoginView', () => {
-  it('reveals Turnstile after TURNSTILE_REQUIRED and resubmits with same identifier plus token', async () => {
+  it('reveals Turnstile after TURNSTILE_REQUIRED and resubmits normalized email plus token', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(
         JSON.stringify({ error: 'Confirme que você não é um robô', code: 'TURNSTILE_REQUIRED' }),
@@ -42,7 +42,7 @@ describe('LoginView', () => {
       },
     })
 
-    await wrapper.find('input[autocomplete="username"]').setValue('ana@email.com')
+    await wrapper.find('input[autocomplete="email"]').setValue('ana@email.com')
     await wrapper.find('input[autocomplete="current-password"]').setValue('senha123')
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
@@ -55,10 +55,11 @@ describe('LoginView', () => {
     await flushPromises()
 
     expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body))).toMatchObject({
-      identifier: 'ana@email.com',
+      email: 'ana@email.com',
       password: 'senha123',
       turnstileToken: 'tok-1',
     })
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body))).not.toHaveProperty('identifier')
     expect(replace).toHaveBeenCalledWith('/')
   })
 })

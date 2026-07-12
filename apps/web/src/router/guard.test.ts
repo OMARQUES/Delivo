@@ -19,7 +19,7 @@ describe('route guards', () => {
   it('blocks wrong-role from /admin (customer → home)', async () => {
     const auth = useAuthStore()
     auth.$patch({
-      user: { id: 'u', name: 'A', role: 'CUSTOMER', status: 'ACTIVE', phone: null, email: null },
+      user: { id: 'u', name: 'A', role: 'CUSTOMER', status: 'ACTIVE', phone: null, email: 'customer@example.test' },
       accessToken: 'a',
       refreshToken: 'r',
     })
@@ -43,7 +43,7 @@ describe('route guards', () => {
   it('allows finance views for the correct roles', async () => {
     const auth = useAuthStore()
     auth.$patch({
-      user: { id: 's', name: 'Loja', role: 'STORE', status: 'ACTIVE', phone: null, email: null },
+      user: { id: 's', name: 'Loja', role: 'STORE', status: 'ACTIVE', phone: null, email: 'store@example.test' },
       accessToken: 'a',
       refreshToken: 'r',
     })
@@ -51,7 +51,7 @@ describe('route guards', () => {
     expect(router.currentRoute.value.name).toBe('store-finance')
 
     auth.$patch({
-      user: { id: 'a', name: 'Admin', role: 'ADMIN', status: 'ACTIVE', phone: null, email: null },
+      user: { id: 'a', name: 'Admin', role: 'ADMIN', status: 'ACTIVE', phone: null, email: 'admin@example.test' },
       accessToken: 'a',
       refreshToken: 'r',
     })

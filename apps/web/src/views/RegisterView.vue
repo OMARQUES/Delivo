@@ -20,16 +20,15 @@ async function submit() {
   error.value = ''
   loading.value = true
   try {
-    await auth.register({
+    const flow = await auth.registerCustomer({
       name: name.value,
-      phone: phone.value,
-      email: email.value || undefined,
+      phone: phone.value || undefined,
+      email: email.value,
       password: password.value,
       acceptedTerms: acceptedTerms.value,
-      turnstileToken: turnstileToken.value ?? undefined,
+      turnstileToken: turnstileToken.value!,
     })
-    if (auth.isAuthenticated) await router.replace('/')
-    else error.value = 'Conta criada, mas requer aprovação. Aguarde liberação.'
+    await router.replace({ name: 'verify-email', query: { id: flow.verificationId } })
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro ao cadastrar'
   } finally {
@@ -42,9 +41,9 @@ async function submit() {
   <main class="mx-auto max-w-sm p-4">
     <h1 class="text-2xl font-bold">Criar conta</h1>
     <form class="mt-4 space-y-3" @submit.prevent="submit">
-      <input v-model="name" type="text" required placeholder="Nome" class="w-full rounded border p-2" />
-      <input v-model="phone" type="tel" required placeholder="WhatsApp (44) 99999-9999" class="w-full rounded border p-2" autocomplete="tel" />
-      <input v-model="email" type="email" placeholder="Email (opcional)" class="w-full rounded border p-2" autocomplete="email" />
+      <input v-model="name" type="text" required placeholder="Nome" class="w-full rounded border p-2" autocomplete="name" />
+      <input v-model="phone" type="tel" placeholder="WhatsApp (opcional)" class="w-full rounded border p-2" autocomplete="tel" />
+      <input v-model="email" type="email" required placeholder="Email" class="w-full rounded border p-2" autocomplete="email" />
       <input v-model="password" type="password" required minlength="8" placeholder="Senha (mín. 8)" class="w-full rounded border p-2" autocomplete="new-password" />
       <label class="flex items-start gap-2 text-sm text-gray-700">
         <input v-model="acceptedTerms" type="checkbox" required class="mt-1" />

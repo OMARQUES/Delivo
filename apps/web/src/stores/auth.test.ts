@@ -3,7 +3,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useAuthStore } from './auth'
 
 const tokens = { accessToken: 'acc-1', refreshToken: 'ref-1' }
-const user = { id: 'u1', name: 'Ana', role: 'CUSTOMER', status: 'ACTIVE', phone: '44', email: null }
+const user = { id: 'u1', name: 'Ana', role: 'CUSTOMER', status: 'ACTIVE', phone: '44', email: 'ana@example.test' }
+const verificationId = '123e4567-e89b-42d3-a456-426614174000'
+const flow = {
+  verificationId,
+  expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+  resendAt: new Date(Date.now() + 60_000).toISOString(),
+}
 
 function mockFetchOnce(status: number, body: unknown) {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })))
@@ -12,6 +18,7 @@ function mockFetchOnce(status: number, body: unknown) {
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
+  sessionStorage.clear()
   vi.restoreAllMocks()
 })
 
@@ -23,6 +30,9 @@ describe('auth store', () => {
     expect(store.user?.name).toBe('Ana')
     expect(store.isAuthenticated).toBe(true)
     expect(JSON.parse(localStorage.getItem('delivery.auth')!)).toMatchObject(tokens)
+    const body = JSON.parse(String((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![1]!.body))
+    expect(body).toMatchObject({ email: 'ana@email.com', password: 'senha123' })
+    expect(body).not.toHaveProperty('identifier')
   })
 
   it('login failure surfaces error message and stays logged out', async () => {
@@ -63,23 +73,56 @@ describe('auth store', () => {
     expect(store.accessToken).toBe('acc-2')
   })
 
-  it('sends Turnstile tokens on login and registration', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ user, ...tokens }), { status: 200 }))
+  it('starts CUSTOMER registration without creating a session or storing secrets', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => new Response(JSON.stringify(flow), { status: 202 }),
+    )
     vi.stubGlobal('fetch', fetchMock)
     const store = useAuthStore()
 
-    await store.login('ana@email.com', 'senha123', 'login-token')
-    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>
-    expect(JSON.parse(String(calls[0]![1]!.body))).toMatchObject({ turnstileToken: 'login-token' })
-
-    await store.register({
+    await expect(store.registerCustomer({
       name: 'Ana',
-      phone: '44',
       email: 'ana@email.com',
-      password: 'senha123',
+      password: 'safe-pass-123',
       acceptedTerms: true,
       turnstileToken: 'register-token',
+    })).resolves.toEqual(flow)
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))
+    expect(body).toEqual({
+      name: 'Ana', email: 'ana@email.com', password: 'safe-pass-123',
+      acceptedTerms: true, role: 'CUSTOMER', turnstileToken: 'register-token',
     })
-    expect(JSON.parse(String(calls[1]![1]!.body))).toMatchObject({ turnstileToken: 'register-token' })
+    expect(store.isAuthenticated).toBe(false)
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
+    const stored = sessionStorage.getItem(`delivery.auth.verification.${verificationId}`)
+    expect(stored).toBeTruthy()
+    expect(stored).not.toContain('safe-pass-123')
+    expect(stored).not.toContain('ana@email.com')
+  })
+
+  it('persists CUSTOMER session only after email confirmation and clears flow timing', async () => {
+    sessionStorage.setItem(`delivery.auth.verification.${verificationId}`, JSON.stringify(flow))
+    mockFetchOnce(200, { kind: 'CUSTOMER_SESSION', user, ...tokens })
+    const store = useAuthStore()
+
+    await expect(store.confirmEmail(verificationId, '123456')).resolves.toMatchObject({ kind: 'CUSTOMER_SESSION' })
+    expect(store.isAuthenticated).toBe(true)
+    expect(localStorage.getItem('delivery.auth')).toContain('acc-1')
+    expect(sessionStorage.getItem(`delivery.auth.verification.${verificationId}`)).toBeNull()
+  })
+
+  it('resends with optional Turnstile and stores only replacement timing', async () => {
+    const replacement = { ...flow, expiresAt: new Date(Date.now() + 20 * 60_000).toISOString() }
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => new Response(JSON.stringify(replacement), { status: 202 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useAuthStore()
+
+    await store.resendEmail(verificationId, 'resend-token')
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))
+    expect(body).toEqual({ verificationId, turnstileToken: 'resend-token' })
+    expect(sessionStorage.getItem(`delivery.auth.verification.${verificationId}`)).toContain(replacement.expiresAt)
   })
 })

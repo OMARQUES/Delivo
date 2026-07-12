@@ -7,6 +7,7 @@ export const router = createRouter({
     { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
     { path: '/cadastro', name: 'register', component: () => import('../views/RegisterView.vue') },
+    { path: '/verificar-email', name: 'verify-email', component: () => import('../views/VerifyEmailView.vue') },
     {
       path: '/loja',
       component: () => import('../views/store/StoreLayout.vue'),
