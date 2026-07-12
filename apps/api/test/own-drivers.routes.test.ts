@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { inArray } from 'drizzle-orm'
+import { saoPauloDate } from '@delivery/shared'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 
@@ -90,7 +91,7 @@ describe('termos e reajuste via HTTP', () => {
   it('somente o entregador dono responde autorização excepcional', async () => {
     const now = new Date()
     const [authorization] = await testDb.insert(shiftStartAuthorizations).values({ storeDriverId: linkId,
-      workDate: now.toISOString().slice(0, 10), authorizedUntil: new Date(now.getTime() + 60_000),
+      workDate: saoPauloDate(now), authorizedUntil: new Date(now.getTime() + 60_000),
       scheduledStartAt: new Date(now.getTime() - 60_000), scheduledEndAt: new Date(now.getTime() + 120_000),
       dailyRateCents: 5_000, perDeliveryCents: 500, note: 'Teste de ownership',
     }).returning()
