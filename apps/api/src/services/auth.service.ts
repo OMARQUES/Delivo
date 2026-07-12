@@ -3,6 +3,7 @@ import type { RegisterInput, LoginInput } from '@delivery/shared/schemas'
 import { normalizePhone } from '@delivery/shared/schemas'
 import type { Db } from '../db/client'
 import { authProviders, refreshTokens, stores, users } from '../db/schema'
+import type { DbTx } from '../db/types'
 import { hashPassword, verifyPassword } from '../lib/password'
 import {
   generateRefreshToken,
@@ -28,7 +29,7 @@ export class AuthError extends Error {
  * Drizzle embrulha o erro em DrizzleQueryError, então o código do driver
  * fica em `e.cause.code` (o topo não tem `.code`).
  */
-function isUniqueViolation(e: unknown): boolean {
+export function isUniqueViolation(e: unknown): boolean {
   const code = (e as { code?: string; cause?: { code?: string } })?.code
   const causeCode = (e as { cause?: { code?: string } })?.cause?.code
   return code === '23505' || causeCode === '23505'
@@ -43,27 +44,37 @@ export type PublicUser = {
   email: string | null
 }
 
-function toPublic(u: typeof users.$inferSelect): PublicUser {
+export function toPublicUser(u: typeof users.$inferSelect): PublicUser {
   return { id: u.id, name: u.name, role: u.role, status: u.status, phone: u.phone, email: u.email }
+}
+
+export async function issueSessionTokens(
+  tx: DbTx,
+  user: PublicUser,
+  tokenVersion: number,
+  secret: string,
+  now = new Date(),
+  familyId: string = crypto.randomUUID(),
+) {
+  const accessToken = await signAccessToken(
+    { sub: user.id, role: user.role, name: user.name, tokenVersion },
+    secret,
+    familyId,
+    now,
+  )
+  const refresh = await generateRefreshToken()
+  await tx.insert(refreshTokens).values({
+    userId: user.id,
+    tokenHash: refresh.hash,
+    familyId,
+    expiresAt: refreshExpiry(now),
+  })
+  return { accessToken, refreshToken: refresh.token }
 }
 
 async function issueTokens(db: Db, user: PublicUser, tokenVersion: number, secret: string, familyId?: string) {
   const resolvedFamilyId = familyId ?? crypto.randomUUID()
-  const accessToken = await signAccessToken(
-    { sub: user.id, role: user.role, name: user.name, tokenVersion },
-    secret,
-    resolvedFamilyId,
-  )
-  const { token, hash } = await generateRefreshToken()
-  await db.transaction(async (tx) => {
-    await tx.insert(refreshTokens).values({
-      userId: user.id,
-      tokenHash: hash,
-      familyId: resolvedFamilyId,
-      expiresAt: refreshExpiry(),
-    })
-  })
-  return { accessToken, refreshToken: token }
+  return db.transaction((tx) => issueSessionTokens(tx, user, tokenVersion, secret, new Date(), resolvedFamilyId))
 }
 
 export async function registerUser(db: Db, input: RegisterInput, secret: string) {
@@ -108,7 +119,7 @@ export async function registerUser(db: Db, input: RegisterInput, secret: string)
     passwordHash: await hashPassword(input.password),
   })
 
-  const pub = toPublic(user)
+  const pub = toPublicUser(user)
   if (status === 'PENDING') return { user: pub, accessToken: null, refreshToken: null }
   return { user: pub, ...(await issueTokens(db, pub, user.tokenVersion, secret)) }
 }
@@ -167,7 +178,7 @@ export async function loginUser(db: Db, input: LoginInput, secret: string) {
     throw new AuthError('Credenciais inválidas', 401)
 
   await assertLoginable(db, user)
-  const pub = toPublic(user)
+  const pub = toPublicUser(user)
   return { user: pub, ...(await issueTokens(db, pub, user.tokenVersion, secret)) }
 }
 
@@ -201,7 +212,7 @@ export async function rotateRefreshToken(db: Db, rawToken: string, secret: strin
     if (!user) throw new AuthError('Sessão inválida', 401)
     await assertLoginable(tx, user)
 
-    const pub = toPublic(user)
+    const pub = toPublicUser(user)
     const accessToken = await signAccessToken(
       { sub: pub.id, role: pub.role, name: pub.name, tokenVersion: user.tokenVersion },
       secret,

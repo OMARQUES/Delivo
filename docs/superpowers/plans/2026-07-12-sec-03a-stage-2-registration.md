@@ -143,7 +143,7 @@ export async function resendRegistrationVerification(db: Db, input: ResendVerifi
 
 - [ ] **Step 1: Write failing service tests**
 
-Test no `users` row before confirmation; pending password hash only; confirmation creates CUSTOMER ACTIVE/session; DRIVER PENDING_APPROVAL/no session; duplicate active email returns synthetic shape/no pending row; existing-account notice max once/day; two independent attempts cannot transfer password/profile; concurrent confirmations create one user/provider; losing flow generic; resend new ID invalidates old and preserves 24h absolute expiry; provider/outbox failure after transaction leaves retryable flow.
+Test no `users` row before confirmation; pending password hash only; confirmation creates CUSTOMER ACTIVE/session; DRIVER PENDING_APPROVAL/no session; duplicate active email returns synthetic shape/no pending row; existing-account notice max once/day; two independent attempts cannot transfer password/profile; concurrent confirmations create one user/provider; losing flow generic; resend creates a new internal challenge ID while preserving the public pending-registration `verificationId`, invalidates the old challenge, and preserves the 24h absolute expiry; provider/outbox failure after transaction leaves retryable flow. Keeping the public flow ID stable is required so the email link remains usable across resends and matches the persistence design.
 
 - [ ] **Step 2: Confirm RED**
 
@@ -165,6 +165,8 @@ export type IdentityContext = {
 Generate access/refresh material before entering final confirmation transaction where needed; insert refresh-token family in the same transaction as user/provider. Catch only SQLSTATE `23505` for user email/provider race; close losing pending attempt without updating existing account. Synthetic IDs use `crypto.randomUUID()` and real-looking timestamps.
 
 For challenge confirmation, branch on `verifyAndConsumeChallenge` inside the transaction. Return `{ ok: false }` unchanged so failed-attempt accounting commits; convert its `ChallengeError` to the public generic error only after `db.transaction(...)` resolves.
+
+Registration resend is non-enumerating: invalid, synthetic, consumed, expired, cooldown-blocked, or concurrently lost flows return the same `202` flow shape as a successful resend, preserve the submitted public `verificationId`, and set internal `outboxId` to `null`. They perform no identity mutation or email send. Rate-limit and adaptive Turnstile failures still occur before service execution. Returning `FLOW_INVALID_OR_EXPIRED` here would let an attacker distinguish an existing-account synthetic registration from a real pending registration.
 
 - [ ] **Step 4: Confirm GREEN and commit**
 
