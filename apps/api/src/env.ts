@@ -6,6 +6,9 @@ export type Env = {
   HYPERDRIVE: Hyperdrive
   BUCKET: R2Bucket
   JWT_SECRET: string
+  RATE_LIMIT_HMAC_SECRET: string
+  TURNSTILE_SECRET_KEY: string
+  TURNSTILE_EXPECTED_HOSTNAMES: string
   ALLOWED_ORIGINS: string
   FIREBASE_PROJECT_ID?: string
   FIREBASE_SERVICE_ACCOUNT?: string
