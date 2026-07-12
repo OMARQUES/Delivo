@@ -6,6 +6,7 @@ export const router = createRouter({
   routes: [
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
     { path: '/cadastro', name: 'register', component: () => import('../views/RegisterView.vue') },
+    { path: '/verificar-email', name: 'verify-email', component: () => import('../views/VerifyEmailView.vue') },
     {
       path: '/',
       component: () => import('../components/DriverLayout.vue'),

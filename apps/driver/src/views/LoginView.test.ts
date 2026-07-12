@@ -28,7 +28,6 @@ describe('driver LoginView', () => {
         { status: 401 },
       ))
       .mockResolvedValueOnce(new Response(JSON.stringify({ user: customer, ...tokens }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)
 
     const wrapper = mount(LoginView, {
@@ -43,7 +42,7 @@ describe('driver LoginView', () => {
       },
     })
 
-    await wrapper.find('input[autocomplete="username"]').setValue('ana@email.com')
+    await wrapper.find('input[autocomplete="email"]').setValue('ana@email.com')
     await wrapper.find('input[autocomplete="current-password"]').setValue('senha123')
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
@@ -54,10 +53,12 @@ describe('driver LoginView', () => {
     await flushPromises()
 
     expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body))).toMatchObject({
-      identifier: 'ana@email.com',
+      email: 'ana@email.com',
       password: 'senha123',
       turnstileToken: 'tok-1',
     })
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body))).not.toHaveProperty('identifier')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('Esta conta não é de entregador')
     expect(localStorage.getItem('delivery.driver.auth')).toBeNull()
     expect(replace).not.toHaveBeenCalled()

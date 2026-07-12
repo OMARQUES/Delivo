@@ -7,22 +7,91 @@ export type SessionUser = {
   role: 'CUSTOMER' | 'STORE' | 'DRIVER' | 'ADMIN'
   status: 'ACTIVE' | 'PENDING_EMAIL' | 'PENDING_APPROVAL' | 'BLOCKED'
   phone: string | null
-  email: string | null
+  email: string
 }
 
-type AuthResponse = { user: SessionUser; accessToken: string | null; refreshToken: string | null }
+type AuthResponse = { user: SessionUser; accessToken: string; refreshToken: string }
+export type VerificationFlow = { verificationId: string; expiresAt: string; resendAt: string }
+type ConfirmationResult =
+  | { kind: 'CUSTOMER_SESSION'; user: SessionUser; accessToken: string; refreshToken: string }
+  | { kind: 'DRIVER_PENDING_APPROVAL'; user: SessionUser }
+type VerificationTiming = { expiresAt?: string; resendAt?: string }
 
 const STORAGE_KEY = 'delivery.driver.auth'
+const FLOW_PREFIX = 'delivery.driver.auth.verification.'
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 type Persisted = { user: SessionUser; accessToken: string; refreshToken: string }
 
 /** Single-flight: só um refresh em voo; 401s paralelos aguardam a mesma promise. */
 let refreshInFlight: Promise<boolean> | null = null
 
+function flowKey(verificationId: string) {
+  if (!UUID.test(verificationId)) throw new Error('Fluxo de verificação inválido')
+  return `${FLOW_PREFIX}${verificationId}`
+}
+
+function validTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
+}
+
+export function saveVerificationTiming(flow: VerificationFlow) {
+  if (!validTimestamp(flow.expiresAt) || !validTimestamp(flow.resendAt)) {
+    throw new Error('Fluxo de verificação inválido')
+  }
+  sessionStorage.setItem(flowKey(flow.verificationId), JSON.stringify({
+    expiresAt: flow.expiresAt,
+    resendAt: flow.resendAt,
+  }))
+}
+
+export function loadVerificationTiming(verificationId: string): VerificationTiming | null {
+  try {
+    const raw = sessionStorage.getItem(flowKey(verificationId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as VerificationTiming
+    return {
+      expiresAt: validTimestamp(parsed.expiresAt) ? parsed.expiresAt : undefined,
+      resendAt: validTimestamp(parsed.resendAt) ? parsed.resendAt : undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function deferVerificationResend(verificationId: string, resendAt: string) {
+  if (!validTimestamp(resendAt)) return
+  const current = loadVerificationTiming(verificationId) ?? {}
+  sessionStorage.setItem(flowKey(verificationId), JSON.stringify({ ...current, resendAt }))
+}
+
+export function clearVerificationTiming(verificationId: string) {
+  try {
+    sessionStorage.removeItem(flowKey(verificationId))
+  } catch {
+    // invalid public flow IDs never become storage keys
+  }
+}
+
+function isDriverSession(value: unknown): value is AuthResponse {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<AuthResponse>
+  return Boolean(candidate.user
+      && candidate.user.role === 'DRIVER'
+      && candidate.user.status === 'ACTIVE')
+    && typeof candidate.accessToken === 'string' && candidate.accessToken.length > 0
+    && typeof candidate.refreshToken === 'string' && candidate.refreshToken.length > 0
+}
+
 function load(): Persisted | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as Persisted) : null
+    if (!raw) return null
+    const saved = JSON.parse(raw) as Persisted
+    if (isDriverSession(saved)) return saved
+    localStorage.removeItem(STORAGE_KEY)
+    return null
   } catch {
+    localStorage.removeItem(STORAGE_KEY)
     return null
   }
 }
@@ -52,6 +121,7 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     setSession(r: AuthResponse) {
+      if (!isDriverSession(r)) throw new Error('Esta conta não é de entregador')
       this.user = r.user
       this.accessToken = r.accessToken
       this.refreshToken = r.refreshToken
@@ -63,14 +133,36 @@ export const useAuthStore = defineStore('auth', {
       this.refreshToken = null
       this.persist()
     },
-    async login(identifier: string, password: string, turnstileToken?: string) {
-      const r = await api<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password, turnstileToken }) })
+    async login(email: string, password: string, turnstileToken?: string) {
+      const r = await api<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password, turnstileToken }) })
       this.setSession(r)
     },
-    async register(input: { name: string; phone: string; email?: string; password: string; acceptedTerms: boolean; role?: 'CUSTOMER' | 'DRIVER'; turnstileToken?: string }) {
-      const r = await api<AuthResponse>('/auth/register', { method: 'POST', body: JSON.stringify({ ...input, role: 'DRIVER' }) })
-      if (r.accessToken) this.setSession(r)
-      return r.user
+    async registerDriver(input: { name: string; phone: string; email: string; password: string; acceptedTerms: boolean; turnstileToken: string }) {
+      const flow = await api<VerificationFlow>('/auth/register', {
+        method: 'POST', body: JSON.stringify({ ...input, role: 'DRIVER' }),
+      })
+      saveVerificationTiming(flow)
+      return flow
+    },
+    async confirmEmail(verificationId: string, code: string) {
+      const result = await api<ConfirmationResult>('/auth/verification/confirm', {
+        method: 'POST', body: JSON.stringify({ verificationId, code }),
+      })
+      if (result.kind !== 'DRIVER_PENDING_APPROVAL'
+        || result.user.role !== 'DRIVER'
+        || result.user.status !== 'PENDING_APPROVAL') {
+        clearVerificationTiming(verificationId)
+        throw new Error('Esta conta não é de entregador')
+      }
+      clearVerificationTiming(verificationId)
+      return result
+    },
+    async resendEmail(verificationId: string, turnstileToken?: string) {
+      const flow = await api<VerificationFlow>('/auth/verification/resend', {
+        method: 'POST', body: JSON.stringify({ verificationId, turnstileToken }),
+      })
+      saveVerificationTiming(flow)
+      return flow
     },
     async tryRefresh(): Promise<boolean> {
       if (!this.refreshToken) return false
