@@ -77,10 +77,10 @@ export const RegisterSchema = StartRegistrationSchema
 export type RegisterInput = z.infer<typeof RegisterSchema>
 
 export const LoginSchema = z.object({
-  identifier: z.string().trim().min(3).max(254),
+  email: NormalizedEmail,
   password: z.string().min(1).max(128),
   turnstileToken: TurnstileTokenSchema,
-})
+}).strict()
 export type LoginInput = z.infer<typeof LoginSchema>
 
 export const RefreshSchema = z.object({

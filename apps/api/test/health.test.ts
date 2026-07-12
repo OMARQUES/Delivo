@@ -67,7 +67,7 @@ describe('security baseline', () => {
   })
 
   it('rejects oversized JSON, oversized global bodies and wrong JSON media type', async () => {
-    const oversizedJson = JSON.stringify({ identifier: 'x'.repeat(257 * 1024), password: 'x' })
+    const oversizedJson = JSON.stringify({ email: 'x'.repeat(257 * 1024), password: 'x' })
     const json = await app.request('/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: oversizedJson,
     }, env)

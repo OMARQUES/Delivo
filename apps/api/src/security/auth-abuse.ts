@@ -45,16 +45,16 @@ export async function protectRegistration(
 
 export async function protectLogin(
   c: Context<AppContext>,
-  input: { identifier: string; turnstileToken?: string },
+  input: { email: string; turnstileToken?: string },
 ): Promise<void> {
   const ip = clientIp(c)
   await consumeAll(c, [POLICIES.loginIp15Minutes], ip)
 
   const limiter = createRequestRateLimiter(c)
-  const cooldown = await limiter.inspect(POLICIES.loginFailureIdentityHour, input.identifier)
+  const cooldown = await limiter.inspect(POLICIES.loginFailureIdentityHour, input.email)
   if (!cooldown.allowed) rateLimited(cooldown)
 
-  const adaptive = await limiter.inspect(POLICIES.loginFailureIdentity15Minutes, input.identifier)
+  const adaptive = await limiter.inspect(POLICIES.loginFailureIdentity15Minutes, input.email)
   if (adaptive.count >= POLICIES.loginFailureIdentity15Minutes.limit) {
     if (!input.turnstileToken) {
       throw new SecurityHttpError(403, 'TURNSTILE_REQUIRED', TURNSTILE_REQUIRED_MESSAGE)
@@ -67,18 +67,18 @@ export async function protectLogin(
   }
 }
 
-export async function recordLoginFailure(c: Context<AppContext>, identifier: string): Promise<void> {
+export async function recordLoginFailure(c: Context<AppContext>, email: string): Promise<void> {
   const limiter = createRequestRateLimiter(c)
-  await limiter.consume(POLICIES.loginFailureIdentity15Minutes, identifier)
-  await limiter.consume(POLICIES.loginFailureIdentityHour, identifier)
+  await limiter.consume(POLICIES.loginFailureIdentity15Minutes, email)
+  await limiter.consume(POLICIES.loginFailureIdentityHour, email)
 }
 
-export async function clearLoginFailures(c: Context<AppContext>, identifier: string): Promise<void> {
+export async function clearLoginFailures(c: Context<AppContext>, email: string): Promise<void> {
   const limiter = createRequestRateLimiter(c)
   await limiter.clear([
     POLICIES.loginFailureIdentity15Minutes,
     POLICIES.loginFailureIdentityHour,
-  ], identifier)
+  ], email)
 }
 
 export async function protectRefresh(c: Context<AppContext>, refreshToken: string): Promise<void> {

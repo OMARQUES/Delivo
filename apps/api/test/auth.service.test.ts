@@ -1,5 +1,18 @@
-import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
 import { createVerifiedTestAccount, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+
+const verifyPasswordCall = vi.hoisted(() => vi.fn())
+
+vi.mock('../src/lib/password', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/password')>('../src/lib/password')
+  return {
+    ...actual,
+    verifyPassword: async (password: string, stored: string) => {
+      verifyPasswordCall(password, stored)
+      return actual.verifyPassword(password, stored)
+    },
+  }
+})
 import {
   loginUser,
   rotateRefreshToken,
@@ -8,6 +21,7 @@ import {
 } from '../src/services/auth.service'
 import { createStoreWithOwner, setStoreSecurityStatus } from '../src/services/store.service'
 import { authProviders, users } from '../src/db/schema'
+import { hashPassword } from '../src/lib/password'
 
 const SECRET = 'test-secret'
 const ana = {
@@ -19,38 +33,38 @@ const ana = {
 }
 
 beforeAll(migrateTestDb)
-beforeEach(truncateAll)
+beforeEach(async () => {
+  await truncateAll()
+  verifyPasswordCall.mockClear()
+})
 afterAll(closeTestDb)
 
 describe('loginUser', () => {
-  it('logs in by email and by phone', async () => {
+  it('logs in only by normalized email', async () => {
     await createVerifiedTestAccount(testDb, { ...ana, email: 'ana@email.com' }, SECRET)
-    const byEmail = await loginUser(testDb, { identifier: 'Ana@Email.com', password: 'senha123' }, SECRET)
+    const byEmail = await loginUser(testDb, { email: 'ana@email.com', password: 'senha123' }, SECRET)
     expect(byEmail.user.name).toBe('Ana')
-    const byPhone = await loginUser(testDb, { identifier: '(44) 99999-8888', password: 'senha123' }, SECRET)
-    expect(byPhone.user.name).toBe('Ana')
   })
 
   it('rejects wrong password and unknown identifier with same error', async () => {
     await createVerifiedTestAccount(testDb, ana, SECRET)
     await expect(
-      loginUser(testDb, { identifier: '44999998888', password: 'errada12' }, SECRET),
+      loginUser(testDb, { email: 'ana@email.com', password: 'errada12' }, SECRET),
     ).rejects.toThrow('Credenciais inválidas')
     await expect(
-      loginUser(testDb, { identifier: 'nao@existe.com', password: 'senha123' }, SECRET),
+      loginUser(testDb, { email: 'nao@existe.com', password: 'senha123' }, SECRET),
     ).rejects.toThrow('Credenciais inválidas')
   })
 
-  it('fails closed when a legacy phone identifier matches multiple accounts', async () => {
-    await createVerifiedTestAccount(testDb, { ...ana, email: 'first@example.test' }, SECRET)
-    await createVerifiedTestAccount(testDb, { ...ana, email: 'second@example.test' }, SECRET)
+  it('uses the same real dummy PBKDF2 path for unknown and missing-password accounts', async () => {
+    await expect(loginUser(
+      testDb,
+      { email: 'unknown@example.test', password: 'senha123' },
+      SECRET,
+    )).rejects.toThrow('Credenciais inválidas')
+    const unknownHash = verifyPasswordCall.mock.calls.at(-1)?.[1]
+    verifyPasswordCall.mockClear()
 
-    await expect(
-      loginUser(testDb, { identifier: '44999998888', password: 'senha123' }, SECRET),
-    ).rejects.toThrow('Credenciais inválidas')
-  })
-
-  it('rejects an existing non-password account with the same invalid-credentials error', async () => {
     const [user] = await testDb.insert(users).values({
       name: 'Google User',
       email: 'google@example.test',
@@ -65,15 +79,45 @@ describe('loginUser', () => {
     })
 
     await expect(
-      loginUser(testDb, { identifier: 'google@example.test', password: 'senha123' }, SECRET),
+      loginUser(testDb, { email: 'google@example.test', password: 'senha123' }, SECRET),
     ).rejects.toThrow('Credenciais inválidas')
+    const missingProviderHash = verifyPasswordCall.mock.calls.at(-1)?.[1]
+    expect(unknownHash).toMatch(/^pbkdf2\$100000\$/)
+    expect(missingProviderHash).toBe(unknownHash)
   })
 
   it('blocks PENDING_APPROVAL driver with specific message', async () => {
-    await createVerifiedTestAccount(testDb, { ...ana, role: 'DRIVER' }, SECRET)
+    await createVerifiedTestAccount(testDb, { ...ana, email: 'driver@example.test', role: 'DRIVER' }, SECRET)
     await expect(
-      loginUser(testDb, { identifier: '44999998888', password: 'senha123' }, SECRET),
+      loginUser(testDb, { email: 'driver@example.test', password: 'senha123' }, SECRET),
     ).rejects.toThrow('aguardando aprovação')
+  })
+
+  it('reveals account state only after the correct password', async () => {
+    const states = [
+      { status: 'PENDING_EMAIL' as const, email: 'pending-email@example.test', message: 'Confirme seu email' },
+      { status: 'PENDING_APPROVAL' as const, email: 'pending-approval@example.test', message: 'aguardando aprovação' },
+      { status: 'BLOCKED' as const, email: 'blocked@example.test', message: 'Conta bloqueada' },
+    ]
+    for (const state of states) {
+      const [user] = await testDb.insert(users).values({
+        name: state.status,
+        email: state.email,
+        role: state.status === 'PENDING_APPROVAL' ? 'DRIVER' : 'CUSTOMER',
+        status: state.status,
+        emailVerifiedAt: state.status === 'PENDING_EMAIL' ? null : new Date(),
+      }).returning()
+      await testDb.insert(authProviders).values({
+        userId: user!.id,
+        provider: 'PASSWORD',
+        passwordHash: await hashPassword('senha123'),
+      })
+
+      await expect(loginUser(testDb, { email: state.email, password: 'wrong-password' }, SECRET))
+        .rejects.toMatchObject({ status: 401, message: 'Credenciais inválidas' })
+      await expect(loginUser(testDb, { email: state.email, password: 'senha123' }, SECRET))
+        .rejects.toMatchObject({ status: 403, message: expect.stringContaining(state.message) })
+    }
   })
 
   it('does not issue a session while the store is suspended or closed', async () => {
@@ -86,7 +130,7 @@ describe('loginUser', () => {
 
     await expect(loginUser(
       testDb,
-      { identifier: 'dono@loja.test', password: 'senha123' },
+      { email: 'dono@loja.test', password: 'senha123' },
       SECRET,
     )).rejects.toMatchObject({ status: 403 })
   })

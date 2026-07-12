@@ -33,6 +33,7 @@ beforeEach(async () => {
   adminToken = await createTestSession({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Root' }, env.JWT_SECRET)
   const d = await createVerifiedTestAccount(testDb, {
     name: 'Duda',
+    email: 'driver@example.test',
     phone: '44911111111',
     password: 'senha123',
     role: 'DRIVER',
@@ -56,7 +57,7 @@ describe('/admin/drivers', () => {
     const body = (await list.json()) as { id: string; status: string }[]
     expect(body[0]).toMatchObject({ id: driverUserId, status: 'PENDING_APPROVAL' })
 
-    await expect(loginUser(testDb, { identifier: '44911111111', password: 'senha123' }, env.JWT_SECRET))
+    await expect(loginUser(testDb, { email: 'driver@example.test', password: 'senha123' }, env.JWT_SECRET))
       .rejects.toThrow('aguardando aprovação')
 
     const patch = await req(`/admin/drivers/${driverUserId}/status`, {
@@ -64,7 +65,7 @@ describe('/admin/drivers', () => {
       body: JSON.stringify({ status: 'ACTIVE' }),
     })
     expect(patch.status).toBe(200)
-    const login = await loginUser(testDb, { identifier: '44911111111', password: 'senha123' }, env.JWT_SECRET)
+    const login = await loginUser(testDb, { email: 'driver@example.test', password: 'senha123' }, env.JWT_SECRET)
     expect(login.accessToken).toBeTruthy()
   })
 
@@ -125,7 +126,7 @@ describe('/admin/drivers', () => {
     })
     const session = await loginUser(
       testDb,
-      { identifier: '44911111111', password: 'senha123' },
+      { email: 'driver@example.test', password: 'senha123' },
       env.JWT_SECRET,
     )
     expect((await req('/auth/me', {}, session.accessToken)).status).toBe(200)

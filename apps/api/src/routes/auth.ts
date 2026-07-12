@@ -199,10 +199,10 @@ authRoutes.openapi(
     await protectLogin(c, input)
     try {
       const result = await loginUser(c.get('db'), input, c.env.JWT_SECRET)
-      await clearLoginFailures(c, input.identifier)
+      await clearLoginFailures(c, input.email)
       return c.json(result, 200)
     } catch (e) {
-      if (e instanceof AuthError && e.status === 401) await recordLoginFailure(c, input.identifier)
+      if (e instanceof AuthError && e.status === 401) await recordLoginFailure(c, input.email)
       rethrow(e)
     }
   },

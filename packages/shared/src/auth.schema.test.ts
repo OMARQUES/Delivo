@@ -27,28 +27,30 @@ describe('RegisterSchema', () => {
 })
 
 describe('LoginSchema', () => {
-  it('accepts identifier (email or phone) + password', () => {
-    expect(LoginSchema.parse({ identifier: 'a@b.com', password: 'senha123' }).identifier).toBe('a@b.com')
-    expect(LoginSchema.parse({ identifier: '(44) 99999-8888', password: 'senha123' })).toBeTruthy()
+  it('requires and normalizes email, rejecting phone and legacy selectors', () => {
+    expect(LoginSchema.parse({ email: ' Ana@Email.COM ', password: 'senha123' }).email).toBe('ana@email.com')
+    expect(() => LoginSchema.parse({ email: '(44) 99999-8888', password: 'senha123' })).toThrow()
+    expect(() => LoginSchema.parse({ identifier: 'a@b.com', password: 'senha123' })).toThrow()
+    expect(() => LoginSchema.parse({ email: 'a@b.com', identifier: 'other@b.com', password: 'senha123' })).toThrow()
   })
 
   it('accepts a missing Turnstile token', () => {
-    const input = { identifier: 'a@b.com', password: 'senha123' }
+    const input = { email: 'a@b.com', password: 'senha123' }
     expect(LoginSchema.parse(input).turnstileToken).toBeUndefined()
   })
 
   it('accepts and returns a supplied Turnstile token', () => {
-    const input = { identifier: 'a@b.com', password: 'senha123', turnstileToken: 'test-token' }
+    const input = { email: 'a@b.com', password: 'senha123', turnstileToken: 'test-token' }
     expect(LoginSchema.parse(input).turnstileToken).toBe('test-token')
   })
 
   it('rejects Turnstile tokens longer than 2048 characters', () => {
-    const input = { identifier: 'a@b.com', password: 'senha123', turnstileToken: 'a'.repeat(2049) }
+    const input = { email: 'a@b.com', password: 'senha123', turnstileToken: 'a'.repeat(2049) }
     expect(() => LoginSchema.parse(input)).toThrow()
   })
 
   it('rejects empty and whitespace-only Turnstile tokens', () => {
-    const input = { identifier: 'a@b.com', password: 'senha123' }
+    const input = { email: 'a@b.com', password: 'senha123' }
     expect(() => LoginSchema.parse({ ...input, turnstileToken: '' })).toThrow()
     expect(() => LoginSchema.parse({ ...input, turnstileToken: '   ' })).toThrow()
   })

@@ -307,7 +307,7 @@ describe('POST /auth/verification/*', () => {
 describe('POST /auth/login + GET /auth/me', () => {
   it('login → tokens → /me com bearer', async () => {
     await seedAccount()
-    const login = await post('/auth/login', { identifier: '44999998888', password: 'senha123' })
+    const login = await post('/auth/login', { email: 'ana@email.com', password: 'senha123' })
     expect(login.status).toBe(200)
     const loginBody = (await login.json()) as AuthBody
     expect(loginBody.user).not.toHaveProperty('tokenVersion')
@@ -321,18 +321,22 @@ describe('POST /auth/login + GET /auth/me', () => {
     expect((await app.request('/auth/me', { headers: { Authorization: 'Bearer lixo' } }, env)).status).toBe(401)
   })
   it('login errado → 401 envelope', async () => {
-    const res = await post('/auth/login', { identifier: 'x@y.com', password: 'senha123' })
+    const res = await post('/auth/login', { email: 'x@y.com', password: 'senha123' })
     expect(res.status).toBe(401)
     expect(await res.json()).toMatchObject({ error: 'Credenciais inválidas' })
   })
+  it('rejects phone-shaped and legacy identifier login bodies', async () => {
+    expect((await post('/auth/login', { email: '44999998888', password: 'senha123' })).status).toBe(400)
+    expect((await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })).status).toBe(400)
+  })
   it('requires Turnstile after five failures, then allows a challenged attempt and clears failures after success', async () => {
     await seedAccount()
-    for (let i = 0; i < 5; i++) {
-      const failed = await post('/auth/login', { identifier: 'ana@email.com', password: 'errada123' })
+    for (const email of [' ANA@email.com ', 'Ana@Email.com', 'ana@email.com', 'ANA@EMAIL.COM', 'ana@email.com']) {
+      const failed = await post('/auth/login', { email, password: 'errada123' })
       expect(failed.status).toBe(401)
     }
 
-    const required = await post('/auth/login', { identifier: 'ana@email.com', password: 'errada123' })
+    const required = await post('/auth/login', { email: 'ana@email.com', password: 'errada123' })
     expect(required.status).toBe(403)
     expect(await required.json()).toEqual({
       error: 'Verificação de segurança necessária.',
@@ -340,7 +344,7 @@ describe('POST /auth/login + GET /auth/me', () => {
     })
 
     const challenged = await post('/auth/login', {
-      identifier: 'ana@email.com',
+      email: 'ana@email.com',
       password: 'errada123',
       turnstileToken: 'login-token',
     })
@@ -352,13 +356,13 @@ describe('POST /auth/login + GET /auth/me', () => {
     }))
 
     const success = await post('/auth/login', {
-      identifier: 'ana@email.com',
+      email: 'ana@email.com',
       password: 'senha123',
       turnstileToken: 'login-token',
     })
     expect(success.status).toBe(200)
 
-    const afterClear = await post('/auth/login', { identifier: 'ana@email.com', password: 'errada123' })
+    const afterClear = await post('/auth/login', { email: 'ana@email.com', password: 'errada123' })
     expect(afterClear.status).toBe(401)
   })
 
@@ -366,7 +370,7 @@ describe('POST /auth/login + GET /auth/me', () => {
     await seedAccount({ phone: '44911112222', email: 'cooldown@example.test' })
     for (let i = 0; i < 9; i++) {
       const failed = await post('/auth/login', {
-        identifier: 'cooldown@example.test',
+        email: 'cooldown@example.test',
         password: 'errada123',
         turnstileToken: i >= 5 ? 'login-token' : undefined,
       })
@@ -374,14 +378,14 @@ describe('POST /auth/login + GET /auth/me', () => {
     }
 
     const tenth = await post('/auth/login', {
-      identifier: 'cooldown@example.test',
+      email: 'cooldown@example.test',
       password: 'errada123',
       turnstileToken: 'login-token',
     })
     expect(tenth.status).toBe(401)
 
     const blocked = await post('/auth/login', {
-      identifier: 'cooldown@example.test',
+      email: 'cooldown@example.test',
       password: 'senha123',
       turnstileToken: 'login-token',
     })
@@ -396,14 +400,14 @@ describe('POST /auth/login + GET /auth/me', () => {
 describe('POST /auth/refresh + /auth/logout', () => {
   it('refresh rotates; reuse kills family; logout revokes the active access session', async () => {
     await seedAccount()
-    const login = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
+    const login = await post('/auth/login', { email: 'ana@email.com', password: 'senha123' })
     const { refreshToken } = (await login.json()) as AuthBody
     const r1 = await post('/auth/refresh', { refreshToken })
     expect(r1.status).toBe(200)
     const { refreshToken: rt2 } = (await r1.json()) as AuthBody
     expect((await post('/auth/refresh', { refreshToken })).status).toBe(401)
     expect((await post('/auth/refresh', { refreshToken: rt2 })).status).toBe(401)
-    const login2 = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
+    const login2 = await post('/auth/login', { email: 'ana@email.com', password: 'senha123' })
     const { refreshToken: rt3, accessToken: access3 } = (await login2.json()) as AuthBody
     expect((await app.request('/auth/me', { headers: { Authorization: `Bearer ${access3}` } }, env)).status).toBe(200)
     expect((await app.request('/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${access3}` } }, env)).status).toBe(204)
@@ -413,8 +417,8 @@ describe('POST /auth/refresh + /auth/logout', () => {
 
   it('logout-all invalidates every device immediately', async () => {
     await seedAccount()
-    const first = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
-    const second = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
+    const first = await post('/auth/login', { email: 'ana@email.com', password: 'senha123' })
+    const second = await post('/auth/login', { email: 'ana@email.com', password: 'senha123' })
     const { accessToken: accessA } = (await first.json()) as AuthBody
     const { accessToken: accessB } = (await second.json()) as AuthBody
 
@@ -427,7 +431,7 @@ describe('POST /auth/refresh + /auth/logout', () => {
 
   it('concurrent refresh reuse revokes the full session family', async () => {
     await seedAccount()
-    const login = await post('/auth/login', { identifier: 'ana@email.com', password: 'senha123' })
+    const login = await post('/auth/login', { email: 'ana@email.com', password: 'senha123' })
     const { refreshToken } = (await login.json()) as AuthBody
     const responses = await Promise.all([
       post('/auth/refresh', { refreshToken }),
@@ -441,7 +445,7 @@ describe('POST /auth/refresh + /auth/logout', () => {
 
   it('rate-limited refresh does not mark the token used or revoke its family', async () => {
     await seedAccount({ phone: '44922223333', email: 'refresh@example.test' })
-    const login = await post('/auth/login', { identifier: 'refresh@example.test', password: 'senha123' })
+    const login = await post('/auth/login', { email: 'refresh@example.test', password: 'senha123' })
     const { refreshToken } = (await login.json()) as AuthBody
     const limiter = new PostgresRateLimiter(testDb, env.RATE_LIMIT_HMAC_SECRET)
     for (let i = 0; i < POLICIES.refreshFingerprint10Minutes.limit; i++) {

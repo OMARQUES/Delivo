@@ -1,6 +1,5 @@
-import { and, eq, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { LoginInput } from '@delivery/shared/schemas'
-import { normalizePhone } from '@delivery/shared/schemas'
 import type { Db } from '../db/client'
 import { authProviders, refreshTokens, stores, users } from '../db/schema'
 import type { DbTx } from '../db/types'
@@ -98,37 +97,27 @@ async function assertLoginable(db: AuthReader, user: typeof users.$inferSelect) 
 }
 
 export async function loginUser(db: Db, input: LoginInput, secret: string) {
-  const raw = input.identifier.trim()
-  const asEmail = raw.toLowerCase()
-  const asPhone = normalizePhone(raw)
-  const candidates = await db
-    .select()
+  const [credential] = await db
+    .select({ user: users, passwordHash: authProviders.passwordHash })
     .from(users)
-    .where(
-      or(
-        sql`lower(${users.email}) = ${asEmail}`,
-        asPhone.length >= 10 ? eq(users.phone, asPhone) : sql`false`,
-      ),
-    )
-    .limit(2)
-  if (candidates.length !== 1) {
-    await verifyPassword(input.password, DUMMY_PASSWORD_HASH)
-    throw new AuthError('Credenciais inválidas', 401)
-  }
-  const user = candidates[0]!
-
-  const [provider] = await db
-    .select()
-    .from(authProviders)
-    .where(and(eq(authProviders.userId, user.id), eq(authProviders.provider, 'PASSWORD')))
+    .leftJoin(authProviders, and(
+      eq(authProviders.userId, users.id),
+      eq(authProviders.provider, 'PASSWORD'),
+    ))
+    .where(sql`lower(${users.email}) = ${input.email}`)
     .limit(1)
-  if (!provider?.passwordHash) {
+  if (!credential) {
     await verifyPassword(input.password, DUMMY_PASSWORD_HASH)
     throw new AuthError('Credenciais inválidas', 401)
   }
-  if (!(await verifyPassword(input.password, provider.passwordHash)))
+  if (!credential.passwordHash) {
+    await verifyPassword(input.password, DUMMY_PASSWORD_HASH)
+    throw new AuthError('Credenciais inválidas', 401)
+  }
+  if (!(await verifyPassword(input.password, credential.passwordHash)))
     throw new AuthError('Credenciais inválidas', 401)
 
+  const user = credential.user
   await assertLoginable(db, user)
   const pub = toPublicUser(user)
   return { user: pub, ...(await issueTokens(db, pub, user.tokenVersion, secret)) }
