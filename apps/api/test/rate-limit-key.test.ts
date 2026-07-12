@@ -63,6 +63,12 @@ describe('rate limit policies', () => {
       registerIdentityDay: { scope: 'register-identity-day', limit: 10, windowMs: 86_400_000, retentionMs: 172_800_000 },
       registerIpHour: { scope: 'register-ip-hour', limit: 10, windowMs: 3_600_000, retentionMs: 86_400_000 },
       registerIpDay: { scope: 'register-ip-day', limit: 30, windowMs: 86_400_000, retentionMs: 172_800_000 },
+      recoveryStartEmailHour: { scope: 'recovery-start-email-hour', limit: 5, windowMs: 3_600_000, retentionMs: 86_400_000 },
+      recoveryStartEmailDay: { scope: 'recovery-start-email-day', limit: 10, windowMs: 86_400_000, retentionMs: 172_800_000 },
+      recoveryStartIpHour: { scope: 'recovery-start-ip-hour', limit: 10, windowMs: 3_600_000, retentionMs: 86_400_000 },
+      recoveryStartIpDay: { scope: 'recovery-start-ip-day', limit: 30, windowMs: 86_400_000, retentionMs: 172_800_000 },
+      recoveryVerifyIpHour: { scope: 'recovery-verify-ip-hour', limit: 30, windowMs: 3_600_000, retentionMs: 86_400_000 },
+      ticketUseIpHour: { scope: 'identity-ticket-use-ip-hour', limit: 30, windowMs: 3_600_000, retentionMs: 86_400_000 },
       loginIp15Minutes: { scope: 'login-ip-15m', limit: 30, windowMs: 900_000, retentionMs: 3_600_000 },
       loginFailureIdentity15Minutes: { scope: 'login-failure-identity-15m', limit: 5, windowMs: 900_000, retentionMs: 3_600_000 },
       loginFailureIdentityHour: { scope: 'login-failure-identity-hour', limit: 10, windowMs: 3_600_000, retentionMs: 86_400_000, cooldownMs: 900_000 },
@@ -88,8 +94,15 @@ describe('rate limit policies', () => {
     expect(Object.entries(POLICIES)
       .filter(([, value]) => value.subjectKind === 'identity')
       .map(([name]) => name))
-      .toEqual(['registerIdentityHour', 'registerIdentityDay', 'loginFailureIdentity15Minutes', 'loginFailureIdentityHour'])
-    expect(Object.values(POLICIES).filter((value) => value.subjectKind === 'opaque')).toHaveLength(20)
+      .toEqual([
+        'registerIdentityHour',
+        'registerIdentityDay',
+        'recoveryStartEmailHour',
+        'recoveryStartEmailDay',
+        'loginFailureIdentity15Minutes',
+        'loginFailureIdentityHour',
+      ])
+    expect(Object.values(POLICIES).filter((value) => value.subjectKind === 'opaque')).toHaveLength(24)
 
     expect(Object.isFrozen(POLICIES)).toBe(true)
     for (const policy of Object.values(POLICIES)) {
