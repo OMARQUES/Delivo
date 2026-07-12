@@ -29,14 +29,24 @@ describe('rate limit keys', () => {
   })
 
   it('preserves opaque subjects outside identity scopes', async () => {
-    expect(await hashRateLimitKey('secret', 'refresh-fingerprint-10m', 'Token-A'))
-      .not.toBe(await hashRateLimitKey('secret', 'refresh-fingerprint-10m', 'token-a'))
+    expect(await hashRateLimitKey('secret', 'refresh-fingerprint-10m', 'Token-A', 'opaque'))
+      .not.toBe(await hashRateLimitKey('secret', 'refresh-fingerprint-10m', 'token-a', 'opaque'))
+  })
+
+  it('uses an explicit subject kind rather than inferring semantics from scope names', async () => {
+    expect(await hashRateLimitKey('secret', 'future-renamed-scope', ' Ana@Email.COM ', 'identity'))
+      .toBe(await hashRateLimitKey('secret', 'future-renamed-scope', 'ana@email.com', 'identity'))
+    expect(await hashRateLimitKey('secret', 'login-identity-looking', 'Token-A', 'opaque'))
+      .not.toBe(await hashRateLimitKey('secret', 'login-identity-looking', 'token-a', 'opaque'))
   })
 })
 
 describe('rate limit policies', () => {
   it('defines all approved immutable policy values', () => {
-    expect(POLICIES).toEqual({
+    const valuesWithoutSubjectKind = Object.fromEntries(Object.entries(POLICIES).map(
+      ([name, { subjectKind: _subjectKind, ...value }]) => [name, value],
+    ))
+    expect(valuesWithoutSubjectKind).toEqual({
       registerIdentityHour: { scope: 'register-identity-hour', limit: 3, windowMs: 3_600_000, retentionMs: 86_400_000 },
       registerIdentityDay: { scope: 'register-identity-day', limit: 10, windowMs: 86_400_000, retentionMs: 172_800_000 },
       registerIpHour: { scope: 'register-ip-hour', limit: 10, windowMs: 3_600_000, retentionMs: 86_400_000 },
@@ -62,6 +72,12 @@ describe('rate limit policies', () => {
       returnUploadDriverDay: { scope: 'return-upload-driver-day', limit: 30, windowMs: 86_400_000, retentionMs: 172_800_000 },
       returnUploadIpHour: { scope: 'return-upload-ip-hour', limit: 50, windowMs: 3_600_000, retentionMs: 86_400_000 },
     })
+
+    expect(Object.entries(POLICIES)
+      .filter(([, value]) => value.subjectKind === 'identity')
+      .map(([name]) => name))
+      .toEqual(['registerIdentityHour', 'registerIdentityDay', 'loginFailureIdentity15Minutes', 'loginFailureIdentityHour'])
+    expect(Object.values(POLICIES).filter((value) => value.subjectKind === 'opaque')).toHaveLength(20)
 
     expect(Object.isFrozen(POLICIES)).toBe(true)
     for (const policy of Object.values(POLICIES)) {

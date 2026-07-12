@@ -1,5 +1,7 @@
 const encoder = new TextEncoder()
 
+export type RateLimitSubjectKind = 'identity' | 'opaque'
+
 function toBase64Url(bytes: Uint8Array): string {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
@@ -11,23 +13,17 @@ export function normalizeLoginKey(raw: string): string {
   return normalized.includes('@') ? normalized : normalized.replace(/\D/g, '')
 }
 
-function isLoginIdentityScope(scope: string): boolean {
-  return scope === 'login-id'
-    || scope === 'register-id'
-    || scope.includes('-identity-')
-    || scope.endsWith('-identity')
-}
-
-export function normalizeRateLimitSubject(scope: string, subject: string): string {
-  return isLoginIdentityScope(scope) ? normalizeLoginKey(subject) : subject
+export function normalizeRateLimitSubject(subject: string, subjectKind: RateLimitSubjectKind): string {
+  return subjectKind === 'identity' ? normalizeLoginKey(subject) : subject
 }
 
 export async function hashRateLimitKey(
   secret: string,
   scope: string,
   subject: string,
+  subjectKind: RateLimitSubjectKind = 'identity',
 ): Promise<string> {
-  const normalizedSubject = normalizeRateLimitSubject(scope, subject)
+  const normalizedSubject = normalizeRateLimitSubject(subject, subjectKind)
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(secret),
