@@ -21,7 +21,7 @@ export async function hashRateLimitKey(
   secret: string,
   scope: string,
   subject: string,
-  subjectKind: RateLimitSubjectKind = 'identity',
+  subjectKind: RateLimitSubjectKind,
 ): Promise<string> {
   const normalizedSubject = normalizeRateLimitSubject(subject, subjectKind)
   const key = await crypto.subtle.importKey(

@@ -3,13 +3,20 @@ import { hashRateLimitKey, normalizeLoginKey } from '../src/security/rate-limit-
 import { POLICIES } from '../src/security/rate-limit-policies'
 
 describe('rate limit keys', () => {
+  it('requires callers to choose identity or opaque normalization', () => {
+    if (false) {
+      // @ts-expect-error security-sensitive subject normalization must be explicit
+      void hashRateLimitKey('secret', 'login-id', 'ana@email.com')
+    }
+  })
+
   it('normalizes email login identifiers before hashing', async () => {
     const normalized = normalizeLoginKey(' Ana@Email.COM ')
     expect(normalized).toBe('ana@email.com')
-    expect(await hashRateLimitKey('secret', 'login-id', ' Ana@Email.COM '))
-      .toBe(await hashRateLimitKey('secret', 'login-id', 'ana@email.com'))
-    expect(await hashRateLimitKey('secret', 'login-id', normalized))
-      .toBe(await hashRateLimitKey('secret', 'login-id', 'ana@email.com'))
+    expect(await hashRateLimitKey('secret', 'login-id', ' Ana@Email.COM ', 'identity'))
+      .toBe(await hashRateLimitKey('secret', 'login-id', 'ana@email.com', 'identity'))
+    expect(await hashRateLimitKey('secret', 'login-id', normalized, 'identity'))
+      .toBe(await hashRateLimitKey('secret', 'login-id', 'ana@email.com', 'identity'))
   })
 
   it('normalizes non-email login identifiers to digits only', () => {
@@ -17,9 +24,9 @@ describe('rate limit keys', () => {
   })
 
   it('is deterministic, domain separated, and emits a full base64url SHA-256 digest', async () => {
-    const first = await hashRateLimitKey('secret', 'login-id', 'ana@email.com')
-    const repeated = await hashRateLimitKey('secret', 'login-id', 'ana@email.com')
-    const otherScope = await hashRateLimitKey('secret', 'register-id', 'ana@email.com')
+    const first = await hashRateLimitKey('secret', 'login-id', 'ana@email.com', 'identity')
+    const repeated = await hashRateLimitKey('secret', 'login-id', 'ana@email.com', 'identity')
+    const otherScope = await hashRateLimitKey('secret', 'register-id', 'ana@email.com', 'identity')
 
     expect(first).toBe(repeated)
     expect(first).not.toBe(otherScope)
