@@ -1,4 +1,7 @@
 JWT_SECRET=dev-secret-troque-me
+RATE_LIMIT_HMAC_SECRET=replace-with-at-least-32-random-bytes
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+TURNSTILE_EXPECTED_HOSTNAMES=localhost,127.0.0.1,example.com
 
 # FCM (opcional - sem isso o push e silenciosamente pulado)
 FIREBASE_PROJECT_ID=
