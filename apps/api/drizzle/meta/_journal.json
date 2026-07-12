@@ -162,6 +162,13 @@
       "when": 1783793688171,
       "tag": "0022_security-session-foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783818646914,
+      "tag": "0023_sec_02_rate_limits",
+      "breakpoints": true
     }
   ]
 }
