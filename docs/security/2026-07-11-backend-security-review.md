@@ -7,18 +7,48 @@ Plano executado: `docs/superpowers/plans/2026-07-11-p0-authorization-session-fou
 | Achado | Estado P0 | Evidência implementada | Limite remanescente |
 | --- | --- | --- | --- |
 | SEC-01 | Remediado | CUSTOMER obrigatório em `/orders*` e `/me/addresses*`; matriz exaustiva ANON/CUSTOMER/DRIVER/STORE/ADMIN sobre todas as rotas protegidas em `authorization-matrix.routes.test.ts`. | — |
+| SEC-02 | Remediado em código | PostgreSQL rate limits atômicos por IP/identidade/fingerprint/ator/propósito; Turnstile obrigatório em cadastro e adaptativo em login; proteção de refresh, cotação/criação de pedido e uploads antes de trabalho caro/R2; limpeza por cron. | WAF Cloudflare, smoke real de Turnstile e staging privado dependem de recursos externos do ambiente. Webhook segue para SEC-08; verificação/recuperação de identidade segue para SEC-03. |
 | SEC-04 | Remediado | JWT completo (`iss/aud/nbf/jti/sid/ver`) e principal vivo consultado no PostgreSQL a cada request; revogação por família e por `tokenVersion`. | MFA e identidade verificada continuam fora do P0. |
 | SEC-05 | Remediado | `securityStatus` ACTIVE/SUSPENDED/CLOSED; suspensão incrementa `tokenVersion` do dono, revoga refresh e bloqueia descoberta pública. | — |
 | SEC-06 | Mitigação emergencial | `/media/*` só serve `logos/` e `products/`; `returns/` não consulta R2. | Leitura privada autenticada, retenção e auditoria pertencem ao plano de mídia privada. |
 | SEC-07 | Remediado | DTOs explícitos de entrega ativa/histórico removem spreads de `orders` e PII do histórico do entregador; mutações de entregador respondem só `{id,status}`. | Projeções de loja/admin (`listStoreOrders`, `listPendingReturns`) seguem fora deste plano por design. |
-| SEC-12 | Parcialmente remediado | Limites de corpo global (6 MiB) e JSON (256 KiB), content type explícito. | Rate limiting, deadlines externos e limites de custo seguem pendentes. |
+| SEC-12 | Parcialmente remediado | Limites de corpo global (6 MiB), JSON (256 KiB), upload com leitura limitada por streaming, content type explícito e quotas de frequência em fluxos caros. | Deadlines externos e limites de custo de provedores seguem pendentes. |
 | SEC-20 | Parcialmente remediado | Headers defensivos, `no-store` em superfícies sensíveis, HSTS só em produção e docs/OpenAPI/health DB restritos a `APP_ENV=local`. | Políticas de borda Cloudflare e staging seguem em fase própria. |
 
 Contratos negativos cross-tenant e transições de evento de segurança (logout, logout-all, bloqueio de conta, suspensão de loja) verificados em `authorization-boundary.routes.test.ts`: leituras de recurso alheio retornam `404`; mutações escopadas por dono afetam 0 linhas e rejeitam com `404`/`409` sem vazar existência.
 
 Desvios do plano registrados: a emissão/rotação de tokens permaneceu em `auth.service.ts` (o plano sugeria mover para `security-session.service.ts`); a organização de arquivo difere mas as propriedades de segurança — claims completos, vínculo de família, revogação viva — são idênticas e cobertas por teste.
 
-SEC-02, SEC-03 e SEC-08 continuam pendentes dos planos de rate limiting/anti-automação, verificação de identidade e confiabilidade de pagamentos. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida.
+SEC-03 e SEC-08 continuam pendentes dos planos de verificação/recuperação de identidade e confiabilidade de pagamentos. WAF/Turnstile real em staging dependem de configuração Cloudflare manual. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida.
+
+### Remediação SEC-02 — 2026-07-12
+
+Plano executado: `docs/superpowers/plans/2026-07-11-sec-02-rate-limiting.md`, tasks 1–13, no worktree `feat/sec-02-rate-limiting`.
+
+Evidência implementada:
+
+- `rate_limit_buckets` com contador atômico PostgreSQL e cleanup cron limitado;
+- chaves HMAC por escopo e tipo de sujeito, sem armazenar email/telefone/IP/token bruto;
+- respostas de abuso estáveis com `code` e `Retry-After` bounded;
+- `/auth/register` protegido por Turnstile + limite por IP/identidade;
+- `/auth/login` com limite por IP, falhas por identidade, Turnstile adaptativo após falhas e cooldown sem lockout permanente;
+- `/auth/refresh` limitado por fingerprint/IP antes da rotação;
+- `/orders/quote` e `POST /orders` limitados antes de serviços/pagamento;
+- uploads de logo, produto e evidência de devolução limitados após auth/ownership e antes de ler body/R2;
+- web e driver suportam Turnstile de cadastro e login adaptativo.
+
+Gates executados:
+
+- `DATABASE_URL=postgres://postgres:postgres@localhost:5432/delivery pnpm --filter @delivery/api db:migrate`;
+- suites focadas SEC-02: shared 16 arquivos/97 testes; API 51 arquivos/448 testes; web 6 arquivos/18 testes; driver 4 arquivos/5 testes;
+- gate completo: `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `git diff --check`.
+
+Pendências explícitas:
+
+- regra WAF Free para `/auth/*` só pode ser ativada após Cloudflare zone/domínio;
+- smoke real de Turnstile staging/produção depende de widgets e secrets reais;
+- webhook anti-replay/rate controls segue no SEC-08;
+- verificação de email, recuperação e limites de códigos seguem no SEC-03.
 
 ### Revisão independente pós-implementação — 2026-07-11
 
@@ -380,6 +410,6 @@ Uma suíte table-driven deve enumerar cada endpoint e executar, conforme aplicá
 
 ## Veredito
 
-O isolamento **loja A contra loja B** está bem aplicado nas rotas atuais e possui vários testes negativos. O RBAC global, porém, está incompleto porque rotas de cliente são abertas a qualquer usuário autenticado. A segurança de identidade é o maior risco sistêmico: cadastro sem verificação, ausência de rate limit/MFA/recuperação e autorização baseada em estado JWT obsoleto. Mídia privada e consistência de pagamento também exigem correção antes de uso real em escala.
+O isolamento **loja A contra loja B** está bem aplicado nas rotas atuais e possui vários testes negativos. Após P0 + SEC-02, RBAC central, sessão viva e anti-automação de aplicação estão substancialmente melhores. A segurança de identidade ainda depende de verificação de email/recuperação/MFA opcionais, e WAF/Turnstile real precisam de staging Cloudflare. Mídia privada e consistência de pagamento também exigem correção antes de uso real em escala.
 
 Após o P0, recomenda-se uma segunda revisão focada nas mudanças e um pentest autenticado em staging. Até lá, a classificação recomendada é: **risco alto; não aprovar produção com dados/pagamentos reais sem mitigação**.

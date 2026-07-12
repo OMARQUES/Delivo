@@ -4,7 +4,6 @@ import { SecurityHttpError } from '../src/security/http'
 
 const NOW = new Date('2026-01-01T00:00:00.000Z')
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-type FetchInput = Parameters<typeof fetch>[0]
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -45,7 +44,7 @@ async function expectSecurityError(promise: Promise<unknown>, code: SecurityHttp
 
 describe('CloudflareTurnstileVerifier', () => {
   it('posts Siteverify form data and accepts a valid challenge', async () => {
-    const fetchSpy = vi.fn(async (_url: FetchInput, _init?: RequestInit) => jsonResponse(success()))
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse(success()))
 
     await expect(verifier(fetchSpy).verify({
       token: 'token',
@@ -82,7 +81,7 @@ describe('CloudflareTurnstileVerifier', () => {
     [['unknown-provider-code'], 'SECURITY_CHECK_UNAVAILABLE'],
     [[], 'SECURITY_CHECK_UNAVAILABLE'],
   ] as const)('maps provider failure %j to %s', async (codes, code) => {
-    const fetchSpy = vi.fn(async (_url: FetchInput, _init?: RequestInit) => jsonResponse({ success: false, 'error-codes': codes }))
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse({ success: false, 'error-codes': codes }))
 
     await expectSecurityError(verifier(fetchSpy).verify({
       token: 'token',
@@ -99,7 +98,7 @@ describe('CloudflareTurnstileVerifier', () => {
     [success({ challenge_ts: new Date(NOW.getTime() + 31_000).toISOString() }), 'TURNSTILE_INVALID'],
     [success({ challenge_ts: 'not-a-date' }), 'TURNSTILE_INVALID'],
   ] as const)('rejects invalid successful response %#', async (body, code) => {
-    const fetchSpy = vi.fn(async (_url: FetchInput, _init?: RequestInit) => jsonResponse(body))
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse(body))
 
     await expectSecurityError(verifier(fetchSpy).verify({
       token: 'token',
@@ -115,7 +114,7 @@ describe('CloudflareTurnstileVerifier', () => {
     [jsonResponse({ success: true, hostname: 'example.com', metadata: { result_with_testing_key: true } }), 'production', false],
     [jsonResponse({ success: true, hostname: 'example.com' }), 'local', false],
   ] as const)('handles provider-owned local testing response in %s', async (response, environment, valid) => {
-    const fetchSpy = vi.fn(async (_url: FetchInput, _init?: RequestInit) => response)
+    const fetchSpy = vi.fn<typeof fetch>(async () => response)
     const promise = verifier(fetchSpy, {
       environment,
       expectedHostnames: ['localhost'],
@@ -135,7 +134,7 @@ describe('CloudflareTurnstileVerifier', () => {
     [new Response('nope', { status: 200 }), 'SECURITY_CHECK_UNAVAILABLE'],
     [jsonResponse({ success: true }, 500), 'SECURITY_CHECK_UNAVAILABLE'],
   ] as const)('treats malformed or non-2xx response as unavailable %#', async (response, code) => {
-    const fetchSpy = vi.fn(async (_url: FetchInput, _init?: RequestInit) => response)
+    const fetchSpy = vi.fn<typeof fetch>(async () => response)
 
     await expectSecurityError(verifier(fetchSpy).verify({
       token: 'token',
@@ -146,7 +145,9 @@ describe('CloudflareTurnstileVerifier', () => {
   })
 
   it('maps timeout abort and transport failure to unavailable without leaking token', async () => {
-    const timeoutFetch = vi.fn((_url: FetchInput, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    const timeoutFetch = vi.fn<typeof fetch>((...args) => new Promise<Response>((resolve, reject) => {
+      const init = args[1]
+      void resolve
       init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
     }))
 
@@ -157,7 +158,7 @@ describe('CloudflareTurnstileVerifier', () => {
       now: NOW,
     }), 'SECURITY_CHECK_UNAVAILABLE')
 
-    const failingFetch = vi.fn(async (_url: FetchInput, _init?: RequestInit) => {
+    const failingFetch = vi.fn<typeof fetch>(async () => {
       throw new Error('network token secret')
     })
     await expectSecurityError(verifier(failingFetch).verify({

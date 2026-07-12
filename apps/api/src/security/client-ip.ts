@@ -19,7 +19,11 @@ function canonicalizeIpv6(value: string): string | null {
 }
 
 function canonicalizeClientIp(value: string): string | null {
-  if (value.length === 0 || value.length > 45 || /[\u0000-\u001f\u007f,]/.test(value)) return null
+  if (value.length === 0 || value.length > 45 || value.includes(',')) return null
+  for (const ch of value) {
+    const code = ch.charCodeAt(0)
+    if (code <= 31 || code === 127) return null
+  }
   return canonicalizeIpv4(value) ?? canonicalizeIpv6(value)
 }
 

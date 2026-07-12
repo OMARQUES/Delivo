@@ -4,10 +4,11 @@ import { POLICIES } from '../src/security/rate-limit-policies'
 
 describe('rate limit keys', () => {
   it('requires callers to choose identity or opaque normalization', () => {
-    if (false) {
+    const missingSubjectKind = () => {
       // @ts-expect-error security-sensitive subject normalization must be explicit
       void hashRateLimitKey('secret', 'login-id', 'ana@email.com')
     }
+    expect(missingSubjectKind).toBeTypeOf('function')
   })
 
   it('normalizes email login identifiers before hashing', async () => {
@@ -51,7 +52,11 @@ describe('rate limit keys', () => {
 describe('rate limit policies', () => {
   it('defines all approved immutable policy values', () => {
     const valuesWithoutSubjectKind = Object.fromEntries(Object.entries(POLICIES).map(
-      ([name, { subjectKind: _subjectKind, ...value }]) => [name, value],
+      ([name, policy]) => {
+        const { subjectKind, ...value } = policy
+        void subjectKind
+        return [name, value]
+      },
     ))
     expect(valuesWithoutSubjectKind).toEqual({
       registerIdentityHour: { scope: 'register-identity-hour', limit: 3, windowMs: 3_600_000, retentionMs: 86_400_000 },

@@ -480,6 +480,27 @@ After this design is approved, implementation is split into independently review
 
 Each plan uses TDD, contains exact file paths and commands, ends in a reviewable commit, and must leave the application deployable at its own boundary.
 
+### 20.1 SEC-02 implementation evidence — 2026-07-12
+
+The SEC-02 application layer is implemented in code for authentication, refresh, orders, and uploads:
+
+- PostgreSQL atomic counters with HMAC-hashed subjects and bounded cleanup.
+- Turnstile required for registration and adaptively required for login after failures.
+- Stable abuse response contracts with generic bodies, `code`, and bounded `Retry-After`.
+- Login failure counters avoid permanent victim-controlled account lockout.
+- Order quote/create limits run before order services or payment-provider calls.
+- Upload limits run after auth/ownership checks and before body materialization/R2 writes.
+- Web and driver clients support registration Turnstile and adaptive login Turnstile.
+
+Verified locally with migration, focused SEC-02 suites, full test/typecheck/lint/build gate, and `git diff --check`.
+
+Still pending outside code:
+
+- Cloudflare WAF rule activation after a user-controlled zone exists.
+- Real staging/production Turnstile widgets, secrets, and smoke tests.
+- SEC-03 identity verification/recovery counters.
+- SEC-08 webhook anti-replay/rate controls.
+
 ## 21. Acceptance criteria
 
 The program is complete only when:
