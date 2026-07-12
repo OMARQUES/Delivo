@@ -38,7 +38,7 @@ export type PublicUser = {
   id: string
   name: string
   role: 'CUSTOMER' | 'STORE' | 'DRIVER' | 'ADMIN'
-  status: 'ACTIVE' | 'PENDING' | 'BLOCKED'
+  status: 'ACTIVE' | 'PENDING' | 'PENDING_EMAIL' | 'PENDING_APPROVAL' | 'BLOCKED'
   phone: string | null
   email: string | null
 }
@@ -117,6 +117,10 @@ type AuthReader = Pick<Db, 'select'>
 
 async function assertLoginable(db: AuthReader, user: typeof users.$inferSelect) {
   if (user.status === 'BLOCKED') throw new AuthError('Conta bloqueada — contate o suporte', 403)
+  if (user.status === 'PENDING_EMAIL')
+    throw new AuthError('Confirme seu email para entrar', 403)
+  if (user.status === 'PENDING_APPROVAL')
+    throw new AuthError('Cadastro aguardando aprovação do administrador', 403)
   if (user.status === 'PENDING')
     throw new AuthError('Cadastro aguardando aprovação do administrador', 403)
   if (user.role === 'STORE') {

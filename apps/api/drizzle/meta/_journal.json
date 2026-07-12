@@ -169,6 +169,13 @@
       "when": 1783818646914,
       "tag": "0023_sec_02_rate_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783876426721,
+      "tag": "0024_sec_03a_foundation",
+      "breakpoints": true
     }
   ]
 }

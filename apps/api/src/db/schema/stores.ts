@@ -6,7 +6,7 @@ import { sql } from 'drizzle-orm'
 import { users } from './users'
 
 export const deliveryFeeMode = pgEnum('delivery_fee_mode', ['FIXED', 'DISTANCE'])
-export const storeSecurityStatus = pgEnum('store_security_status', ['ACTIVE', 'SUSPENDED', 'CLOSED'])
+export const storeSecurityStatus = pgEnum('store_security_status', ['ACTIVE', 'SUSPENDED', 'CLOSED', 'PENDING_ACTIVATION'])
 
 export const stores = pgTable(
   'stores',

@@ -21,7 +21,7 @@ function rethrow(e: unknown): never {
 
 const StoreOut = z.object({
   id: z.string(), slug: z.string(), name: z.string(),
-  securityStatus: z.enum(['ACTIVE', 'SUSPENDED', 'CLOSED']),
+  securityStatus: z.enum(['ACTIVE', 'SUSPENDED', 'CLOSED', 'PENDING_ACTIVATION']),
 }).passthrough()
 
 adminStoreRoutes.openapi(

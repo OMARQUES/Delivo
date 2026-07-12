@@ -27,7 +27,7 @@ const UserShape = z.object({
   id: z.string(),
   name: z.string(),
   role: z.enum(['CUSTOMER', 'STORE', 'DRIVER', 'ADMIN']),
-  status: z.enum(['ACTIVE', 'PENDING', 'BLOCKED']),
+  status: z.enum(['ACTIVE', 'PENDING', 'PENDING_EMAIL', 'PENDING_APPROVAL', 'BLOCKED']),
   phone: z.string().nullable(),
   email: z.string().nullable(),
 })
