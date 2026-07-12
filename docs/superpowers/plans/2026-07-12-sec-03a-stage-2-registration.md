@@ -81,7 +81,10 @@ git commit -m "feat(auth): define email registration contracts"
 ```ts
 export async function createChallenge(tx: DbTx, input: CreateChallengeInput): Promise<AuthChallenge>
 export async function replaceChallenge(tx: DbTx, input: ReplaceChallengeInput): Promise<AuthChallenge>
-export async function verifyAndConsumeChallenge(tx: DbTx, input: VerifyChallengeInput): Promise<AuthChallenge>
+export async function verifyAndConsumeChallenge(
+  tx: DbTx,
+  input: VerifyChallengeInput,
+): Promise<{ ok: true; challenge: AuthChallenge } | { ok: false; error: ChallengeError }>
 ```
 
 - [ ] **Step 1: Write failing DB tests**
@@ -105,7 +108,7 @@ WHERE id = $id AND consumed_at IS NULL AND invalidated_at IS NULL
 RETURNING attempt_count, invalidated_at;
 ```
 
-Correct consume requires the same active predicates and `consumed_at IS NULL`. Map every invalid/expired/replayed condition to one internal `ChallengeError('INVALID_OR_EXPIRED')`.
+Correct consume requires the same active predicates and `consumed_at IS NULL`. Map every invalid/expired/replayed condition to one internal `ChallengeError('INVALID_OR_EXPIRED')` result. Do not throw that domain error inside the transaction: throwing would roll back a wrong-attempt increment. The transaction owner must commit the `{ ok: false }` result, then map it to the generic HTTP/service error outside the transaction. Infrastructure/SQL errors still throw and roll back.
 
 - [ ] **Step 4: Confirm GREEN and commit**
 
@@ -160,6 +163,8 @@ export type IdentityContext = {
 ```
 
 Generate access/refresh material before entering final confirmation transaction where needed; insert refresh-token family in the same transaction as user/provider. Catch only SQLSTATE `23505` for user email/provider race; close losing pending attempt without updating existing account. Synthetic IDs use `crypto.randomUUID()` and real-looking timestamps.
+
+For challenge confirmation, branch on `verifyAndConsumeChallenge` inside the transaction. Return `{ ok: false }` unchanged so failed-attempt accounting commits; convert its `ChallengeError` to the public generic error only after `db.transaction(...)` resolves.
 
 - [ ] **Step 4: Confirm GREEN and commit**
 
