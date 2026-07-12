@@ -1,5 +1,6 @@
 export * from './order-status.schema'
 export * from './auth.schema'
+export * from './password-policy'
 export * from './store.schema'
 export * from './catalog.schema'
 export * from './order.schema'
