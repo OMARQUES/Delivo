@@ -19,9 +19,15 @@ import { proposeAmendment } from '../src/services/amendment.service'
 import { createOrder, listCustomerOrders } from '../src/services/order.service'
 import { requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { PostgresRateLimiter } from '../src/security/rate-limit'
+import { POLICIES, type RateLimitPolicy } from '../src/security/rate-limit-policies'
 
 const env = {
+  APP_ENV: 'local' as const,
   JWT_SECRET: 'test-secret',
+  RATE_LIMIT_HMAC_SECRET: 'rate-secret',
+  TURNSTILE_SECRET_KEY: 'turnstile-secret',
+  TURNSTILE_EXPECTED_HOSTNAMES: 'localhost',
   ALLOWED_ORIGINS: 'http://localhost:5173',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: {} as R2Bucket,
@@ -125,6 +131,19 @@ function req(path: string, init: RequestInit = {}, t = customerToken) {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}`, ...(init.headers as Record<string, string>) },
   }, env)
+}
+
+async function exhaust(policy: RateLimitPolicy, subject: string) {
+  const limiter = new PostgresRateLimiter(testDb, env.RATE_LIMIT_HMAC_SECRET)
+  for (let i = 0; i < policy.limit; i++) {
+    await limiter.consume(policy, subject)
+  }
+}
+
+async function createOtherCustomer(phone: string) {
+  const other = await registerUser(testDb, { ...ana, phone }, env.JWT_SECRET)
+  const addr = await createAddress(testDb, other.user.id, { addressText: 'Rua C, 33', lat: -23.56, lng: -51.9 })
+  return { token: other.accessToken!, addressId: addr.id }
 }
 
 describe('POST /orders/quote + POST /orders', () => {
@@ -238,6 +257,51 @@ describe('POST /orders/quote + POST /orders', () => {
     const r = await req('/orders', { method: 'POST', body: JSON.stringify(checkout()) })
     expect(r.status).toBe(409)
     expect((await app.request('/orders', { method: 'POST' }, env)).status).toBe(401)
+  })
+
+  it('quote user quota is independent per customer and runs before quote service', async () => {
+    await exhaust(POLICIES.orderQuoteUserMinute, customerId)
+    await updateStore(testDb, storeId, { isPaused: true })
+
+    const limited = await req('/orders/quote', { method: 'POST', body: JSON.stringify(checkout()) })
+    expect(limited.status).toBe(429)
+
+    await updateStore(testDb, storeId, { isPaused: false })
+    const other = await createOtherCustomer('44988887777')
+    const otherQuote = await req('/orders/quote', {
+      method: 'POST',
+      body: JSON.stringify(checkout({ addressId: other.addressId })),
+    }, other.token)
+    expect(otherQuote.status).toBe(200)
+  })
+
+  it('quote IP quota is shared across customers', async () => {
+    await exhaust(POLICIES.orderQuoteIpMinute, '127.0.0.1')
+    const other = await createOtherCustomer('44988887777')
+
+    const limited = await req('/orders/quote', {
+      method: 'POST',
+      body: JSON.stringify(checkout({ addressId: other.addressId })),
+    }, other.token)
+
+    expect(limited.status).toBe(429)
+  })
+
+  it('quote and create quotas are independent and create limit runs before payment provider', async () => {
+    await exhaust(POLICIES.orderQuoteUserMinute, customerId)
+    const created = await req('/orders', { method: 'POST', body: JSON.stringify(checkout()) })
+    expect(created.status).toBe(201)
+
+    await exhaust(POLICIES.orderCreateUserHour, customerId)
+    const providerSpy = vi.spyOn(mp, 'createPaymentProvider')
+
+    const limited = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({
+      paymentMethod: 'PIX_ONLINE',
+    })) })
+
+    expect(limited.status).toBe(429)
+    expect(providerSpy).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
   })
 })
 
