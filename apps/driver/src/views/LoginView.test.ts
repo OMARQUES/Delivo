@@ -14,6 +14,7 @@ const tokens = { accessToken: 'acc-1', refreshToken: 'ref-1' }
 const customer = { id: 'u1', name: 'Ana', role: 'CUSTOMER', status: 'ACTIVE', phone: '44', email: 'ana@email.com' }
 
 beforeEach(() => {
+  vi.unstubAllEnvs()
   setActivePinia(createPinia())
   localStorage.clear()
   vi.restoreAllMocks()
@@ -62,5 +63,17 @@ describe('driver LoginView', () => {
     expect(wrapper.text()).toContain('Esta conta não é de entregador')
     expect(localStorage.getItem('delivery.driver.auth')).toBeNull()
     expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('links password recovery to the configured public web app only', () => {
+    vi.stubEnv('VITE_PUBLIC_WEB_URL', 'https://public-app.example.test/base')
+
+    const wrapper = mount(LoginView, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, TurnstileWidget: true } },
+    })
+
+    const recovery = wrapper.find('[data-testid="recovery-link"]')
+    expect(recovery.attributes('href')).toBe('https://public-app.example.test/recuperar-senha')
+    expect(recovery.attributes('href')).not.toContain('8787')
   })
 })

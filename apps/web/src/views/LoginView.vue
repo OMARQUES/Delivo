@@ -54,6 +54,7 @@ async function submit() {
         {{ loading ? 'Entrando…' : 'Entrar' }}
       </button>
     </form>
+    <RouterLink data-testid="recovery-link" to="/recuperar-senha" class="mt-3 block text-center text-sm underline">Esqueceu a senha?</RouterLink>
     <p class="mt-4 text-sm text-gray-600">
       Não tem conta?
       <RouterLink to="/cadastro" class="underline">Cadastre-se</RouterLink>

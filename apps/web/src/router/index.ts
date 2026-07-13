@@ -8,6 +8,9 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
     { path: '/cadastro', name: 'register', component: () => import('../views/RegisterView.vue') },
     { path: '/verificar-email', name: 'verify-email', component: () => import('../views/VerifyEmailView.vue') },
+    { path: '/recuperar-senha', name: 'recovery-start', component: () => import('../views/RecoveryStartView.vue') },
+    { path: '/recuperar-senha/codigo', name: 'recovery-verify', component: () => import('../views/RecoveryVerifyView.vue') },
+    { path: '/recuperar-senha/nova-senha', name: 'recovery-reset', component: () => import('../views/RecoveryResetView.vue') },
     {
       path: '/loja',
       component: () => import('../views/store/StoreLayout.vue'),

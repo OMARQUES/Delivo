@@ -13,6 +13,17 @@ const error = ref('')
 const loading = ref(false)
 const turnstileRequired = ref(false)
 const turnstileToken = ref<string | null>(null)
+const recoveryUrl = (() => {
+  const configured = import.meta.env.VITE_PUBLIC_WEB_URL?.trim()
+  if (!configured) return null
+  try {
+    const url = new URL(configured)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+    return new URL('/recuperar-senha', url).toString()
+  } catch {
+    return null
+  }
+})()
 
 async function submit() {
   error.value = ''
@@ -44,6 +55,12 @@ async function submit() {
         {{ loading ? 'Entrando...' : 'Entrar' }}
       </button>
     </form>
+    <a
+      v-if="recoveryUrl"
+      data-testid="recovery-link"
+      :href="recoveryUrl"
+      class="mt-3 block text-center text-sm underline"
+    >Esqueceu a senha?</a>
     <p class="mt-4 text-sm text-gray-600">
       Quer entregar com a gente?
       <RouterLink to="/cadastro" class="underline">Cadastre-se</RouterLink>

@@ -62,4 +62,21 @@ describe('LoginView', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body))).not.toHaveProperty('identifier')
     expect(replace).toHaveBeenCalledWith('/')
   })
+
+  it('links to the shared password recovery flow', () => {
+    const wrapper = mount(LoginView, {
+      global: {
+        stubs: {
+          RouterLink: {
+            name: 'RouterLink',
+            props: ['to'],
+            template: '<a data-testid="recovery-link" :data-to="to"><slot /></a>',
+          },
+          TurnstileWidget: true,
+        },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="recovery-link"]').attributes('data-to')).toBe('/recuperar-senha')
+  })
 })

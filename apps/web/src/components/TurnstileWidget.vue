@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
-type TurnstileAction = 'login' | 'register' | 'email_resend'
+type TurnstileAction = 'login' | 'register' | 'email_resend' | 'password_recovery'
 type TurnstileApi = {
   render: (el: HTMLElement, options: Record<string, unknown>) => string
   reset: (widgetId: string) => void
