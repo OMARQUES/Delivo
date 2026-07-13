@@ -19,7 +19,11 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
   const access = tokenProvider?.getAccessToken()
   if (access) headers.set('Authorization', `Bearer ${access}`)
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    credentials: 'include',
+    headers,
+  })
 
   if (res.status === 401 && !retried && tokenProvider && !path.startsWith('/auth/')) {
     const ok = await tokenProvider.tryRefresh()
