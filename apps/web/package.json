@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "build:staging": "vue-tsc -b && vite build --mode staging",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "deploy": "pnpm build && wrangler deploy",
+    "deploy:staging": "pnpm build:staging && wrangler deploy --env staging",
     "test": "vitest run"
   },
   "dependencies": {

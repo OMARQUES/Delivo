@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite --port 5174",
     "build": "vue-tsc -b && vite build",
+    "build:staging": "vue-tsc -b && vite build --mode staging",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
-    "deploy": "pnpm build && wrangler deploy"
+    "deploy": "pnpm build && wrangler deploy",
+    "deploy:staging": "pnpm build:staging && wrangler deploy --env staging"
   },
   "dependencies": {
     "@delivery/shared": "workspace:*",
