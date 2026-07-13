@@ -15,7 +15,7 @@ beforeEach(() => {
 
 describe('recovery store', () => {
   it('starts with mandatory proof and keeps public flow data out of browser storage', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
+    const fetchMock = vi.fn<typeof fetch>(async () => (
       new Response(JSON.stringify({ recoveryId, expiresAt }), { status: 202 })
     ))
     vi.stubGlobal('fetch', fetchMock)
@@ -33,7 +33,7 @@ describe('recovery store', () => {
   })
 
   it('holds reset ticket only in Pinia memory and never persists it', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
+    const fetchMock = vi.fn<typeof fetch>(async () => (
       new Response(JSON.stringify({ resetTicket, expiresAt }), { status: 200 })
     ))
     vi.stubGlobal('fetch', fetchMock)
@@ -48,7 +48,7 @@ describe('recovery store', () => {
   })
 
   it('sends only ticket and password, then clears all sensitive flow state', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
+    const fetchMock = vi.fn<typeof fetch>(async () => (
       new Response(null, { status: 204 })
     ))
     vi.stubGlobal('fetch', fetchMock)
@@ -66,7 +66,7 @@ describe('recovery store', () => {
   })
 
   it('retains an unexpired in-memory ticket after a policy error so the user can retry', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
       JSON.stringify({ error: 'A senha não atende à política de segurança.', code: 'PASSWORD_POLICY_REJECTED' }),
       { status: 400 },
     ))

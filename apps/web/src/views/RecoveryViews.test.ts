@@ -52,7 +52,7 @@ beforeEach(() => {
 
 describe('password recovery views', () => {
   it('starts only after Turnstile and always presents generic copy', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
+    const fetchMock = vi.fn<typeof fetch>(async () => (
       new Response(JSON.stringify({ recoveryId, expiresAt }), { status: 202 })
     ))
     vi.stubGlobal('fetch', fetchMock)
@@ -77,7 +77,7 @@ describe('password recovery views', () => {
 
   it('accepts six digits and carries raw ticket only through Pinia memory', async () => {
     routeState.query = { id: recoveryId }
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
+    const fetchMock = vi.fn<typeof fetch>(async () => (
       new Response(JSON.stringify({ resetTicket, expiresAt }), { status: 200 })
     ))
     vi.stubGlobal('fetch', fetchMock)
@@ -106,7 +106,7 @@ describe('password recovery views', () => {
   })
 
   it('uses role-neutral policy copy, resets without selectors, clears state, and links to login', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
+    const fetchMock = vi.fn<typeof fetch>(async () => (
       new Response(null, { status: 204 })
     ))
     vi.stubGlobal('fetch', fetchMock)
