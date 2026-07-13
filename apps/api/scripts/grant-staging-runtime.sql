@@ -26,16 +26,25 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'delivo_app_staging must not belong to any role';
   END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE oid = runtime_oid
+      AND (
+        NOT rolcanlogin
+        OR rolinherit
+        OR rolsuper
+        OR rolcreatedb
+        OR rolcreaterole
+        OR rolreplication
+        OR rolbypassrls
+      )
+  ) THEN
+    RAISE EXCEPTION 'delivo_app_staging has unsafe role attributes';
+  END IF;
 END
 $guard$;
-
-ALTER ROLE delivo_app_staging
-  NOSUPERUSER
-  NOCREATEDB
-  NOCREATEROLE
-  NOINHERIT
-  NOREPLICATION
-  NOBYPASSRLS;
 
 SELECT format(
   'REVOKE ALL PRIVILEGES ON DATABASE %I FROM delivo_app_staging',
