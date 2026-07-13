@@ -49,6 +49,7 @@ export async function createTestSession(
       role: principal.role,
       status: 'ACTIVE',
       email: `${principal.sub}@test.local`,
+      emailVerifiedAt: new Date(),
     }).returning()
   }
   if (!user) throw new Error('test session user was not created')

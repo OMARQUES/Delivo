@@ -39,6 +39,7 @@ export async function resolveLivePrincipal(db: Db, p: AccessTokenPayload, now = 
       name: users.name,
       role: users.role,
       status: users.status,
+      emailVerifiedAt: users.emailVerifiedAt,
       tokenVersion: users.tokenVersion,
       storeId: stores.id,
       storeSecurityStatus: stores.securityStatus,
@@ -49,7 +50,7 @@ export async function resolveLivePrincipal(db: Db, p: AccessTokenPayload, now = 
     .limit(1)
 
   if (!row) throw new PrincipalError('INVALID', 401)
-  if (row.status !== 'ACTIVE') throw new PrincipalError('ACCOUNT_BLOCKED', 403)
+  if (row.status !== 'ACTIVE' || !row.emailVerifiedAt) throw new PrincipalError('ACCOUNT_BLOCKED', 403)
   if (row.role !== p.role || row.tokenVersion !== p.ver) throw new PrincipalError('INVALID', 401)
   if (row.role === 'STORE' && row.storeSecurityStatus !== 'ACTIVE') {
     throw new PrincipalError('STORE_SUSPENDED', 403)

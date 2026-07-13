@@ -28,13 +28,18 @@ import {
   verifyPasswordRecovery,
 } from '../services/password-recovery.service'
 import {
-  confirmRegistration,
+  confirmEmailFlow,
+  confirmationPurpose,
   RegistrationError,
   registrationFlowEmail,
   resendRegistrationVerification,
   startRegistration,
   type IdentityContext,
 } from '../services/registration.service'
+import {
+  AccountActivationError,
+  setupInitialPassword,
+} from '../services/account-activation.service'
 import { revokeAllSessions, revokeSessionFamily } from '../services/security-session.service'
 import {
   clearLoginFailures,
@@ -81,7 +86,17 @@ const FlowShape = z.object({
 const ConfirmationShape = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('CUSTOMER_SESSION'), user: UserShape, accessToken: z.string(), refreshToken: z.string() }),
   z.object({ kind: z.literal('DRIVER_PENDING_APPROVAL'), user: UserShape }),
+  z.object({ kind: z.literal('EMAIL_VERIFIED') }),
+  z.object({
+    kind: z.literal('PASSWORD_SETUP_REQUIRED'),
+    passwordSetupTicket: z.string(),
+    expiresAt: z.iso.datetime(),
+  }),
 ])
+const PasswordSetupSchema = z.object({
+  passwordSetupTicket: z.string().min(40).max(512),
+  newPassword: z.string().min(8).max(128),
+}).strict()
 const RecoveryFlowShape = z.object({
   recoveryId: z.uuid(),
   expiresAt: z.iso.datetime(),
@@ -100,6 +115,14 @@ function rethrow(e: unknown): never {
     throw new SecurityHttpError(400, e.code, message)
   }
   if (e instanceof PasswordRecoveryError) {
+    const message = e.code === 'CODE_INVALID_OR_EXPIRED'
+      ? CODE_INVALID_OR_EXPIRED_MESSAGE
+      : e.code === 'PASSWORD_POLICY_REJECTED'
+        ? PASSWORD_POLICY_REJECTED_MESSAGE
+        : FLOW_INVALID_OR_EXPIRED_MESSAGE
+    throw new SecurityHttpError(400, e.code, message)
+  }
+  if (e instanceof AccountActivationError) {
     const message = e.code === 'CODE_INVALID_OR_EXPIRED'
       ? CODE_INVALID_OR_EXPIRED_MESSAGE
       : e.code === 'PASSWORD_POLICY_REJECTED'
@@ -279,13 +302,34 @@ authRoutes.openapi(
   }),
   async (c) => {
     const input = c.req.valid('json')
-    await protectCodeAttempt(c, 'REGISTRATION_VERIFY', input.verificationId)
-    const result = await confirmRegistration(
+    const purpose = await confirmationPurpose(c.get('db'), input.verificationId)
+    await protectCodeAttempt(c, purpose ?? 'REGISTRATION_VERIFY', input.verificationId)
+    const result = await confirmEmailFlow(
       c.get('db'),
       input,
       identityContext(c, requireAuthCodeSecret(c)),
     ).catch(rethrow)
     return c.json(result, 200)
+  },
+)
+
+authRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/auth/password-setup',
+    request: { body: { content: { 'application/json': { schema: PasswordSetupSchema } } } },
+    responses: { 204: { description: 'Senha inicial configurada' } },
+  }),
+  async (c) => {
+    const input = c.req.valid('json')
+    await protectTicketUse(c, input.passwordSetupTicket)
+    await setupInitialPassword(
+      c.get('db'),
+      input.passwordSetupTicket,
+      input.newPassword,
+      identityContext(c, requireAuthCodeSecret(c)),
+    ).catch(rethrow)
+    return c.body(null, 204)
   },
 )
 

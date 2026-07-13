@@ -80,6 +80,7 @@ type AuthReader = Pick<Db, 'select'>
 
 async function assertLoginable(db: AuthReader, user: typeof users.$inferSelect) {
   if (user.status === 'BLOCKED') throw new AuthError('Conta bloqueada — contate o suporte', 403)
+  if (!user.emailVerifiedAt) throw new AuthError('Confirme seu email para entrar', 403)
   if (user.status === 'PENDING_EMAIL')
     throw new AuthError('Confirme seu email para entrar', 403)
   if (user.status === 'PENDING_APPROVAL')

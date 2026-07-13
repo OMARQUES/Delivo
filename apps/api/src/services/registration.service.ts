@@ -28,13 +28,14 @@ import {
   type PublicUser,
 } from './auth.service'
 import { appendIdentityEvent } from './identity-audit.service'
+import { confirmPrivilegedEmail } from './account-activation.service'
 
 const CHALLENGE_TTL_MS = 10 * 60_000
 const PENDING_TTL_MS = 24 * 60 * 60_000
 const RESEND_COOLDOWN_MS = 60_000
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-type ConfirmVerificationInput = z.output<typeof ConfirmVerificationSchema>
+export type ConfirmVerificationInput = z.output<typeof ConfirmVerificationSchema>
 type ResendVerificationInput = z.output<typeof ResendVerificationSchema>
 
 export type IdentityContext = {
@@ -50,9 +51,16 @@ export type RegistrationFlow = {
   resendAt: string
 }
 
-type ConfirmationResult =
-  | { kind: 'CUSTOMER_SESSION'; user: PublicUser; accessToken: string; refreshToken: string }
-  | { kind: 'DRIVER_PENDING_APPROVAL'; user: PublicUser }
+export type CustomerSessionResult = {
+  kind: 'CUSTOMER_SESSION'
+  user: PublicUser
+  accessToken: string
+  refreshToken: string
+}
+export type DriverPendingResult = { kind: 'DRIVER_PENDING_APPROVAL'; user: PublicUser }
+export type ConfirmationResult =
+  | CustomerSessionResult
+  | DriverPendingResult
 
 export type RegistrationErrorCode = 'FLOW_INVALID_OR_EXPIRED' | 'CODE_INVALID_OR_EXPIRED'
 
@@ -354,6 +362,48 @@ export async function confirmRegistration(
 
   if (!transactionResult.ok) throw new RegistrationError('CODE_INVALID_OR_EXPIRED')
   return transactionResult.value
+}
+
+export async function confirmationPurpose(
+  db: Db,
+  verificationId: string,
+  now = new Date(),
+): Promise<'REGISTRATION_VERIFY' | 'STORE_ACTIVATION' | 'ADMIN_ACTIVATION' | null> {
+  const [direct] = await db.select({ purpose: authChallenges.purpose }).from(authChallenges).where(and(
+    eq(authChallenges.id, verificationId),
+    isNull(authChallenges.consumedAt),
+    isNull(authChallenges.invalidatedAt),
+    gt(authChallenges.expiresAt, now),
+  )).limit(1)
+  if (direct?.purpose === 'STORE_ACTIVATION' || direct?.purpose === 'ADMIN_ACTIVATION') {
+    return direct.purpose
+  }
+
+  const [registration] = await db.select({ purpose: authChallenges.purpose }).from(authChallenges).where(and(
+    eq(authChallenges.pendingRegistrationId, verificationId),
+    eq(authChallenges.purpose, 'REGISTRATION_VERIFY'),
+    isNull(authChallenges.consumedAt),
+    isNull(authChallenges.invalidatedAt),
+    gt(authChallenges.expiresAt, now),
+  )).orderBy(desc(authChallenges.createdAt), desc(authChallenges.id)).limit(1)
+  return registration?.purpose === 'REGISTRATION_VERIFY' ? registration.purpose : null
+}
+
+export async function confirmEmailFlow(
+  db: Db,
+  input: ConfirmVerificationInput,
+  ctx: IdentityContext,
+): Promise<
+  | CustomerSessionResult
+  | DriverPendingResult
+  | { kind: 'EMAIL_VERIFIED' }
+  | { kind: 'PASSWORD_SETUP_REQUIRED'; passwordSetupTicket: string; expiresAt: string }
+> {
+  const purpose = await confirmationPurpose(db, input.verificationId, ctx.now ?? new Date())
+  if (purpose === 'STORE_ACTIVATION' || purpose === 'ADMIN_ACTIVATION') {
+    return confirmPrivilegedEmail(db, input, purpose, ctx)
+  }
+  return confirmRegistration(db, input, ctx)
 }
 
 export async function resendRegistrationVerification(

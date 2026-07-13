@@ -14,7 +14,7 @@ const now = new Date()
 
 async function principalFixture() {
   const [user] = await testDb.insert(users).values({
-    name: 'Ana', role: 'CUSTOMER', status: 'ACTIVE', email: 'ana@test.local',
+    name: 'Ana', role: 'CUSTOMER', status: 'ACTIVE', email: 'ana@test.local', emailVerifiedAt: now,
   }).returning()
   if (!user) throw new Error('fixture user was not created')
   const familyId = crypto.randomUUID()
@@ -66,6 +66,17 @@ describe('resolveLivePrincipal', () => {
     const { user, token } = await principalFixture()
     const payload = await import('hono/jwt').then(({ decode }) => decode(token).payload)
     await testDb.update(users).set({ status: 'BLOCKED' }).where(eq(users.id, user.id))
+    await expect(resolveLivePrincipal(testDb, payload as never, now)).rejects.toMatchObject({
+      status: 403,
+      code: 'ACCOUNT_BLOCKED',
+    })
+  })
+
+  it('blocks an ACTIVE account whose email is not verified', async () => {
+    const { user, token } = await principalFixture()
+    const payload = await import('hono/jwt').then(({ decode }) => decode(token).payload)
+    await testDb.update(users).set({ emailVerifiedAt: null }).where(eq(users.id, user.id))
+
     await expect(resolveLivePrincipal(testDb, payload as never, now)).rejects.toMatchObject({
       status: 403,
       code: 'ACCOUNT_BLOCKED',

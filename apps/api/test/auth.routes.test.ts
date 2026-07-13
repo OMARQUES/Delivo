@@ -48,6 +48,7 @@ import {
   emailOutbox,
   pendingRegistrations,
   refreshTokens,
+  stores,
   users,
 } from '../src/db/schema'
 import { PostgresRateLimiter } from '../src/security/rate-limit'
@@ -55,6 +56,7 @@ import { POLICIES } from '../src/security/rate-limit-policies'
 import { SecurityHttpError, TURNSTILE_INVALID_MESSAGE } from '../src/security/http'
 import { hashPassword } from '../src/lib/password'
 import { deriveAuthCode } from '../src/security/auth-code'
+import { provisionStoreWithOwner } from '../src/services/store-provisioning.service'
 
 const env = {
   APP_ENV: 'local' as const,
@@ -188,6 +190,29 @@ async function recoveryTicket(email: string) {
   }
 }
 
+async function storeActivationFlow() {
+  const provisioned = await provisionStoreWithOwner(testDb, {
+    name: 'Route Activation Store',
+    slug: 'route-activation-store',
+    category: 'OUTROS',
+    phone: '44999990000',
+    city: 'Maringá',
+    addressText: 'Rua Route, 10',
+    lat: -23.42,
+    lng: -51.93,
+    owner: { name: 'Route Owner', email: 'route-owner@example.test' },
+  }, {
+    authCodeSecret: env.AUTH_CODE_SECRET,
+    jwtSecret: env.JWT_SECRET,
+    requestId: '22222222-2222-4222-8222-222222222222',
+  })
+  const code = await deriveAuthCode(env.AUTH_CODE_SECRET, {
+    challengeId: provisioned.verificationId,
+    purpose: 'STORE_ACTIVATION',
+  })
+  return { ...provisioned, code }
+}
+
 describe('POST /auth/register', () => {
   it('returns only a detached 202 verification flow', async () => {
     const res = await post('/auth/register', ana)
@@ -304,6 +329,70 @@ describe('POST /auth/verification/*', () => {
       kind: 'DRIVER_PENDING_APPROVAL',
       user: { status: 'PENDING_APPROVAL' },
     })
+  })
+
+  it('confirms STORE by inferred purpose and returns only an ephemeral setup ticket', async () => {
+    const flow = await storeActivationFlow()
+
+    const confirmed = await post('/auth/verification/confirm', {
+      verificationId: flow.verificationId,
+      code: flow.code,
+    })
+
+    expect(confirmed.status).toBe(200)
+    expect(await confirmed.json()).toEqual({
+      kind: 'PASSWORD_SETUP_REQUIRED',
+      passwordSetupTicket: expect.any(String),
+      expiresAt: expect.any(String),
+    })
+    expect(confirmed.headers.get('cache-control')).toBe('no-store')
+    expect(await testDb.select().from(refreshTokens)).toHaveLength(0)
+    expect((await testDb.select().from(users).where(eq(users.id, flow.owner.id)))[0])
+      .toMatchObject({ status: 'PENDING_EMAIL', emailVerifiedAt: null })
+    expect((await testDb.select().from(stores).where(eq(stores.id, flow.store.id)))[0]?.securityStatus)
+      .toBe('PENDING_ACTIVATION')
+  })
+
+  it('sets initial STORE password through a strict ticket-only request without issuing a session', async () => {
+    const flow = await storeActivationFlow()
+    const confirmed = await post('/auth/verification/confirm', {
+      verificationId: flow.verificationId,
+      code: flow.code,
+    })
+    const activation = await confirmed.json() as { passwordSetupTicket: string }
+
+    const extraSelector = await post('/auth/password-setup', {
+      passwordSetupTicket: activation.passwordSetupTicket,
+      newPassword: 'a strong store password',
+      userId: flow.owner.id,
+    })
+    expect(extraSelector.status).toBe(400)
+
+    const setup = await post('/auth/password-setup', {
+      passwordSetupTicket: activation.passwordSetupTicket,
+      newPassword: 'a strong store password',
+    })
+    expect(setup.status).toBe(204)
+    expect(setup.headers.get('cache-control')).toBe('no-store')
+    expect(await testDb.select().from(refreshTokens)).toHaveLength(0)
+    expect(await testDb.select().from(authProviders).where(eq(authProviders.userId, flow.owner.id)))
+      .toHaveLength(1)
+  })
+
+  it('rejects client-controlled verification purpose without consuming the challenge', async () => {
+    const flow = await storeActivationFlow()
+
+    const response = await post('/auth/verification/confirm', {
+      verificationId: flow.verificationId,
+      code: flow.code,
+      purpose: 'ADMIN_ACTIVATION',
+    })
+
+    expect(response.status).toBe(400)
+    const [challenge] = await testDb.select().from(authChallenges)
+      .where(eq(authChallenges.id, flow.verificationId))
+    expect(challenge?.consumedAt).toBeNull()
+    expect(await testDb.select().from(authActionTickets)).toHaveLength(0)
   })
 
   it('separates malformed-code validation from valid-shape wrong-code errors', async () => {
@@ -768,7 +857,11 @@ describe('requireRole unit', () => {
 
   async function tokenFor(role: 'CUSTOMER' | 'ADMIN') {
     const [user] = await testDb.insert(users).values({
-      name: role, role, status: 'ACTIVE', email: `${role}-${crypto.randomUUID()}@test.local`,
+      name: role,
+      role,
+      status: 'ACTIVE',
+      email: `${role}-${crypto.randomUUID()}@test.local`,
+      emailVerifiedAt: new Date(),
     }).returning()
     if (!user) throw new Error('test user was not created')
     const familyId = crypto.randomUUID()

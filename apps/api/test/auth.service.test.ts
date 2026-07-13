@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { createActiveStoreTestFixture, createVerifiedTestAccount, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 const verifyPasswordCall = vi.hoisted(() => vi.fn())
@@ -134,6 +135,20 @@ describe('loginUser', () => {
       SECRET,
     )).rejects.toMatchObject({ status: 403 })
   })
+
+  it('rejects an ACTIVE account whose email is not verified', async () => {
+    const account = await createVerifiedTestAccount(testDb, {
+      ...ana,
+      email: 'active-unverified@example.test',
+    }, SECRET)
+    await testDb.update(users).set({ emailVerifiedAt: null }).where(eq(users.id, account.user.id))
+
+    await expect(loginUser(
+      testDb,
+      { email: 'active-unverified@example.test', password: 'senha123' },
+      SECRET,
+    )).rejects.toMatchObject({ status: 403, message: expect.stringContaining('email') })
+  })
 })
 
 describe('refresh rotation', () => {
@@ -153,5 +168,16 @@ describe('refresh rotation', () => {
 
   it('rejects unknown token', async () => {
     await expect(rotateRefreshToken(testDb, 'token-inexistente-aaaa', SECRET)).rejects.toThrow(AuthError)
+  })
+
+  it('rejects refresh when an ACTIVE account loses its verified-email invariant', async () => {
+    const account = await createVerifiedTestAccount(testDb, {
+      ...ana,
+      email: 'refresh-unverified@example.test',
+    }, SECRET)
+    await testDb.update(users).set({ emailVerifiedAt: null }).where(eq(users.id, account.user.id))
+
+    await expect(rotateRefreshToken(testDb, account.refreshToken!, SECRET))
+      .rejects.toMatchObject({ status: 403 })
   })
 })
