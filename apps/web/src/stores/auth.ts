@@ -15,6 +15,8 @@ export type VerificationFlow = { verificationId: string; expiresAt: string; rese
 export type ConfirmationResult =
   | { kind: 'CUSTOMER_SESSION'; user: SessionUser; accessToken: string; refreshToken: string }
   | { kind: 'DRIVER_PENDING_APPROVAL'; user: SessionUser }
+  | { kind: 'EMAIL_VERIFIED' }
+  | { kind: 'PASSWORD_SETUP_REQUIRED'; passwordSetupTicket: string; expiresAt: string }
 
 type VerificationTiming = { expiresAt?: string; resendAt?: string }
 
@@ -41,6 +43,48 @@ function flowKey(verificationId: string) {
 
 function validTimestamp(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value))
+}
+
+function exactKeys(value: object, allowed: readonly string[]): boolean {
+  const expected = new Set(allowed)
+  return Object.keys(value).length === expected.size && Object.keys(value).every((key) => expected.has(key))
+}
+
+function assertConfirmationResult(value: unknown): ConfirmationResult {
+  if (!value || typeof value !== 'object') throw new Error('Resposta de verificação inválida')
+  const result = value as Partial<ConfirmationResult> & Record<string, unknown>
+  if (result.kind === 'CUSTOMER_SESSION') {
+    if (
+      !exactKeys(result, ['kind', 'user', 'accessToken', 'refreshToken'])
+      || !isActiveSession(result)
+    ) {
+      throw new Error('Resposta de verificação inválida')
+    }
+    return result as Extract<ConfirmationResult, { kind: 'CUSTOMER_SESSION' }>
+  }
+  if (result.kind === 'DRIVER_PENDING_APPROVAL') {
+    const user = result.user as SessionUser | undefined
+    if (!exactKeys(result, ['kind', 'user']) || user?.role !== 'DRIVER' || user.status !== 'PENDING_APPROVAL') {
+      throw new Error('Resposta de verificação inválida')
+    }
+    return result as Extract<ConfirmationResult, { kind: 'DRIVER_PENDING_APPROVAL' }>
+  }
+  if (result.kind === 'EMAIL_VERIFIED') {
+    if (!exactKeys(result, ['kind'])) throw new Error('Resposta de verificação inválida')
+    return { kind: result.kind }
+  }
+  if (result.kind === 'PASSWORD_SETUP_REQUIRED') {
+    if (
+      !exactKeys(result, ['kind', 'passwordSetupTicket', 'expiresAt'])
+      || typeof result.passwordSetupTicket !== 'string'
+      || result.passwordSetupTicket.length < 40
+      || result.passwordSetupTicket.length > 512
+      || !validTimestamp(result.expiresAt)
+      || Date.parse(result.expiresAt) <= Date.now()
+    ) throw new Error('Resposta de verificação inválida')
+    return result as Extract<ConfirmationResult, { kind: 'PASSWORD_SETUP_REQUIRED' }>
+  }
+  throw new Error('Resposta de verificação inválida')
 }
 
 export function saveVerificationTiming(flow: VerificationFlow) {
@@ -102,6 +146,9 @@ export const useAuthStore = defineStore('auth', {
       user: saved?.user ?? null,
       accessToken: saved?.accessToken ?? null,
       refreshToken: saved?.refreshToken ?? null,
+      // Raw setup ticket is deliberately memory-only. Never persist this state.
+      passwordSetupTicket: null as string | null,
+      passwordSetupExpiresAt: null as string | null,
     }
   },
   getters: {
@@ -130,7 +177,12 @@ export const useAuthStore = defineStore('auth', {
       this.user = null
       this.accessToken = null
       this.refreshToken = null
+      this.clearPasswordSetup()
       this.persist()
+    },
+    clearPasswordSetup() {
+      this.passwordSetupTicket = null
+      this.passwordSetupExpiresAt = null
     },
     async login(email: string, password: string, turnstileToken?: string) {
       const r = await api<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password, turnstileToken }) })
@@ -145,17 +197,45 @@ export const useAuthStore = defineStore('auth', {
       return flow
     },
     async confirmEmail(verificationId: string, code: string) {
-      const result = await api<ConfirmationResult>('/auth/verification/confirm', {
+      this.clearPasswordSetup()
+      const result = assertConfirmationResult(await api<unknown>('/auth/verification/confirm', {
         method: 'POST', body: JSON.stringify({ verificationId, code }),
-      })
+      }))
       if (result.kind === 'CUSTOMER_SESSION') {
         if (result.user.role !== 'CUSTOMER') {
           throw new Error('Resposta de autenticação inválida')
         }
         this.setSession(result)
+      } else if (result.kind === 'PASSWORD_SETUP_REQUIRED') {
+        this.passwordSetupTicket = result.passwordSetupTicket
+        this.passwordSetupExpiresAt = result.expiresAt
       }
       clearVerificationTiming(verificationId)
       return result
+    },
+    async setupInitialPassword(newPassword: string): Promise<void> {
+      const expiresAt = this.passwordSetupExpiresAt
+        ? Date.parse(this.passwordSetupExpiresAt)
+        : Number.NaN
+      if (
+        !this.passwordSetupTicket
+        || !Number.isFinite(expiresAt)
+        || expiresAt <= Date.now()
+      ) {
+        this.clearPasswordSetup()
+        throw new Error('Fluxo inválido ou expirado.')
+      }
+      if (newPassword.length < 15 || newPassword.length > 128) {
+        throw new Error('Senha deve ter de 15 a 128 caracteres.')
+      }
+      await api<void>('/auth/password-setup', {
+        method: 'POST',
+        body: JSON.stringify({
+          passwordSetupTicket: this.passwordSetupTicket,
+          newPassword,
+        }),
+      })
+      this.clearPasswordSetup()
     },
     async resendEmail(verificationId: string, turnstileToken?: string) {
       const flow = await api<VerificationFlow>('/auth/verification/resend', {

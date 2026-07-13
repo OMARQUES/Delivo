@@ -10,6 +10,8 @@ const flow = {
   expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
   resendAt: new Date(Date.now() + 60_000).toISOString(),
 }
+const passwordSetupTicket = 'S'.repeat(43)
+const passwordSetupExpiresAt = new Date(Date.now() + 10 * 60_000).toISOString()
 
 function mockFetchOnce(status: number, body: unknown) {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })))
@@ -129,7 +131,17 @@ describe('auth store', () => {
   it('rejects non-active CUSTOMER confirmation before persistence', async () => {
     mockFetchOnce(200, { kind: 'CUSTOMER_SESSION', user: { ...user, status: 'BLOCKED' }, ...tokens })
     const store = useAuthStore()
-    await expect(store.confirmEmail(verificationId, '123456')).rejects.toThrow('Resposta de autenticação inválida')
+    await expect(store.confirmEmail(verificationId, '123456')).rejects.toThrow('Resposta de verificação inválida')
+    expect(store.isAuthenticated).toBe(false)
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
+  })
+
+  it('fails closed on malformed CUSTOMER confirmation response', async () => {
+    mockFetchOnce(200, { kind: 'CUSTOMER_SESSION', ...tokens, user: null })
+    const store = useAuthStore()
+
+    await expect(store.confirmEmail(verificationId, '123456'))
+      .rejects.toThrow('Resposta de verificação inválida')
     expect(store.isAuthenticated).toBe(false)
     expect(localStorage.getItem('delivery.auth')).toBeNull()
   })
@@ -146,5 +158,49 @@ describe('auth store', () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))
     expect(body).toEqual({ verificationId, turnstileToken: 'resend-token' })
     expect(sessionStorage.getItem(`delivery.auth.verification.${verificationId}`)).toContain(replacement.expiresAt)
+  })
+
+  it('keeps STORE password-setup ticket only in Pinia memory', async () => {
+    mockFetchOnce(200, {
+      kind: 'PASSWORD_SETUP_REQUIRED',
+      passwordSetupTicket,
+      expiresAt: passwordSetupExpiresAt,
+    })
+    const store = useAuthStore()
+
+    await expect(store.confirmEmail(verificationId, '123456'))
+      .resolves.toMatchObject({ kind: 'PASSWORD_SETUP_REQUIRED' })
+
+    expect(store.passwordSetupTicket).toBe(passwordSetupTicket)
+    expect(store.passwordSetupExpiresAt).toBe(passwordSetupExpiresAt)
+    expect(store.isAuthenticated).toBe(false)
+    expect(JSON.stringify(localStorage)).not.toContain(passwordSetupTicket)
+    expect(JSON.stringify(sessionStorage)).not.toContain(passwordSetupTicket)
+  })
+
+  it('submits initial password using only memory ticket and clears it after success', async () => {
+    mockFetchOnce(204, null)
+    const store = useAuthStore()
+    store.$patch({ passwordSetupTicket, passwordSetupExpiresAt })
+
+    await store.setupInitialPassword('a strong store password')
+
+    const body = JSON.parse(String((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![1]!.body))
+    expect(body).toEqual({ passwordSetupTicket, newPassword: 'a strong store password' })
+    expect(body).not.toHaveProperty('email')
+    expect(body).not.toHaveProperty('userId')
+    expect(body).not.toHaveProperty('storeId')
+    expect(store.passwordSetupTicket).toBeNull()
+  })
+
+  it('handles ADMIN email confirmation without persisting session or setup ticket', async () => {
+    mockFetchOnce(200, { kind: 'EMAIL_VERIFIED' })
+    const store = useAuthStore()
+
+    await expect(store.confirmEmail(verificationId, '123456')).resolves.toEqual({ kind: 'EMAIL_VERIFIED' })
+
+    expect(store.isAuthenticated).toBe(false)
+    expect(store.passwordSetupTicket).toBeNull()
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
   })
 })

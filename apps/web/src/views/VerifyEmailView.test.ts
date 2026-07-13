@@ -123,4 +123,41 @@ describe('VerifyEmailView', () => {
     expect(wrapper.text()).toContain('Reenviar em')
     expect(routeState.query.id).toBe(verificationId)
   })
+
+  it('navigates STORE to password setup without putting ticket in URL or storage', async () => {
+    const ticket = 'S'.repeat(43)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      kind: 'PASSWORD_SETUP_REQUIRED',
+      passwordSetupTicket: ticket,
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    }), { status: 200 })))
+    const wrapper = mountView()
+
+    await wrapper.get('[data-testid="verification-code"]').setValue('123456')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(replace).toHaveBeenCalledWith({ name: 'initial-password-setup' })
+    expect(JSON.stringify(replace.mock.calls)).not.toContain(ticket)
+    expect(JSON.stringify(localStorage)).not.toContain(ticket)
+    expect(JSON.stringify(sessionStorage)).not.toContain(ticket)
+    expect(wrapper.find('[data-testid="resend"]').exists()).toBe(false)
+  })
+
+  it('shows ADMIN confirmation guidance without creating a session', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ kind: 'EMAIL_VERIFIED' }),
+      { status: 200 },
+    )))
+    const wrapper = mountView()
+
+    await wrapper.get('[data-testid="verification-code"]').setValue('123456')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Email confirmado')
+    expect(wrapper.text()).toContain('login')
+    expect(localStorage.getItem('delivery.auth')).toBeNull()
+    expect(replace).not.toHaveBeenCalled()
+  })
 })
