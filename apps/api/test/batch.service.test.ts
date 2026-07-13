@@ -1,14 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq, inArray } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { acceptDelivery, completeDelivery, listAvailableDeliveries, setAvailability } from '../src/services/dispatch.service'
 import { createOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
 import { startShift } from '../src/services/shift.service'
 import { deliveryBatches, driverShifts, ledgerEntries, orderEvents, orders, users } from '../src/db/schema'
@@ -26,7 +25,7 @@ import {
   releaseBatch,
 } from '../src/services/batch.service'
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria-batch',
   category: 'PIZZARIA',
@@ -57,8 +56,8 @@ let driver2: string
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
-  const other = await createStoreWithOwner(testDb, {
+  const store = await createActiveStoreTestFixture(storeInput)
+  const other = await createActiveStoreTestFixture({
     ...storeInput,
     name: 'Sushi',
     slug: 'sushi-batch',

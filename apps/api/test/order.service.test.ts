@@ -1,13 +1,12 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { updateStore } from '../src/services/store.service'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { OrderError, quoteOrder, createOrder, getCustomerOrder, listCustomerOrders } from '../src/services/order.service'
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria',
   category: 'PIZZARIA',
@@ -29,7 +28,7 @@ let groupIds: { varId: string; varP: string; varG: string; adId: string; adBorda
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   storeId = store.id
   await updateStore(testDb, storeId, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),

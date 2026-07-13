@@ -7,8 +7,10 @@ import { stores } from '../db/schema'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { importCsvCatalog } from '../services/catalog.service'
 import {
-  createStoreWithOwner, listAllStores, setStoreCommission, setStoreSecurityStatus, StoreError,
+  listAllStores, setStoreCommission, setStoreSecurityStatus, StoreError,
 } from '../services/store.service'
+import { provisionStoreWithOwner } from '../services/store-provisioning.service'
+import { EMAIL_DELIVERY_UNAVAILABLE_MESSAGE, SecurityHttpError } from '../security/http'
 
 export const adminStoreRoutes = createRouter()
 
@@ -31,8 +33,16 @@ adminStoreRoutes.openapi(
     responses: { 201: { description: 'Loja criada', content: { 'application/json': { schema: StoreOut } } } },
   }),
   async (c) => {
-    const store = await createStoreWithOwner(c.get('db'), c.req.valid('json')).catch(rethrow)
-    return c.json(store, 201)
+    const authCodeSecret = c.env.AUTH_CODE_SECRET?.trim()
+    if (!authCodeSecret) {
+      throw new SecurityHttpError(503, 'EMAIL_DELIVERY_UNAVAILABLE', EMAIL_DELIVERY_UNAVAILABLE_MESSAGE)
+    }
+    const result = await provisionStoreWithOwner(c.get('db'), c.req.valid('json'), {
+      authCodeSecret,
+      jwtSecret: c.env.JWT_SECRET,
+      requestId: c.get('requestId'),
+    }).catch(rethrow)
+    return c.json(result.store, 201)
   },
 )
 

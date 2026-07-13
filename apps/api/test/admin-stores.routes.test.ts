@@ -10,7 +10,9 @@ import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
 
 const env = {
+  APP_ENV: 'local' as const,
   JWT_SECRET: 'test-secret',
+  AUTH_CODE_SECRET: 'admin-store-activation-secret',
   ALLOWED_ORIGINS: 'http://localhost:5173',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: {} as R2Bucket,
@@ -20,7 +22,7 @@ const storeInput = {
   name: 'Pizzaria do João', slug: 'pizzaria-do-joao', category: 'PIZZARIA',
   phone: '(44) 3333-4444', city: 'Cidade Exemplo', addressText: 'Rua Central, 100',
   lat: -23.5, lng: -51.9,
-  owner: { name: 'João', email: 'joao@email.com', password: 'senha123' },
+  owner: { name: 'João', email: 'joao@email.com' },
 }
 
 async function adminToken() {
@@ -30,7 +32,7 @@ async function customerToken() {
   return createTestSession({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
 }
 
-type StoreBody = { id: string; slug: string; securityStatus: 'ACTIVE' | 'SUSPENDED' | 'CLOSED' }
+type StoreBody = { id: string; slug: string; securityStatus: 'ACTIVE' | 'SUSPENDED' | 'CLOSED' | 'PENDING_ACTIVATION' }
 
 function req(path: string, init: RequestInit = {}, token?: string) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(init.headers as Record<string, string>) }
@@ -48,6 +50,7 @@ describe('POST /admin/stores', () => {
     expect(res.status).toBe(201)
     const body = (await res.json()) as StoreBody
     expect(body.slug).toBe('pizzaria-do-joao')
+    expect(body.securityStatus).toBe('PENDING_ACTIVATION')
     expect(body).not.toHaveProperty('owner')
   })
 
@@ -63,15 +66,15 @@ describe('POST /admin/stores', () => {
 })
 
 describe('GET /admin/stores + PATCH security status', () => {
-  it('lists all and suspends a store', async () => {
+  it('lists all and permits closing a pending store', async () => {
     const create = await req('/admin/stores', { method: 'POST', body: JSON.stringify(storeInput) }, await adminToken())
     const { id } = (await create.json()) as StoreBody
-    const patch = await req(`/admin/stores/${id}/security-status`, { method: 'PATCH', body: JSON.stringify({ securityStatus: 'SUSPENDED' }) }, await adminToken())
+    const patch = await req(`/admin/stores/${id}/security-status`, { method: 'PATCH', body: JSON.stringify({ securityStatus: 'CLOSED' }) }, await adminToken())
     expect(patch.status).toBe(200)
     const list = await req('/admin/stores', {}, await adminToken())
     const body = (await list.json()) as StoreBody[]
     expect(body).toHaveLength(1)
-    expect(body[0]?.securityStatus).toBe('SUSPENDED')
+    expect(body[0]?.securityStatus).toBe('CLOSED')
   })
 })
 

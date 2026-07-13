@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eq, inArray } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -16,7 +15,7 @@ import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -24,7 +23,7 @@ const env = {
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: {} as R2Bucket,
 }
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria-batch-routes',
   category: 'PIZZARIA',
@@ -56,8 +55,8 @@ let driver2Token: string
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
-  const other = await createStoreWithOwner(testDb, {
+  const store = await createActiveStoreTestFixture(storeInput)
+  const other = await createActiveStoreTestFixture({
     ...storeInput,
     name: 'Sushi',
     slug: 'sushi-batch-routes',

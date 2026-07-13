@@ -1,6 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -8,7 +7,6 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { createStoreWithOwner } from '../src/services/store.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 
 const env = {
@@ -17,7 +15,7 @@ const env = {
   BUCKET: {} as R2Bucket,
 }
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria', slug: 'pizzaria', category: 'PIZZARIA', phone: '4433334444',
   city: 'C', addressText: 'Rua A, 1', lat: -23.5, lng: -51.9,
   owner: { name: 'João', email: 'joao@email.com', password: 'senha123' },
@@ -28,7 +26,7 @@ beforeEach(truncateAll)
 afterAll(closeTestDb)
 
 async function seedMenu() {
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   const cat = await createCategory(testDb, store.id, { name: 'Pizzas' })
   await createProduct(testDb, store.id, { categoryId: cat.id, name: 'Pizza Calabresa', basePriceCents: 3500, isAvailable: true })
   return store

@@ -1,9 +1,8 @@
 import { eq, sql } from 'drizzle-orm'
-import type { StoreCreateInput, StoreUpdateInput } from '@delivery/shared/schemas'
+import type { StoreUpdateInput } from '@delivery/shared/schemas'
 import { isOpenNow } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { stores, users, authProviders, refreshTokens } from '../db/schema'
-import { hashPassword } from '../lib/password'
+import { stores, users, refreshTokens } from '../db/schema'
 
 export class StoreError extends Error {
   constructor(
@@ -11,53 +10,6 @@ export class StoreError extends Error {
     public status: 400 | 404 | 409 = 409,
   ) {
     super(message)
-  }
-}
-
-/**
- * Detecta unique_violation (SQLSTATE 23505). Drizzle embrulha o erro do driver
- * em DrizzleQueryError, então o código pode estar no topo ou em `e.cause.code`.
- */
-function isUniqueViolation(e: unknown): boolean {
-  const code = (e as { code?: string })?.code
-  const causeCode = (e as { cause?: { code?: string } })?.cause?.code
-  return code === '23505' || causeCode === '23505'
-}
-
-/** Cria user (role STORE) + loja numa transação. Rollback total em conflito. */
-export async function createStoreWithOwner(db: Db, input: StoreCreateInput) {
-  try {
-    return await db.transaction(async (tx) => {
-      const [owner] = await tx
-        .insert(users)
-        .values({ name: input.owner.name, email: input.owner.email, role: 'STORE', status: 'ACTIVE' })
-        .returning()
-      if (!owner) throw new StoreError('Falha ao criar usuário da loja', 400)
-      await tx.insert(authProviders).values({
-        userId: owner.id,
-        provider: 'PASSWORD',
-        passwordHash: await hashPassword(input.owner.password),
-      })
-      const [store] = await tx
-        .insert(stores)
-        .values({
-          ownerUserId: owner.id,
-          name: input.name,
-          slug: input.slug,
-          category: input.category,
-          phone: input.phone,
-          city: input.city,
-          addressText: input.addressText,
-          lat: input.lat,
-          lng: input.lng,
-        })
-        .returning()
-      if (!store) throw new StoreError('Falha ao criar loja', 400)
-      return store
-    })
-  } catch (e) {
-    if (isUniqueViolation(e)) throw new StoreError('Slug ou email já em uso', 409)
-    throw e
   }
 }
 
@@ -125,6 +77,12 @@ export async function setStoreSecurityStatus(
     if (!current) throw new StoreError('Loja não encontrada', 404)
     if (current.securityStatus === 'CLOSED' && securityStatus !== 'CLOSED') {
       throw new StoreError('Loja encerrada não pode ser reativada', 409)
+    }
+    if (
+      current.securityStatus === 'PENDING_ACTIVATION'
+      && (securityStatus === 'ACTIVE' || securityStatus === 'SUSPENDED')
+    ) {
+      throw new StoreError('Loja pendente deve ser ativada pelo proprietário', 409)
     }
     if (current.securityStatus === securityStatus) return current
 

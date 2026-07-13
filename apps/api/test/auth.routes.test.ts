@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
-import { createTestSession, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, createTestSession, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 const verifyTurnstileMock = vi.hoisted(() => vi.fn(async () => undefined))
 const sendEmailMock = vi.hoisted(() => vi.fn(async () => ({ providerMessageId: 'email-test-id' })))
@@ -55,7 +55,6 @@ import { POLICIES } from '../src/security/rate-limit-policies'
 import { SecurityHttpError, TURNSTILE_INVALID_MESSAGE } from '../src/security/http'
 import { hashPassword } from '../src/lib/password'
 import { deriveAuthCode } from '../src/security/auth-code'
-import { createStoreWithOwner } from '../src/services/store.service'
 
 const env = {
   APP_ENV: 'local' as const,
@@ -661,7 +660,7 @@ describe('PATCH /auth/me/contact', () => {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: null }),
     }, env)).status).toBe(401)
 
-    const store = await createStoreWithOwner(testDb, {
+    const store = await createActiveStoreTestFixture({
       name: 'Contact Store', slug: 'contact-store', category: 'OUTROS', phone: '44900000000',
       city: 'Test', addressText: 'Test, 1', lat: -23.5, lng: -51.9,
       owner: { name: 'Store Owner', email: 'owner-contact@example.test', password: 'safe store password' },

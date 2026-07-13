@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
-import { createStoreWithOwner } from '../src/services/store.service'
+import { createActiveStoreTestFixture, closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { acceptOffer, createOffer, dismissOffer, listOpenOffers, listStoreOffers } from '../src/services/offer.service'
 import { driverOffers, offerAcceptances, storeDrivers, users } from '../src/db/schema'
@@ -16,8 +15,8 @@ beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
   const base = { category: 'RESTAURANTE' as const, phone: '4433334444', city: 'Maringá', addressText: 'Rua A', lat: -23.4, lng: -51.9 }
-  storeA = (await createStoreWithOwner(testDb, { ...base, name: 'A', slug: 'oferta-a', owner: { name: 'A', email: 'a@offers.test', password: 'senha123' } })).id
-  storeB = (await createStoreWithOwner(testDb, { ...base, phone: '4433335555', name: 'B', slug: 'oferta-b', owner: { name: 'B', email: 'b@offers.test', password: 'senha123' } })).id
+  storeA = (await createActiveStoreTestFixture({ ...base, name: 'A', slug: 'oferta-a', owner: { name: 'A', email: 'a@offers.test', password: 'senha123' } })).id
+  storeB = (await createActiveStoreTestFixture({ ...base, phone: '4433335555', name: 'B', slug: 'oferta-b', owner: { name: 'B', email: 'b@offers.test', password: 'senha123' } })).id
   drivers = []
   for (let index = 0; index < 3; index += 1) {
     const user = await createVerifiedTestAccount(testDb, { name: `Driver ${index}`, phone: `4491111111${index}`, password: 'senha123', role: 'DRIVER', acceptedTerms: true }, 'secret')

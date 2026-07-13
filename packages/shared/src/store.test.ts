@@ -20,13 +20,24 @@ describe('StoreCreateSchema', () => {
     addressText: 'Rua Central, 100',
     lat: -23.5,
     lng: -51.9,
-    owner: { name: 'João', email: 'Joao@Email.com', password: 'senha123' },
+    owner: { name: 'João', email: 'Joao@Email.com' },
   }
 
   it('accepts valid input, normalizes phone digits and owner email', () => {
     const r = StoreCreateSchema.parse(valid)
     expect(r.phone).toBe('4433334444')
     expect(r.owner.email).toBe('joao@email.com')
+  })
+
+  it('rejects owner passwords and unknown owner fields', () => {
+    expect(() => StoreCreateSchema.parse({
+      ...valid,
+      owner: { ...valid.owner, password: 'admin-must-not-set-this' },
+    })).toThrow()
+    expect(() => StoreCreateSchema.parse({
+      ...valid,
+      owner: { ...valid.owner, role: 'ADMIN' },
+    })).toThrow()
   })
 
   it('rejects reserved and malformed slugs', () => {

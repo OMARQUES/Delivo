@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -15,7 +14,7 @@ import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -24,7 +23,7 @@ const env = {
   BUCKET: {} as R2Bucket,
 }
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria',
   category: 'PIZZARIA',
@@ -49,7 +48,7 @@ const periodEnd = '2026-07-08T00:00:00.000Z'
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   storeId = store.id
   storeToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
   await updateStore(testDb, storeId, {

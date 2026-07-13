@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
-import { createStoreWithOwner } from '../src/services/store.service'
+import { createActiveStoreTestFixture, closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { confirmLink, confirmLinkTermsChange, inviteDriver, proposeLinkTerms, removeLink } from '../src/services/store-driver.service'
 import { autoApproveStaleShiftDailies, decideShiftDaily, endShift, offerShiftReactivation, reactivateShift, startShift } from '../src/services/shift.service'
@@ -33,7 +32,7 @@ function window(startOffset: number, endOffset: number) {
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, { name: 'Multi', slug: 'multi-link', category: 'MERCADO', phone: '4433339090', city: 'C',
+  const store = await createActiveStoreTestFixture({ name: 'Multi', slug: 'multi-link', category: 'MERCADO', phone: '4433339090', city: 'C',
     addressText: 'Rua A', lat: -23.5, lng: -51.9, owner: { name: 'L', email: 'multi@link.test', password: 'senha123' },
   })
   storeId = store.id

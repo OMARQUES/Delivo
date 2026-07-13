@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq, isNull } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createVerifiedTestAccount } from './helpers/test-db'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 import { createAddress } from '../src/services/address.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
@@ -24,7 +23,7 @@ import {
 } from '../src/services/dispatch.service'
 import { driverShifts, ledgerEntries, orders, storeDrivers, stores, users } from '../src/db/schema'
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Loja Turno', slug: 'loja-turno', category: 'MERCADO', phone: '4433334444', city: 'C',
   addressText: 'Rua A, 1', lat: -23.55, lng: -51.9,
   owner: { name: 'Lojista', email: 'turno@loja.test', password: 'senha123' },
@@ -40,7 +39,7 @@ let addressId: string
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   storeId = store.id
   await updateStore(testDb, storeId, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),

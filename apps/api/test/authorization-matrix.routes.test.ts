@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
-import { migrateTestDb, truncateAll, testDb, closeTestDb, createTestSession } from './helpers/test-db'
+import { createActiveStoreTestFixture, migrateTestDb, truncateAll, testDb, closeTestDb, createTestSession } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -7,7 +7,6 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { createStoreWithOwner } from '../src/services/store.service'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -189,7 +188,7 @@ function call(method: string, path: string, role: Role) {
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, {
+  const store = await createActiveStoreTestFixture({
     name: 'Loja Matriz', slug: STORE_SLUG, category: 'PIZZARIA', phone: '4433334444',
     city: 'Cidade Exemplo', addressText: 'Rua Central, 100', lat: -23.5, lng: -51.9,
     owner: { name: 'Dono', email: 'dono-matriz@email.com', password: 'senha123' },

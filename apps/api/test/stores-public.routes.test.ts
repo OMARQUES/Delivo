@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -7,7 +7,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { createStoreWithOwner, setStoreSecurityStatus } from '../src/services/store.service'
+import { setStoreSecurityStatus } from '../src/services/store.service'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -28,8 +28,8 @@ afterAll(closeTestDb)
 
 describe('GET /stores', () => {
   it('lists active stores publicly (no auth), hides owner fields', async () => {
-    await createStoreWithOwner(testDb, base)
-    const inactive = await createStoreWithOwner(testDb, {
+    await createActiveStoreTestFixture(base)
+    const inactive = await createActiveStoreTestFixture({
       ...base, slug: 'fechada', name: 'Fechada', owner: { ...base.owner, email: 'f@y.com' },
     })
     await setStoreSecurityStatus(testDb, inactive.id, 'SUSPENDED')
@@ -45,7 +45,7 @@ describe('GET /stores', () => {
 
 describe('GET /stores/:slug', () => {
   it('returns store by slug case-insensitive; 404 unknown/inactive', async () => {
-    await createStoreWithOwner(testDb, base)
+    await createActiveStoreTestFixture(base)
     const res = await app.request('/stores/PIZZARIA-DO-JOAO', {}, env)
     expect(res.status).toBe(200)
     expect(((await res.json()) as { name: string }).name).toBe('Pizzaria do João')

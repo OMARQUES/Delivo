@@ -1,14 +1,12 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
-import { createStoreWithOwner } from '../src/services/store.service'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 import {
   CatalogError, createCategory, deleteCategory, deleteProduct, createProduct,
   updateOption, updateProduct, replaceProductOptions, getStoreCatalog, getPublicMenu,
   searchProducts, importCsvCatalog, setProductPhoto, assertOwnedProduct,
 } from '../src/services/catalog.service'
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria do João', slug: 'pizzaria-do-joao', category: 'PIZZARIA', phone: '4433334444',
   city: 'Cidade Exemplo', addressText: 'Rua Central, 100', lat: -23.5, lng: -51.9,
   owner: { name: 'João', email: 'joao@email.com', password: 'senha123' },
@@ -19,7 +17,7 @@ let storeId: string
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  storeId = (await createStoreWithOwner(testDb, storeInput)).id
+  storeId = (await createActiveStoreTestFixture(storeInput)).id
 })
 afterAll(closeTestDb)
 
@@ -36,7 +34,7 @@ describe('categories', () => {
     await expect(deleteCategory(testDb, storeId, cat.id)).rejects.toMatchObject({ status: 409 })
   })
   it('scopes by store: cannot delete another store category', async () => {
-    const other = await createStoreWithOwner(testDb, {
+    const other = await createActiveStoreTestFixture({
       ...storeInput, slug: 'outra', owner: { ...storeInput.owner, email: 'o@y.com' },
     })
     const cat = await createCategory(testDb, other.id, { name: 'Deles' })
@@ -120,7 +118,7 @@ describe('products + options tree', () => {
   it('assertOwnedProduct allows own product and rejects another store product', async () => {
     const p = await makeProduct()
     await expect(assertOwnedProduct(testDb, storeId, p.id)).resolves.toMatchObject({ id: p.id })
-    const other = await createStoreWithOwner(testDb, {
+    const other = await createActiveStoreTestFixture({
       ...storeInput,
       slug: 'outra-loja',
       owner: { ...storeInput.owner, email: 'outra-catalog@email.com' },

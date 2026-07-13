@@ -1,7 +1,6 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
 import { eq, sql } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -17,7 +16,7 @@ import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { createPixPaymentForOrder } from '../src/services/payment.service'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 
 const WEBHOOK_SECRET = 'whsec-test'
 const env = {
@@ -28,7 +27,7 @@ const env = {
 }
 const envWithMp = { ...env, MP_WEBHOOK_SECRET: WEBHOOK_SECRET, MP_ACCESS_TOKEN: 'tok' }
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria',
   category: 'PIZZARIA',
@@ -69,7 +68,7 @@ beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
   vi.restoreAllMocks()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   await updateStore(testDb, store.id, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),
     deliveryFeeMode: 'FIXED',

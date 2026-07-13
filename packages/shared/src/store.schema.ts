@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { normalizePhone } from './auth.schema'
+import { NormalizedEmail, normalizePhone } from './auth.schema'
 import { RESERVED_SLUGS, STORE_CATEGORIES } from './store'
 
 const SlugSchema = z
@@ -38,9 +38,8 @@ export const StoreCreateSchema = z.object({
   lng: z.number().min(-180).max(180),
   owner: z.object({
     name: z.string().trim().min(2).max(120),
-    email: z.string().trim().toLowerCase().pipe(z.email()),
-    password: z.string().min(8).max(128),
-  }),
+    email: NormalizedEmail,
+  }).strict(),
 })
 export type StoreCreateInput = z.infer<typeof StoreCreateSchema>
 

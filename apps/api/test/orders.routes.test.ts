@@ -1,7 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -18,7 +17,7 @@ import { createCategory, createProduct, replaceProductOptions } from '../src/ser
 import { proposeAmendment } from '../src/services/amendment.service'
 import { createOrder, listCustomerOrders } from '../src/services/order.service'
 import { requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 import { PostgresRateLimiter } from '../src/security/rate-limit'
 import { POLICIES, type RateLimitPolicy } from '../src/security/rate-limit-policies'
 
@@ -33,7 +32,7 @@ const env = {
   BUCKET: {} as R2Bucket,
 }
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria',
   category: 'PIZZARIA',
@@ -57,7 +56,7 @@ let groupIds: { varId: string; varG: string; adId: string; adBorda: string }
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   storeId = store.id
   await updateStore(testDb, storeId, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),

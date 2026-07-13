@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
-import { createVerifiedTestAccount, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, createVerifiedTestAccount, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 const verifyPasswordCall = vi.hoisted(() => vi.fn())
 
@@ -19,7 +19,7 @@ import {
   revokeRefreshToken,
   AuthError,
 } from '../src/services/auth.service'
-import { createStoreWithOwner, setStoreSecurityStatus } from '../src/services/store.service'
+import { setStoreSecurityStatus } from '../src/services/store.service'
 import { authProviders, users } from '../src/db/schema'
 import { hashPassword } from '../src/lib/password'
 
@@ -121,7 +121,7 @@ describe('loginUser', () => {
   })
 
   it('does not issue a session while the store is suspended or closed', async () => {
-    const store = await createStoreWithOwner(testDb, {
+    const store = await createActiveStoreTestFixture({
       name: 'Loja suspensa', slug: 'loja-suspensa', category: 'PIZZARIA', phone: '4433330000',
       city: 'Cidade', addressText: 'Rua A, 1', lat: -23.5, lng: -51.9,
       owner: { name: 'Dono', email: 'dono@loja.test', password: 'senha123' },

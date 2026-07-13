@@ -1,8 +1,7 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
 import { eq, sql } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { updateStore } from '../src/services/store.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
@@ -17,7 +16,7 @@ import {
   refundOrderPaymentIfAny,
 } from '../src/services/payment.service'
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria',
   category: 'PIZZARIA',
@@ -56,7 +55,7 @@ function fakeProvider(overrides: Partial<PaymentProvider> = {}): PaymentProvider
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   await updateStore(testDb, store.id, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),
     deliveryFeeMode: 'FIXED',

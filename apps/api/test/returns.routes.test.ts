@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -12,7 +11,6 @@ import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
 import { ledgerEntries, orderEvents, orders, users } from '../src/db/schema'
 import { createVerifiedTestAccount } from './helpers/test-db'
-import { createStoreWithOwner } from '../src/services/store.service'
 import { PostgresRateLimiter } from '../src/security/rate-limit'
 import { POLICIES, type RateLimitPolicy } from '../src/security/rate-limit-policies'
 
@@ -28,7 +26,7 @@ const env = {
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: { put: bucketPut, delete: bucketDelete } as unknown as R2Bucket,
 }
-const input: StoreCreateInput = {
+const input: StoreFixtureInput = {
   name: 'Loja', slug: 'loja-return-route', category: 'MERCADO', phone: '4433334444', city: 'C',
   addressText: 'Rua A', lat: -23.5, lng: -51.9,
   owner: { name: 'Lojista', email: 'route@return.test', password: 'senha123' },
@@ -46,8 +44,8 @@ beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
   bucketPut.mockClear(); bucketDelete.mockClear()
-  const store = await createStoreWithOwner(testDb, input)
-  const other = await createStoreWithOwner(testDb, {
+  const store = await createActiveStoreTestFixture(input)
+  const other = await createActiveStoreTestFixture({
     ...input, name: 'Outra', slug: 'outra-return-route', phone: '4433335555',
     owner: { name: 'Outra', email: 'other@return.test', password: 'senha123' },
   })

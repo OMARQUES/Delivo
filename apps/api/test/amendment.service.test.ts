@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sql } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 import { payments } from '../src/db/schema'
 import type { PaymentProvider } from '../src/lib/payment-provider'
 import {
@@ -19,7 +18,7 @@ import {
   withdrawAmendment,
 } from '../src/services/amendment.service'
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria',
   category: 'PIZZARIA',
@@ -61,7 +60,7 @@ function fakeProvider(overrides: Partial<PaymentProvider> = {}): PaymentProvider
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   storeId = store.id
   ownerUserId = store.ownerUserId
   await updateStore(testDb, storeId, {

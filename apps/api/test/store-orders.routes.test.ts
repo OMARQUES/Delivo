@@ -1,7 +1,6 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
 import { eq, sql } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -19,7 +18,7 @@ import { createCategory, createProduct, replaceProductOptions } from '../src/ser
 import { createOrder } from '../src/services/order.service'
 import { customerRequestCancel, requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { confirmPaymentApproved, createPixPaymentForOrder, getOrderPayment } from '../src/services/payment.service'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -28,7 +27,7 @@ const env = {
   BUCKET: {} as R2Bucket,
 }
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Pizzaria',
   slug: 'pizzaria',
   category: 'PIZZARIA',
@@ -71,7 +70,7 @@ function fakeProvider(overrides: Partial<PaymentProvider> = {}): PaymentProvider
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   storeId = store.id
   ownerToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
   await updateStore(testDb, storeId, {

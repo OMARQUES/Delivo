@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { inArray } from 'drizzle-orm'
 import { saoPauloDate } from '@delivery/shared'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -15,13 +14,12 @@ import { shiftStartAuthorizations, users } from '../src/db/schema'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
 import { startShift } from '../src/services/shift.service'
-import { createStoreWithOwner } from '../src/services/store.service'
 
 const env = {
   JWT_SECRET: 'test-secret', ALLOWED_ORIGINS: 'http://localhost:5173',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive, BUCKET: {} as R2Bucket,
 }
-const baseStore: StoreCreateInput = {
+const baseStore: StoreFixtureInput = {
   name: 'Loja', slug: 'loja-termos', category: 'MERCADO', phone: '4433334444', city: 'C',
   addressText: 'Rua A', lat: -23.55, lng: -51.9,
   owner: { name: 'Lojista', email: 'loja@termos.test', password: 'senha123' },
@@ -38,10 +36,10 @@ let linkId: string
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, baseStore)
+  const store = await createActiveStoreTestFixture(baseStore)
   storeId = store.id
   storeToken = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'Lojista' }, env.JWT_SECRET)
-  const otherStore = await createStoreWithOwner(testDb, {
+  const otherStore = await createActiveStoreTestFixture({
     ...baseStore, name: 'Outra', slug: 'outra-termos', phone: '4433335555',
     owner: { name: 'Outra', email: 'outra@termos.test', password: 'senha123' },
   })

@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
 import type { PaymentProvider } from '../src/lib/payment-provider'
-import { closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -15,13 +14,13 @@ import { requestDriver, requestDriverOwn, storeUpdateOrderStatus } from '../src/
 import {
   adminConfirmOrderReturn, confirmOrderReturn, listPendingReturns,
 } from '../src/services/return.service'
-import { createStoreWithOwner, updateStore } from '../src/services/store.service'
+import { updateStore } from '../src/services/store.service'
 import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
 import { startShift } from '../src/services/shift.service'
 import { decideActiveShiftTerms, proposeActiveShiftTerms } from '../src/services/shift-proposal.service'
 import { ledgerEntries, orders, payments, users } from '../src/db/schema'
 
-const storeInput: StoreCreateInput = {
+const storeInput: StoreFixtureInput = {
   name: 'Loja Retorno', slug: 'loja-retorno', category: 'MERCADO', phone: '4433334444', city: 'C',
   addressText: 'Rua Loja', lat: -23.55, lng: -51.9,
   owner: { name: 'Lojista', email: 'retorno@loja.test', password: 'senha123' },
@@ -37,7 +36,7 @@ let addressId: string
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createStoreWithOwner(testDb, storeInput)
+  const store = await createActiveStoreTestFixture(storeInput)
   storeId = store.id; ownerId = store.ownerUserId
   await updateStore(testDb, storeId, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),

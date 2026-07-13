@@ -1,7 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
-import type { StoreCreateInput } from '@delivery/shared/schemas'
-import { migrateTestDb, truncateAll, testDb, closeTestDb, createTestSession } from './helpers/test-db'
+import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb, createTestSession } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -14,7 +13,7 @@ import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
-import { createStoreWithOwner, updateStore, setStoreSecurityStatus } from '../src/services/store.service'
+import { updateStore, setStoreSecurityStatus } from '../src/services/store.service'
 
 const env = {
   JWT_SECRET: 'test-secret',
@@ -27,7 +26,7 @@ const env = {
   BUCKET: {} as R2Bucket,
 }
 
-function storeInput(n: string): StoreCreateInput {
+function storeInput(n: string): StoreFixtureInput {
   return {
     name: `Loja ${n}`, slug: `loja-${n}`, category: 'PIZZARIA', phone: '4433334444',
     city: 'C', addressText: 'Rua A, 1', lat: -23.55, lng: -51.9,
@@ -42,7 +41,7 @@ function req(path: string, token: string | null, init: RequestInit = {}) {
 }
 
 async function seedOpenStore(n: string) {
-  const store = await createStoreWithOwner(testDb, storeInput(n))
+  const store = await createActiveStoreTestFixture(storeInput(n))
   await updateStore(testDb, store.id, {
     openingHours: Array.from({ length: 7 }, (_, dow) => ({ dow, open: '00:00', close: '23:59' })),
     deliveryFeeMode: 'DISTANCE', deliveryMinFeeCents: 400, deliveryPerKmCents: 200,
@@ -144,7 +143,7 @@ describe('security-event transitions — old credentials fail immediately', () =
   })
 
   it('suspending a store invalidates the owner access and refresh', async () => {
-    const store = await createStoreWithOwner(testDb, storeInput('sus'))
+    const store = await createActiveStoreTestFixture(storeInput('sus'))
     const login = await createVerifiedTestAccount(testDb, { name: 'x', phone: '44900000004', password: 'senha123', role: 'CUSTOMER', acceptedTerms: true }, env.JWT_SECRET)
     // Promote the fresh login user into the store owner seat so it carries a real refresh family.
     void login

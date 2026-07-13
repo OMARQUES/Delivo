@@ -10,6 +10,7 @@ import type { UserRole, UserStatus } from '../../src/db/schema'
 import { signAccessToken } from '../../src/lib/tokens'
 import { hashPassword } from '../../src/lib/password'
 import { issueSessionTokens, toPublicUser } from '../../src/services/auth.service'
+import type { StoreCreateInput } from '@delivery/shared/schemas'
 
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/delivery_test'
@@ -110,6 +111,75 @@ async function insertVerifiedTestUser(db: typeof testDb, input: VerifiedUserInpu
 
 export async function createVerifiedTestUser(input: VerifiedUserInput): Promise<typeof users.$inferSelect> {
   return insertVerifiedTestUser(testDb, input)
+}
+
+export type StoreFixtureInput = Omit<StoreCreateInput, 'owner'> & {
+  owner: StoreCreateInput['owner'] & { password?: string }
+}
+
+const storeFixturePasswordHashes = new Map<string, Promise<string>>()
+
+function storeFixturePasswordHash(password: string): Promise<string> {
+  let hash = storeFixturePasswordHashes.get(password)
+  if (!hash) {
+    hash = hashPassword(password)
+    storeFixturePasswordHashes.set(password, hash)
+  }
+  return hash
+}
+
+/** Test-only bypass: creates an already verified/active store without exercising activation email. */
+export async function createActiveStoreTestFixture(
+  input: StoreFixtureInput,
+): Promise<typeof schema.stores.$inferSelect> {
+  const { password = 'active-store-test-password', ...ownerInput } = input.owner
+  const parsed = {
+    ...input,
+    phone: input.phone.replace(/\D/g, ''),
+    owner: { ...ownerInput, email: ownerInput.email.trim().toLowerCase() },
+  }
+  // Reusing hashes is acceptable only in this test fixture and keeps the suite fast.
+  const passwordHash = await storeFixturePasswordHash(password)
+  const now = new Date()
+
+  return testDb.transaction(async (tx) => {
+    const [owner] = await tx.insert(schema.users).values({
+      name: parsed.owner.name,
+      email: parsed.owner.email,
+      role: 'STORE',
+      status: 'ACTIVE',
+      emailVerifiedAt: now,
+      termsAcceptedAt: now,
+      registrationSource: 'ADMIN_PROVISIONED',
+      createdAt: now,
+      updatedAt: now,
+    }).returning()
+    if (!owner) throw new Error('active store fixture owner was not created')
+
+    await tx.insert(schema.authProviders).values({
+      userId: owner.id,
+      provider: 'PASSWORD',
+      passwordHash,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const [store] = await tx.insert(schema.stores).values({
+      ownerUserId: owner.id,
+      name: parsed.name,
+      slug: parsed.slug,
+      category: parsed.category,
+      phone: parsed.phone,
+      city: parsed.city,
+      addressText: parsed.addressText,
+      lat: parsed.lat,
+      lng: parsed.lng,
+      securityStatus: 'ACTIVE',
+      createdAt: now,
+      updatedAt: now,
+    }).returning()
+    if (!store) throw new Error('active store fixture was not created')
+    return store
+  })
 }
 
 type LegacyVerifiedAccountInput = {

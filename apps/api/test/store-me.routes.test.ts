@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
-import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
+import { createActiveStoreTestFixture, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
@@ -8,7 +8,6 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
-import { createStoreWithOwner } from '../src/services/store.service'
 import { PostgresRateLimiter } from '../src/security/rate-limit'
 import { POLICIES, type RateLimitPolicy } from '../src/security/rate-limit-policies'
 
@@ -38,7 +37,7 @@ beforeEach(async () => {
 afterAll(closeTestDb)
 
 async function makeStore() {
-  const store = await createStoreWithOwner(testDb, input)
+  const store = await createActiveStoreTestFixture(input)
   const token = await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'João' }, env.JWT_SECRET)
   return { store, token }
 }
