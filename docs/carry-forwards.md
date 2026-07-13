@@ -23,7 +23,7 @@
 | Deploy prod (Tasks 9-10 do plano): Neon + Hyperdrive id + secrets + deploy.yml | Skip do usuário | Quando tiver contas |
 | Marca dividida: repo "Delivo" vs interno "Delivery" (`@delivery/*`, titles, openapi, worker names) — unificar antes do público | Review final | Antes do deploy prod |
 | Barrel `@delivery/shared` (".") re-exporta schema zod — frontend importando barrel puxa zod de volta; considerar `no-restricted-imports` | Review final | Oportunista |
-| SEC-03A aguarda gate final local + smoke real allowlisted do Resend/Turnstile em staging privado; não declarar remediação/produção antes disso | SEC-03A Stage 4 | Task 9 SEC-03A |
+| SEC-03A passou no gate local; smoke real allowlisted do Resend/Turnstile em staging privado segue `NOT RUN`. Código remediado não equivale a produção aprovada | SEC-03A Stage 4 | Preparação de staging |
 | SEC-03B Google não implementado — criar Web Client ID no GCP, validar ID token/`sub`, criar CUSTOMER novo e usar link ticket + senha para colisão com conta PASSWORD; nunca vincular só por email | Security remediation design | Plano SEC-03B |
 | SEC-17 MFA opcional não implementado — TOTP, código por email, recovery codes e step-up para ações de risco | Security remediation design | Plano SEC-17 |
 | Password storage permanece PBKDF2-HMAC-SHA256/100k; benchmark, versão de hash e rehash progressivo/alternativa compatível com Workers seguem pendentes | SEC-09 / SEC-03A | Hardening de credenciais |

@@ -521,7 +521,7 @@ The program is complete only when:
 
 ## 22. SEC-03A implementation status — 2026-07-13
 
-SEC-03A code is implemented through Stage 4, Task 8. This is not a remediation-closure claim: Stage 4, Task 9 and the external staging smoke have not run yet.
+SEC-03A passed the local automated Stage 4, Task 9 gate on 2026-07-13. This closes the code remediation only; the external staging smoke has not run and production remains blocked.
 
 Implemented and locally covered:
 
@@ -535,14 +535,22 @@ Implemented and locally covered:
 - authorization coverage for ANON, CUSTOMER, DRIVER, STORE_A, STORE_B, and ADMIN;
 - recursive persistence/log regression scans for raw passwords, codes, tickets, tokens, Turnstile values, and provider/application secrets.
 
-Closure prerequisites:
+Local gate evidence for source commit `78143da`:
 
-1. Recreate disposable local databases and execute migrations 0000–0025 from zero.
-2. Run the complete Stage 4, Task 9 identity and monorepo gates on the exact commit.
-3. Deploy a private `workers.dev` staging environment behind Cloudflare Access.
-4. Validate one `EMAIL_ALLOWED_RECIPIENTS` owner flow with real Resend and Turnstile.
-5. Record evidence without raw email, code, ticket, token, or provider credential.
-6. Require a custom domain, verified sending-domain DNS, production sender, and empty recipient allowlist before production promotion.
+- disposable worktree-local `delivery` and `delivery_test` databases recreated;
+- all 26 migrations applied from zero, including 0024/0025 after 0023;
+- ADMIN bootstrap remained `PENDING_EMAIL` with zero sessions under safe local config;
+- shared 125, API 649, web 54, and driver 15 tests passed (843 total);
+- monorepo typecheck, lint, build, diff check, and production-bypass static scan passed.
+
+External closure prerequisites still open:
+
+1. Deploy a private `workers.dev` staging environment behind Cloudflare Access.
+2. Validate one `EMAIL_ALLOWED_RECIPIENTS` owner flow with real Resend and Turnstile.
+3. Record evidence without raw email, code, ticket, token, or provider credential.
+4. Require a custom domain, verified sending-domain DNS, production sender, and empty recipient allowlist before production promotion.
+
+Manual staging result: **NOT RUN** because the named Wrangler staging environment and external credentials/resources are not configured. Do not reinterpret this as PASS.
 
 Explicitly deferred from SEC-03A:
 

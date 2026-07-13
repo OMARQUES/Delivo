@@ -6,7 +6,7 @@ Operar cadastro por email, verificação, recuperação de senha, ativação de 
 
 Este runbook não autoriza produção. Antes da promoção ainda são obrigatórios:
 
-- gate local final da Stage 4, Task 9;
+- gate local final da Stage 4, Task 9 — concluído; evidência ao fim deste documento;
 - staging privado em `workers.dev`, protegido por Cloudflare Access;
 - smoke com um único destinatário permitido;
 - domínio próprio e DNS de envio verificado no Resend para produção.
@@ -23,7 +23,7 @@ Google OAuth (SEC-03B), MFA (SEC-17), modernização do hash de senha e webhooks
 - `EMAIL_ALLOWED_RECIPIENTS` contém PII. Em staging, armazená-lo como secret do Worker, não em arquivo rastreado.
 - Nunca copiar código de seis dígitos, ticket de reset/setup, access token ou refresh token para logs ou documentação.
 
-Task 9 deve criar o ambiente Wrangler nomeado `staging`. Remover `EMAIL_ALLOWED_RECIPIENTS` de `env.staging.vars` para não colidir/sobrescrever o secret homônimo. No diretório `apps/api`, registrar valores pelo prompt:
+Antes do smoke externo, criar o ambiente Wrangler nomeado `staging`. Remover `EMAIL_ALLOWED_RECIPIENTS` de `env.staging.vars` para não colidir/sobrescrever o secret homônimo. No diretório `apps/api`, registrar valores pelo prompt:
 
 ```bash
 pnpm exec wrangler secret put AUTH_CODE_SECRET --env staging
@@ -249,4 +249,23 @@ resend_failure_simulation: PASS|FAIL
 notes_without_pii_or_secrets:
 ```
 
-Produção permanece bloqueada enquanto Task 9, smoke manual, domínio/DNS e remetente verificado não estiverem concluídos.
+Produção permanece bloqueada enquanto smoke manual, domínio/DNS e remetente verificado não estiverem concluídos.
+
+## Evidência local da Task 9 — 2026-07-13
+
+```text
+source_commit: 78143da
+database_target: WORKTREE_LOCAL_DOCKER
+migrations_0000_0025: PASS (26/26)
+bootstrap_pending_email_without_session: PASS
+focused_and_full_tests: PASS (843)
+typecheck: PASS
+lint: PASS
+build: PASS
+production_bypass_static_scan: PASS
+manual_allowed_recipient_staging: NOT RUN
+manual_staging_reason: NAMED_ENV_AND_EXTERNAL_RESOURCES_NOT_CONFIGURED
+resend_message_ids: NOT APPLICABLE
+```
+
+O seed local usou valores fictícios e destinatário bloqueado pela allowlist da aplicação; nenhuma chamada externa ao Resend ocorreu. Esta evidência fecha somente o gate de código. Não substitui o smoke privado com Resend/Turnstile reais e não autoriza produção.

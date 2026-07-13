@@ -8,7 +8,7 @@ Plano executado: `docs/superpowers/plans/2026-07-11-p0-authorization-session-fou
 | --- | --- | --- | --- |
 | SEC-01 | Remediado | CUSTOMER obrigatório em `/orders*` e `/me/addresses*`; matriz exaustiva ANON/CUSTOMER/DRIVER/STORE/ADMIN sobre todas as rotas protegidas em `authorization-matrix.routes.test.ts`. | — |
 | SEC-02 | Remediado em código | PostgreSQL rate limits atômicos por IP/identidade/fingerprint/ator/propósito; Turnstile obrigatório em cadastro e adaptativo em login; proteção de refresh, cotação/criação de pedido e uploads antes de trabalho caro/R2; limpeza por cron. | WAF Cloudflare, smoke real de Turnstile e staging privado dependem de recursos externos do ambiente. Webhook segue para SEC-08; identidade segue no estado SEC-03 abaixo. |
-| SEC-03 | Implementado; gate final pendente | SEC-03A tornou identidade email-first, verificação obrigatória, recovery não enumerável, códigos/tickets hash-only, Resend/outbox e ativação segura de STORE/ADMIN. Matriz final cobre ANON/CUSTOMER/DRIVER/STORE_A/STORE_B/ADMIN e varredura de segredos persistidos/logados. | Ainda não marcar como remediado: faltam Task 9, smoke real allowlisted em staging e domínio/DNS/remetente verificado para produção. SEC-03B Google, SEC-17 MFA, modernização do hash e webhooks Resend seguem pendentes. |
+| SEC-03 | Remediado em código | SEC-03A tornou identidade email-first, verificação obrigatória, recovery não enumerável, códigos/tickets hash-only, Resend/outbox e ativação segura de STORE/ADMIN. Matriz final cobre ANON/CUSTOMER/DRIVER/STORE_A/STORE_B/ADMIN e varredura de segredos persistidos/logados; gate local final passou em 2026-07-13. | Smoke real allowlisted em staging não executado: ambiente nomeado/credenciais externos ainda indisponíveis. Domínio/DNS/remetente verificado seguem obrigatórios para produção. SEC-03B Google, SEC-17 MFA, modernização do hash e webhooks Resend permanecem pendentes. |
 | SEC-04 | Remediado | JWT completo (`iss/aud/nbf/jti/sid/ver`) e principal vivo consultado no PostgreSQL a cada request; revogação por família e por `tokenVersion`. | MFA e identidade verificada continuam fora do P0. |
 | SEC-05 | Remediado | `securityStatus` ACTIVE/SUSPENDED/CLOSED; suspensão incrementa `tokenVersion` do dono, revoga refresh e bloqueia descoberta pública. | — |
 | SEC-06 | Mitigação emergencial | `/media/*` só serve `logos/` e `products/`; `returns/` não consulta R2. | Leitura privada autenticada, retenção e auditoria pertencem ao plano de mídia privada. |
@@ -20,7 +20,7 @@ Contratos negativos cross-tenant e transições de evento de segurança (logout,
 
 Desvios do plano registrados: a emissão/rotação de tokens permaneceu em `auth.service.ts` (o plano sugeria mover para `security-session.service.ts`); a organização de arquivo difere mas as propriedades de segurança — claims completos, vínculo de família, revogação viva — são idênticas e cobertas por teste.
 
-SEC-03A está implementado em código até a Stage 4, Task 8, mas permanece aberto até o gate final da Task 9 e validação externa. SEC-08 continua pendente do plano de confiabilidade de pagamentos. WAF/Turnstile/Resend reais em staging dependem de configuração Cloudflare/Resend manual. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida.
+SEC-03A concluiu o gate local automatizado da Stage 4, Task 9. A validação operacional externa permanece aberta: WAF/Turnstile/Resend reais em staging dependem de configuração Cloudflare/Resend manual. SEC-08 continua pendente do plano de confiabilidade de pagamentos. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida nem autoriza produção.
 
 ### Remediação SEC-02 — 2026-07-12
 
@@ -49,11 +49,11 @@ Pendências explícitas:
 - regra WAF Free para `/auth/*` só pode ser ativada após Cloudflare zone/domínio;
 - smoke real de Turnstile staging/produção depende de widgets e secrets reais;
 - webhook anti-replay/rate controls segue no SEC-08;
-- verificação de email, recuperação e limites de códigos foram implementados no SEC-03A; gate final/staging ainda pendentes.
+- verificação de email, recuperação e limites de códigos foram implementados no SEC-03A; gate local passou e staging externo segue pendente.
 
-### Implementação SEC-03A — aguardando gate final
+### Remediação SEC-03A — gate local concluído
 
-Plano executado até Stage 4, Task 8: `docs/superpowers/plans/2026-07-12-sec-03a-implementation-index.md`.
+Plano executado até Stage 4, Task 9: `docs/superpowers/plans/2026-07-12-sec-03a-implementation-index.md`.
 
 Implementado em código:
 
@@ -68,13 +68,18 @@ Implementado em código:
 - login e convite de entregador somente por email; convite exige DRIVER ativo e verificado;
 - testes de autorização/tenant para STORE_A/STORE_B e varredura recursiva contra senha, código, ticket, token, Turnstile e API key crus em DB/logs.
 
-Estado de verificação nesta etapa:
+Evidência Stage 4, Task 9 em 2026-07-13, código-base `78143da`:
 
-- Stage 4, Task 7: API completa com 69 arquivos/649 testes; suíte security focused 147 testes; typecheck e lint verdes;
+- Postgres Docker local exclusivo da worktree; `delivery` e `delivery_test` recriados sem tocar volume do ambiente principal;
+- 26 migrations aplicadas do zero; `0024_sec_03a_foundation` e `0025_sec_03a_email_identity` sucederam `0023`;
+- seed com config local fictícia e destinatário bloqueado pela allowlist: ADMIN `PENDING_EMAIL`, email não verificado, zero refresh tokens e nenhuma chamada ao Resend;
+- suíte focada/completa: shared 18 arquivos/125 testes; API 69/649; web 14/54; driver 6/15 — 843 testes, zero falhas;
+- `pnpm typecheck`, `pnpm lint`, `pnpm build` e `git diff --check` passaram;
+- scanner bruto retornou somente dois controles negativos em testes sobre rejeição de senha do owner; scanner excluindo testes retornou zero bypass em produção;
 - documentação/runbook: `docs/security/runbooks/sec-03a-resend-identity.md`;
-- **não executado ainda:** recriação final dos DBs descartáveis, gate monorepo da Task 9 e smoke real do Resend/Turnstile em staging.
+- smoke real Resend/Turnstile: **NOT RUN** — `env.staging` nomeado, credenciais e recursos externos ainda não existem.
 
-Portanto, SEC-03 ainda não recebe estado “Remediado”. Produção continua bloqueada até Task 9, staging privado allowlisted e domínio/DNS/remetente verificado. Pendências separadas: SEC-03B Google, SEC-17 MFA opcional, password-storage modernization e webhooks Resend de bounce/complaint/suppression.
+SEC-03A recebe estado “Remediado em código”, não “validado em staging” nem “pronto para produção”. Produção continua bloqueada até staging privado allowlisted e domínio/DNS/remetente verificado. Pendências separadas: SEC-03B Google, SEC-17 MFA opcional, password-storage modernization e webhooks Resend de bounce/complaint/suppression.
 
 ### Revisão independente pós-implementação — 2026-07-11
 
@@ -206,7 +211,7 @@ O [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatshe
 **Categoria:** Account pre-hijacking / identity squatting
 **Evidência:** `packages/shared/src/auth.schema.ts:8-16`; `apps/api/src/services/auth.service.ts:58-112`
 
-> Estado em 2026-07-13: achado histórico da baseline. SEC-03A substituiu este fluxo por cadastro email-first destacado, verificação obrigatória e recovery não enumerável. O fechamento formal aguarda Task 9 e staging; ver “Implementação SEC-03A — aguardando gate final”.
+> Estado em 2026-07-13: achado histórico da baseline. SEC-03A substituiu este fluxo por cadastro email-first destacado, verificação obrigatória e recovery não enumerável. Gate local concluído; staging externo permanece pendente. Ver “Remediação SEC-03A — gate local concluído”.
 
 O cliente fica `ACTIVE` e recebe tokens assim que fornece um telefone e senha. Não existe OTP por telefone, link por email ou outra prova de posse. Um atacante pode cadastrar o telefone/email de outra pessoa antes dela, bloquear seu cadastro legítimo e operar sob aquela identidade declarada. Para driver, a aprovação administrativa não prova que o telefone pertence ao candidato.
 
@@ -438,6 +443,6 @@ Uma suíte table-driven deve enumerar cada endpoint e executar, conforme aplicá
 
 ## Veredito
 
-O isolamento **loja A contra loja B** está bem aplicado nas rotas atuais e possui matriz negativa explícita para STORE_A/STORE_B. Após P0 + SEC-02 + implementação SEC-03A, RBAC central, sessão viva, anti-automação, verificação de email e recovery estão substancialmente melhores. SEC-03A ainda depende do gate final e smoke Resend/Turnstile em staging; Google/MFA não fazem parte deste fechamento. Mídia privada e consistência de pagamento também exigem correção antes de uso real em escala.
+O isolamento **loja A contra loja B** está bem aplicado nas rotas atuais e possui matriz negativa explícita para STORE_A/STORE_B. Após P0 + SEC-02 + implementação SEC-03A, RBAC central, sessão viva, anti-automação, verificação de email e recovery estão substancialmente melhores. SEC-03A passou no gate local, mas ainda depende do smoke Resend/Turnstile em staging; Google/MFA não fazem parte deste fechamento. Mídia privada e consistência de pagamento também exigem correção antes de uso real em escala.
 
 Após o P0, recomenda-se uma segunda revisão focada nas mudanças e um pentest autenticado em staging. Até lá, a classificação recomendada é: **risco alto; não aprovar produção com dados/pagamentos reais sem mitigação**.

@@ -56,7 +56,7 @@ pnpm typecheck && pnpm test && pnpm lint && pnpm build
 
 ## Deploy (pendente — runbook)
 
-Deploy prod ainda não executado. Primeiro concluir SEC-03A Task 9 e staging privado allowlisted conforme `docs/security/runbooks/sec-03a-resend-identity.md`. Depois seguir Tasks 9-10 de `docs/superpowers/plans/2026-07-06-fundacao-projeto.md` (Neon, Hyperdrive id real, Cloudflare Access, secrets, domínio/DNS Resend e deploy.yml).
+Deploy prod ainda não executado. Gate local SEC-03A Task 9 concluído; próximo passo é staging privado allowlisted conforme `docs/security/runbooks/sec-03a-resend-identity.md`. Depois seguir Tasks 9-10 de `docs/superpowers/plans/2026-07-06-fundacao-projeto.md` (Neon, Hyperdrive id real, Cloudflare Access, secrets, domínio/DNS Resend e deploy.yml).
 
 ## Auth
 
