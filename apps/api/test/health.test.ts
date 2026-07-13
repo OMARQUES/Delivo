@@ -133,8 +133,32 @@ describe('cors allowlist', () => {
     expect(res.headers.get('access-control-allow-origin')).toBe('http://localhost:5173')
   })
 
+  it('allows credentialed preflight only for a configured origin', async () => {
+    const res = await app.request('/auth/me', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'Authorization',
+      },
+    }, env)
+
+    expect(res.status).toBe(204)
+    expect(res.headers.get('access-control-allow-origin')).toBe('http://localhost:5173')
+    expect(res.headers.get('access-control-allow-credentials')).toBe('true')
+    expect(res.headers.get('access-control-allow-headers')).toContain('Authorization')
+  })
+
   it('does not echo unknown origins', async () => {
     const res = await app.request('/health', { headers: { Origin: 'https://evil.example' } }, env)
+    expect(res.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  it('never authorizes credentialed CORS for an unknown origin', async () => {
+    const res = await app.request('/health', {
+      headers: { Origin: 'https://evil.example' },
+    }, env)
+
     expect(res.headers.get('access-control-allow-origin')).toBeNull()
   })
 })

@@ -40,6 +40,7 @@ app.use('*', async (c, next) => {
     origin: (origin) => (allowed.includes(origin) ? origin : null),
     allowHeaders: ['Content-Type', 'Authorization'],
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    credentials: true,
   })(c, next)
 })
 app.use('*', dbMiddleware)
