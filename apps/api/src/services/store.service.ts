@@ -1,8 +1,8 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { StoreUpdateInput } from '@delivery/shared/schemas'
 import { isOpenNow } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import { stores, users, refreshTokens } from '../db/schema'
+import { authChallenges, emailOutbox, stores, users, refreshTokens } from '../db/schema'
 
 export class StoreError extends Error {
   constructor(
@@ -72,6 +72,7 @@ export async function setStoreSecurityStatus(
   storeId: string,
   securityStatus: 'ACTIVE' | 'SUSPENDED' | 'CLOSED',
 ) {
+  const now = new Date()
   return db.transaction(async (tx) => {
     const [current] = await tx.select().from(stores).where(eq(stores.id, storeId)).for('update')
     if (!current) throw new StoreError('Loja não encontrada', 404)
@@ -85,6 +86,28 @@ export async function setStoreSecurityStatus(
       throw new StoreError('Loja pendente deve ser ativada pelo proprietário', 409)
     }
     if (current.securityStatus === securityStatus) return current
+
+    if (current.securityStatus === 'PENDING_ACTIVATION' && securityStatus === 'CLOSED') {
+      const challengeCondition = and(
+        eq(authChallenges.userId, current.ownerUserId),
+        eq(authChallenges.purpose, 'STORE_ACTIVATION'),
+        isNull(authChallenges.consumedAt),
+      )
+      const challengeIds = tx.select({ id: authChallenges.id }).from(authChallenges).where(challengeCondition)
+      await tx.update(emailOutbox).set({
+        status: 'CANCELLED',
+        leasedUntil: null,
+        failureClass: 'STORE_CLOSED',
+        updatedAt: now,
+      }).where(and(
+        inArray(emailOutbox.challengeId, challengeIds),
+        inArray(emailOutbox.status, ['PENDING', 'PROCESSING']),
+      ))
+      await tx.update(authChallenges).set({
+        invalidatedAt: now,
+        invalidationReason: 'STORE_CLOSED',
+      }).where(challengeCondition)
+    }
 
     const [store] = await tx
       .update(stores)
@@ -100,7 +123,7 @@ export async function setStoreSecurityStatus(
         .where(eq(users.id, store.ownerUserId))
       await tx
         .update(refreshTokens)
-        .set({ revokedAt: new Date() })
+        .set({ revokedAt: now })
         .where(eq(refreshTokens.userId, store.ownerUserId))
     }
     return store

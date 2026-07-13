@@ -1,15 +1,25 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import { HTTPException } from 'hono/http-exception'
+import type { Context } from 'hono'
 import { eq } from 'drizzle-orm'
 import { StoreCreateSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import { stores } from '../db/schema'
+import type { AppContext } from '../env'
+import { resolveEmailConfig, type EmailConfig } from '../email/config'
+import { dispatchOutboxById } from '../email/outbox.service'
+import { createResendSender } from '../email/resend-sender'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { importCsvCatalog } from '../services/catalog.service'
 import {
   listAllStores, setStoreCommission, setStoreSecurityStatus, StoreError,
 } from '../services/store.service'
-import { provisionStoreWithOwner } from '../services/store-provisioning.service'
+import {
+  getPendingStoreActivationTarget,
+  provisionStoreWithOwner,
+  resendStoreActivation,
+} from '../services/store-provisioning.service'
+import { protectCodeSend } from '../security/identity-abuse'
 import { EMAIL_DELIVERY_UNAVAILABLE_MESSAGE, SecurityHttpError } from '../security/http'
 
 export const adminStoreRoutes = createRouter()
@@ -25,24 +35,95 @@ const StoreOut = z.object({
   id: z.string(), slug: z.string(), name: z.string(),
   securityStatus: z.enum(['ACTIVE', 'SUSPENDED', 'CLOSED', 'PENDING_ACTIVATION']),
 }).passthrough()
+const OwnerOut = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  email: z.email(),
+  phone: z.string().nullable(),
+  role: z.literal('STORE'),
+  status: z.literal('PENDING_EMAIL'),
+})
+const VerificationOut = z.object({
+  expiresAt: z.iso.datetime(),
+  resendAt: z.iso.datetime(),
+})
+const ProvisionOut = z.object({
+  store: StoreOut,
+  owner: OwnerOut,
+  verification: VerificationOut,
+})
+
+function emailDelivery(c: Context<AppContext>) {
+  try {
+    const config = resolveEmailConfig(c.env)
+    const authCodeSecret = c.env.AUTH_CODE_SECRET?.trim()
+    if (!authCodeSecret) throw new Error('AUTH_CODE_SECRET is required')
+    return { config, authCodeSecret }
+  } catch {
+    throw new SecurityHttpError(503, 'EMAIL_DELIVERY_UNAVAILABLE', EMAIL_DELIVERY_UNAVAILABLE_MESSAGE)
+  }
+}
+
+async function dispatchBestEffort(c: Context<AppContext>, config: EmailConfig, outboxId: string) {
+  await dispatchOutboxById(
+    c.get('db'),
+    createResendSender(config),
+    c.env,
+    outboxId,
+  ).catch(() => undefined)
+}
 
 adminStoreRoutes.openapi(
   createRoute({
     method: 'post', path: '/admin/stores',
     request: { body: { content: { 'application/json': { schema: StoreCreateSchema } } } },
-    responses: { 201: { description: 'Loja criada', content: { 'application/json': { schema: StoreOut } } } },
+    responses: { 201: { description: 'Loja provisionada', content: { 'application/json': { schema: ProvisionOut } } } },
   }),
   async (c) => {
-    const authCodeSecret = c.env.AUTH_CODE_SECRET?.trim()
-    if (!authCodeSecret) {
-      throw new SecurityHttpError(503, 'EMAIL_DELIVERY_UNAVAILABLE', EMAIL_DELIVERY_UNAVAILABLE_MESSAGE)
-    }
+    const delivery = emailDelivery(c)
     const result = await provisionStoreWithOwner(c.get('db'), c.req.valid('json'), {
-      authCodeSecret,
+      authCodeSecret: delivery.authCodeSecret,
       jwtSecret: c.env.JWT_SECRET,
       requestId: c.get('requestId'),
     }).catch(rethrow)
-    return c.json(result.store, 201)
+    await dispatchBestEffort(c, delivery.config, result.outboxId)
+    return c.json({
+      store: result.store,
+      owner: result.owner,
+      verification: { expiresAt: result.expiresAt, resendAt: result.resendAt },
+    }, 201)
+  },
+)
+
+const ActivationResendBody = z.object({
+  turnstileToken: z.string().trim().min(1).max(2048).optional(),
+}).strict()
+
+adminStoreRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/admin/stores/{id}/activation/resend',
+    request: {
+      params: z.object({ id: z.uuid() }),
+      body: { content: { 'application/json': { schema: ActivationResendBody } } },
+    },
+    responses: {
+      202: { description: 'Reenvio processado', content: { 'application/json': { schema: VerificationOut } } },
+    },
+  }),
+  async (c) => {
+    const { id } = c.req.valid('param')
+    const { turnstileToken } = c.req.valid('json')
+    const delivery = emailDelivery(c)
+    const target = await getPendingStoreActivationTarget(c.get('db'), id).catch(rethrow)
+    await protectCodeSend(c, 'STORE_ACTIVATION', target.email, id, turnstileToken)
+    const result = await resendStoreActivation(c.get('db'), id, {
+      authCodeSecret: delivery.authCodeSecret,
+      jwtSecret: c.env.JWT_SECRET,
+      requestId: c.get('requestId'),
+    }).catch(rethrow)
+    await dispatchBestEffort(c, delivery.config, result.outboxId)
+    return c.json({ expiresAt: result.expiresAt, resendAt: result.resendAt }, 202)
   },
 )
 

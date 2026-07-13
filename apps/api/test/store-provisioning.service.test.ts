@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import {
   authChallenges,
@@ -34,7 +34,7 @@ vi.mock('../src/email/outbox.service', async (importOriginal) => {
   }
 })
 
-import { provisionStoreWithOwner } from '../src/services/store-provisioning.service'
+import { provisionStoreWithOwner, resendStoreActivation } from '../src/services/store-provisioning.service'
 import { getStoreBySlug, listPublicStores, setStoreSecurityStatus } from '../src/services/store.service'
 
 const now = new Date('2026-07-13T12:00:00.000Z')
@@ -143,10 +143,39 @@ describe('provisionStoreWithOwner', () => {
   })
 
   it('rejects direct activation or suspension while allowing permanent closure', async () => {
-    const { store } = await provisionStoreWithOwner(testDb, input, ctx)
+    const { store, verificationId, outboxId } = await provisionStoreWithOwner(testDb, input, ctx)
     await expect(setStoreSecurityStatus(testDb, store.id, 'ACTIVE')).rejects.toMatchObject({ status: 409 })
     await expect(setStoreSecurityStatus(testDb, store.id, 'SUSPENDED')).rejects.toMatchObject({ status: 409 })
     expect((await setStoreSecurityStatus(testDb, store.id, 'CLOSED')).securityStatus).toBe('CLOSED')
+    expect((await testDb.select().from(authChallenges).where(eq(authChallenges.id, verificationId)))[0]).toMatchObject({
+      invalidationReason: 'STORE_CLOSED',
+    })
+    expect((await testDb.select().from(emailOutbox).where(eq(emailOutbox.id, outboxId)))[0]).toMatchObject({
+      status: 'CANCELLED', failureClass: 'STORE_CLOSED',
+    })
     await expect(setStoreSecurityStatus(testDb, store.id, 'ACTIVE')).rejects.toMatchObject({ status: 409 })
+  })
+
+  it('serializes resend against closure and leaves no usable activation', async () => {
+    const { store, owner, verificationId } = await provisionStoreWithOwner(testDb, input, ctx)
+    await testDb.update(authChallenges).set({
+      createdAt: new Date(now.getTime() - 61_000),
+    }).where(eq(authChallenges.id, verificationId))
+
+    const [resend, close] = await Promise.allSettled([
+      resendStoreActivation(testDb, store.id, { ...ctx, requestId: crypto.randomUUID() }),
+      setStoreSecurityStatus(testDb, store.id, 'CLOSED'),
+    ])
+    expect(close.status).toBe('fulfilled')
+    if (resend.status === 'rejected') expect(resend.reason).toMatchObject({ status: 409 })
+
+    expect((await testDb.select().from(stores).where(eq(stores.id, store.id)))[0]?.securityStatus).toBe('CLOSED')
+    expect(await testDb.select().from(authChallenges).where(and(
+      eq(authChallenges.userId, owner.id),
+      isNull(authChallenges.consumedAt),
+      isNull(authChallenges.invalidatedAt),
+    ))).toHaveLength(0)
+    expect(await testDb.select().from(emailOutbox).where(inArray(emailOutbox.status, ['PENDING', 'PROCESSING'])))
+      .toHaveLength(0)
   })
 })
