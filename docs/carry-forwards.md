@@ -17,21 +17,20 @@
 | Recorrência avançada de vagas (ex.: 1ª segunda do mês) está fora do MVP; semanal e datas específicas estão prontas | Plano ④c | Se houver demanda |
 | Ofertas não enviam push; o entregador descobre novas vagas pela aba “Vagas” | Plano ④c | Avaliar FCM após validar uso |
 | `updatedAt` via `$onUpdate` é ORM-level; raw SQL bypassa. Avaliar trigger `moddatetime` | Review Task 4 | Plano Financeiro (ledger) |
-| `/docs` + `/openapi.json` expostos sem gate | Review Task 3 | Task 9 (deploy prod) |
 | `viewport-fit=cover` no index.html do driver (notch Android) | Review Task 6 | Plano Capacitor |
 | vitest node pool: rotas que usam `c.env` dependem de mock; avaliar `@cloudflare/vitest-pool-workers` | Reviews Tasks 3/4 | Quando integração real precisar |
 | Enforcement do factory `createRouter()` via lint rule (`no-restricted-syntax`) | Review Task 3 | Oportunista |
 | Deploy prod (Tasks 9-10 do plano): Neon + Hyperdrive id + secrets + deploy.yml | Skip do usuário | Quando tiver contas |
 | Marca dividida: repo "Delivo" vs interno "Delivery" (`@delivery/*`, titles, openapi, worker names) — unificar antes do público | Review final | Antes do deploy prod |
 | Barrel `@delivery/shared` (".") re-exporta schema zod — frontend importando barrel puxa zod de volta; considerar `no-restricted-imports` | Review final | Oportunista |
-| Google OAuth não implementado — falta OAuth client no Google Cloud Console (GOOGLE_CLIENT_ID/SECRET); estrutura multi-provider pronta (authProviders table, provider enum PASSWORD/GOOGLE) | Plano Auth T12 (pulado) | Quando tiver credenciais GCP |
+| SEC-03A aguarda gate final local + smoke real allowlisted do Resend/Turnstile em staging privado; não declarar remediação/produção antes disso | SEC-03A Stage 4 | Task 9 SEC-03A |
+| SEC-03B Google não implementado — criar Web Client ID no GCP, validar ID token/`sub`, criar CUSTOMER novo e usar link ticket + senha para colisão com conta PASSWORD; nunca vincular só por email | Security remediation design | Plano SEC-03B |
+| SEC-17 MFA opcional não implementado — TOTP, código por email, recovery codes e step-up para ações de risco | Security remediation design | Plano SEC-17 |
+| Password storage permanece PBKDF2-HMAC-SHA256/100k; benchmark, versão de hash e rehash progressivo/alternativa compatível com Workers seguem pendentes | SEC-09 / SEC-03A | Hardening de credenciais |
+| Resend bounce/complaint/suppression webhook não implementado; staging restrito exige monitoramento manual e produção ampla exige webhook assinado/idempotente + suppression local | SEC-03A | Antes de envio amplo |
+| Produção de email exige domínio próprio, SPF/DKIM/DMARC, `EMAIL_FROM` verificado e remoção de `EMAIL_ALLOWED_RECIPIENTS` | SEC-03A | Promoção de produção |
 | `@types/node` + "node" no tsconfig types cobrem src+test juntos — globais node (process/Buffer) ficam type-visíveis em src que deploya no Workers; considerar tsconfig.test.json separado | Review Auth T3 | Oportunista |
-| Login timing oracle: usuário inexistente pula PBKDF2 (resposta rápida) vs senha errada (PBKDF2 ~lento) — distingue existência de conta apesar da mesma mensagem. Baixo impacto (app cidade pequena). Fix: dummy-verify em hash fixo no path de usuário não-encontrado | Review Auth T7 | Hardening pré-prod se enumeração virar risco |
-| `requireRole` implementado+testado mas ainda não montado em nenhuma rota real (só no unit test) — será montado nos planos Admin/Loja | Auth T8 | Planos Admin/Loja |
-| Rate limiting em /auth/login e /auth/register (anti brute-force) | Plano Auth | Hardening pré-prod |
 | JWT_SECRET de produção via `wrangler secret put JWT_SECRET` (dev usa .dev.vars) | Plano Auth | Task 9 fundação (deploy prod) |
-| Usuário BLOCKED com access token válido tem janela de até 15min (TTL do access) antes do bloqueio surtir efeito | Plano Auth | Aceito — revisar se virar problema |
-| Aprovação de entregador: login já bloqueia PENDING com mensagem; falta ação admin de aprovar (PATCH status→ACTIVE) | Plano Auth | Plano Admin |
 | api.ts força Content-Type application/json quando há body — quebraria upload FormData/multipart se reusado; hoje só JSON | Review Auth T10 | Quando houver upload (plano Catálogo) |
 | `/auth/me` devolve claims do token `{sub,role,name}` em vez do user canônico `{id,...,status,phone,email}` + OpenAPI usa `role: z.string()` não o enum — web não consome hoje; ajustar quando um cliente protegido usar /auth/me | Review final Auth | Plano que consumir /auth/me |
 | Bucket R2 `delivo-media` real não criado — dev usa storage local do wrangler; criar via `wrangler r2 bucket create delivo-media` no deploy prod | Plano Lojas T4 | Deploy prod (Task 9 fundação) |

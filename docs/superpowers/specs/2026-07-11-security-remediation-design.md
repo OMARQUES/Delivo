@@ -498,7 +498,7 @@ Still pending outside code:
 
 - Cloudflare WAF rule activation after a user-controlled zone exists.
 - Real staging/production Turnstile widgets, secrets, and smoke tests.
-- SEC-03 identity verification/recovery counters.
+- SEC-03A identity verification/recovery counters are implemented; final gate and external smoke remain pending.
 - SEC-08 webhook anti-replay/rate controls.
 
 ## 21. Acceptance criteria
@@ -518,3 +518,37 @@ The program is complete only when:
 - payment state survives retries, races, worker failure, and provider divergence;
 - staging is isolated, private, and fully tested;
 - production is separately provisioned and manually promoted only after all gates pass.
+
+## 22. SEC-03A implementation status — 2026-07-13
+
+SEC-03A code is implemented through Stage 4, Task 8. This is not a remediation-closure claim: Stage 4, Task 9 and the external staging smoke have not run yet.
+
+Implemented and locally covered:
+
+- detached email-first PASSWORD registration and mandatory ownership verification;
+- CUSTOMER, DRIVER, STORE, and ADMIN activation state transitions;
+- six-digit purpose-separated challenges with hash-only persistence, expiry, attempt limits, resend cooldowns, and PostgreSQL abuse counters;
+- non-enumerable password recovery, hash-only action tickets, atomic password replacement, and all-family session revocation;
+- Resend adapter, recipient allowlist, sanitized failure classes, idempotent outbox, cron retry, and cleanup;
+- admin-provisioned STORE activation and singleton bootstrap ADMIN without operator-visible credentials;
+- email-only PASSWORD login and verified-email store-driver invitations;
+- authorization coverage for ANON, CUSTOMER, DRIVER, STORE_A, STORE_B, and ADMIN;
+- recursive persistence/log regression scans for raw passwords, codes, tickets, tokens, Turnstile values, and provider/application secrets.
+
+Closure prerequisites:
+
+1. Recreate disposable local databases and execute migrations 0000–0025 from zero.
+2. Run the complete Stage 4, Task 9 identity and monorepo gates on the exact commit.
+3. Deploy a private `workers.dev` staging environment behind Cloudflare Access.
+4. Validate one `EMAIL_ALLOWED_RECIPIENTS` owner flow with real Resend and Turnstile.
+5. Record evidence without raw email, code, ticket, token, or provider credential.
+6. Require a custom domain, verified sending-domain DNS, production sender, and empty recipient allowlist before production promotion.
+
+Explicitly deferred from SEC-03A:
+
+- **SEC-03B:** Google Identity Services ID-token login and explicit PASSWORD-account linking ticket;
+- **SEC-17:** optional TOTP and email-code MFA, recovery codes, and high-risk step-up;
+- password-storage modernization/rehash beyond current PBKDF2 implementation;
+- Resend bounce, complaint, and suppression webhooks.
+
+Operational procedure: `docs/security/runbooks/sec-03a-resend-identity.md`. Production remains blocked by the broader acceptance criteria above even after SEC-03A closes.

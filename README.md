@@ -39,11 +39,12 @@ Comando cria somente um ADMIN `PENDING_EMAIL` e envia código de ativação. Con
 não cria sessão; depois dela, faça login normal com email e senha. Reexecução com mesmo
 email/senha reenvia após cooldown de 60 segundos enquanto ativação estiver pendente;
 ADMIN já ativo vira no-op. Saída contém somente estado e status de entrega — nunca email,
-senha, código ou ID de verificação.
+senha, código ou ID de verificação. Operação completa e rollback:
+`docs/security/runbooks/sec-03a-resend-identity.md`.
 
-Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`. Admin cria lojas em `/admin/lojas` e aprova entregadores em `/admin/entregadores`. Cardápio da loja em `/loja/cardapio`; import CSV: `POST /admin/stores/:id/catalog/import` (text/csv). Fluxo de pedido completo: cliente pede, loja gerencia em `/loja/pedidos`, solicita entregador, e o app driver aceita/coleta/entrega.
+Auth já funciona por email: cadastro exige verificação antes de criar conta/sessão, login é email+senha e recovery revoga sessões anteriores. Telefone do CUSTOMER é opcional; DRIVER informa telefone para contato e ainda exige aprovação administrativa. Guards por role protegem `/loja` e `/admin`. Admin cria lojas em `/admin/lojas` sem escolher senha do owner e aprova entregadores em `/admin/entregadores`. Cardápio da loja em `/loja/cardapio`; import CSV: `POST /admin/stores/:id/catalog/import` (text/csv). Fluxo de pedido completo: cliente pede, loja gerencia em `/loja/pedidos`, solicita entregador, e o app driver aceita/coleta/entrega.
 
-Entregadores próprios: a loja convida por telefone em `/loja/entregadores`; o entregador confirma em “Minhas lojas”, inicia o turno próximo à loja e passa a receber somente o broadcast daquela loja. Mudanças nos termos exigem confirmação. Pedidos e pacotes podem ir ao pool, a todos os próprios ou a um entregador específico; recusas nunca causam fallback automático. A loja também pode reajustar um turno ativo e reconciliar o extra retroativo pelo ledger.
+Entregadores próprios: a loja convida pelo email verificado de um DRIVER `ACTIVE` em `/loja/entregadores`; telefone continua somente como contato. O entregador confirma em “Minhas lojas”, inicia o turno próximo à loja e passa a receber somente o broadcast daquela loja. Mudanças nos termos exigem confirmação. Pedidos e pacotes podem ir ao pool, a todos os próprios ou a um entregador específico; recusas nunca causam fallback automático. A loja também pode reajustar um turno ativo e reconciliar o extra retroativo pelo ledger.
 
 Falhas de entrega ficam destacadas em uma seção própria de devoluções. O entregador pode declarar a devolução na loja e anexar até duas fotos de evidência; o pagamento só é liberado quando loja ou suporte confirmam. Em Ganhos, lançamentos exibem data/hora e abrem um detalhe do pedido sanitizado, sem dados do cliente.
 
@@ -55,11 +56,11 @@ pnpm typecheck && pnpm test && pnpm lint && pnpm build
 
 ## Deploy (pendente — runbook)
 
-Deploy prod ainda não executado. Quando houver conta Neon + token Cloudflare, seguir Tasks 9-10 de `docs/superpowers/plans/2026-07-06-fundacao-projeto.md` (Hyperdrive id real, secrets no GitHub, deploy.yml).
+Deploy prod ainda não executado. Primeiro concluir SEC-03A Task 9 e staging privado allowlisted conforme `docs/security/runbooks/sec-03a-resend-identity.md`. Depois seguir Tasks 9-10 de `docs/superpowers/plans/2026-07-06-fundacao-projeto.md` (Neon, Hyperdrive id real, Cloudflare Access, secrets, domínio/DNS Resend e deploy.yml).
 
 ## Auth
 
-Email+senha (PBKDF2) ou telefone; JWT de acesso (15min) + refresh token rotativo (30d). Google OAuth pendente — ver `docs/carry-forwards.md`.
+Email verificado + senha (PBKDF2); telefone não autentica. JWT de acesso + refresh token rotativo com consulta de principal/sessão viva. Google OAuth (SEC-03B) e MFA opcional (SEC-17) pendentes — ver `docs/carry-forwards.md`.
 
 ## FCM (opcional)
 
@@ -73,12 +74,13 @@ Backend usa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `PUBLIC_API_URL` em `apps/a
 
 - Requisitos funcionais: `docs/superpowers/specs/2026-07-06-requisitos-funcionais-design.md`
 - Plano de fundação: `docs/superpowers/plans/2026-07-06-fundacao-projeto.md`
+- Runbook de identidade/Resend: `docs/security/runbooks/sec-03a-resend-identity.md`
 - Pendências técnicas: `docs/carry-forwards.md`
 
 ## Roadmap de planos
 
 1. ✅ Fundação (este repo)
-2. ✅ Auth — email+senha, JWT + refresh, RBAC (Google pendente)
+2. ✅ Auth — email verificado+senha, recovery, JWT + refresh, RBAC (Google/MFA pendentes)
 3. ✅ Lojas & Descoberta — cadastro admin, perfil da loja (horário/frete/pin/logo), home pública, deep-link `/:slug`
 4. ✅ Produtos & Cardápio — categorias, produtos, variações, adicionais, meio-a-meio, busca
 5. ✅ Pedidos (core) — carrinho, checkout idempotente, máquina de status, retirada, painel loja, polling

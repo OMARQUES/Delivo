@@ -7,7 +7,8 @@ Plano executado: `docs/superpowers/plans/2026-07-11-p0-authorization-session-fou
 | Achado | Estado P0 | Evidência implementada | Limite remanescente |
 | --- | --- | --- | --- |
 | SEC-01 | Remediado | CUSTOMER obrigatório em `/orders*` e `/me/addresses*`; matriz exaustiva ANON/CUSTOMER/DRIVER/STORE/ADMIN sobre todas as rotas protegidas em `authorization-matrix.routes.test.ts`. | — |
-| SEC-02 | Remediado em código | PostgreSQL rate limits atômicos por IP/identidade/fingerprint/ator/propósito; Turnstile obrigatório em cadastro e adaptativo em login; proteção de refresh, cotação/criação de pedido e uploads antes de trabalho caro/R2; limpeza por cron. | WAF Cloudflare, smoke real de Turnstile e staging privado dependem de recursos externos do ambiente. Webhook segue para SEC-08; verificação/recuperação de identidade segue para SEC-03. |
+| SEC-02 | Remediado em código | PostgreSQL rate limits atômicos por IP/identidade/fingerprint/ator/propósito; Turnstile obrigatório em cadastro e adaptativo em login; proteção de refresh, cotação/criação de pedido e uploads antes de trabalho caro/R2; limpeza por cron. | WAF Cloudflare, smoke real de Turnstile e staging privado dependem de recursos externos do ambiente. Webhook segue para SEC-08; identidade segue no estado SEC-03 abaixo. |
+| SEC-03 | Implementado; gate final pendente | SEC-03A tornou identidade email-first, verificação obrigatória, recovery não enumerável, códigos/tickets hash-only, Resend/outbox e ativação segura de STORE/ADMIN. Matriz final cobre ANON/CUSTOMER/DRIVER/STORE_A/STORE_B/ADMIN e varredura de segredos persistidos/logados. | Ainda não marcar como remediado: faltam Task 9, smoke real allowlisted em staging e domínio/DNS/remetente verificado para produção. SEC-03B Google, SEC-17 MFA, modernização do hash e webhooks Resend seguem pendentes. |
 | SEC-04 | Remediado | JWT completo (`iss/aud/nbf/jti/sid/ver`) e principal vivo consultado no PostgreSQL a cada request; revogação por família e por `tokenVersion`. | MFA e identidade verificada continuam fora do P0. |
 | SEC-05 | Remediado | `securityStatus` ACTIVE/SUSPENDED/CLOSED; suspensão incrementa `tokenVersion` do dono, revoga refresh e bloqueia descoberta pública. | — |
 | SEC-06 | Mitigação emergencial | `/media/*` só serve `logos/` e `products/`; `returns/` não consulta R2. | Leitura privada autenticada, retenção e auditoria pertencem ao plano de mídia privada. |
@@ -19,7 +20,7 @@ Contratos negativos cross-tenant e transições de evento de segurança (logout,
 
 Desvios do plano registrados: a emissão/rotação de tokens permaneceu em `auth.service.ts` (o plano sugeria mover para `security-session.service.ts`); a organização de arquivo difere mas as propriedades de segurança — claims completos, vínculo de família, revogação viva — são idênticas e cobertas por teste.
 
-SEC-03 e SEC-08 continuam pendentes dos planos de verificação/recuperação de identidade e confiabilidade de pagamentos. WAF/Turnstile real em staging dependem de configuração Cloudflare manual. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida.
+SEC-03A está implementado em código até a Stage 4, Task 8, mas permanece aberto até o gate final da Task 9 e validação externa. SEC-08 continua pendente do plano de confiabilidade de pagamentos. WAF/Turnstile/Resend reais em staging dependem de configuração Cloudflare/Resend manual. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida.
 
 ### Remediação SEC-02 — 2026-07-12
 
@@ -48,7 +49,32 @@ Pendências explícitas:
 - regra WAF Free para `/auth/*` só pode ser ativada após Cloudflare zone/domínio;
 - smoke real de Turnstile staging/produção depende de widgets e secrets reais;
 - webhook anti-replay/rate controls segue no SEC-08;
-- verificação de email, recuperação e limites de códigos seguem no SEC-03.
+- verificação de email, recuperação e limites de códigos foram implementados no SEC-03A; gate final/staging ainda pendentes.
+
+### Implementação SEC-03A — aguardando gate final
+
+Plano executado até Stage 4, Task 8: `docs/superpowers/plans/2026-07-12-sec-03a-implementation-index.md`.
+
+Implementado em código:
+
+- email obrigatório, normalizado e verificado para contas PASSWORD;
+- cadastro destacado: nenhum usuário/sessão existe antes da confirmação;
+- CUSTOMER ativo após confirmação; DRIVER segue para `PENDING_APPROVAL` sem sessão;
+- recuperação com envelope não enumerável, ticket efêmero hash-only, troca atômica de senha e revogação de todas as sessões;
+- códigos numéricos de seis dígitos derivados/verificados por HMAC, com TTL, tentativas, cooldown e rate limits por propósito;
+- Resend com timeout, erros sanitizados, allowlist de staging e outbox idempotente/retry por cron;
+- STORE provisionada sem senha do owner, `PENDING_ACTIVATION`, setup por ticket e ativação atômica;
+- ADMIN bootstrap singleton por CLI, `PENDING_EMAIL`, sem imprimir segredo/PII;
+- login e convite de entregador somente por email; convite exige DRIVER ativo e verificado;
+- testes de autorização/tenant para STORE_A/STORE_B e varredura recursiva contra senha, código, ticket, token, Turnstile e API key crus em DB/logs.
+
+Estado de verificação nesta etapa:
+
+- Stage 4, Task 7: API completa com 69 arquivos/649 testes; suíte security focused 147 testes; typecheck e lint verdes;
+- documentação/runbook: `docs/security/runbooks/sec-03a-resend-identity.md`;
+- **não executado ainda:** recriação final dos DBs descartáveis, gate monorepo da Task 9 e smoke real do Resend/Turnstile em staging.
+
+Portanto, SEC-03 ainda não recebe estado “Remediado”. Produção continua bloqueada até Task 9, staging privado allowlisted e domínio/DNS/remetente verificado. Pendências separadas: SEC-03B Google, SEC-17 MFA opcional, password-storage modernization e webhooks Resend de bounce/complaint/suppression.
 
 ### Revisão independente pós-implementação — 2026-07-11
 
@@ -179,6 +205,8 @@ O [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatshe
 **Severidade:** Alta
 **Categoria:** Account pre-hijacking / identity squatting
 **Evidência:** `packages/shared/src/auth.schema.ts:8-16`; `apps/api/src/services/auth.service.ts:58-112`
+
+> Estado em 2026-07-13: achado histórico da baseline. SEC-03A substituiu este fluxo por cadastro email-first destacado, verificação obrigatória e recovery não enumerável. O fechamento formal aguarda Task 9 e staging; ver “Implementação SEC-03A — aguardando gate final”.
 
 O cliente fica `ACTIVE` e recebe tokens assim que fornece um telefone e senha. Não existe OTP por telefone, link por email ou outra prova de posse. Um atacante pode cadastrar o telefone/email de outra pessoa antes dela, bloquear seu cadastro legítimo e operar sob aquela identidade declarada. Para driver, a aprovação administrativa não prova que o telefone pertence ao candidato.
 
@@ -410,6 +438,6 @@ Uma suíte table-driven deve enumerar cada endpoint e executar, conforme aplicá
 
 ## Veredito
 
-O isolamento **loja A contra loja B** está bem aplicado nas rotas atuais e possui vários testes negativos. Após P0 + SEC-02, RBAC central, sessão viva e anti-automação de aplicação estão substancialmente melhores. A segurança de identidade ainda depende de verificação de email/recuperação/MFA opcionais, e WAF/Turnstile real precisam de staging Cloudflare. Mídia privada e consistência de pagamento também exigem correção antes de uso real em escala.
+O isolamento **loja A contra loja B** está bem aplicado nas rotas atuais e possui matriz negativa explícita para STORE_A/STORE_B. Após P0 + SEC-02 + implementação SEC-03A, RBAC central, sessão viva, anti-automação, verificação de email e recovery estão substancialmente melhores. SEC-03A ainda depende do gate final e smoke Resend/Turnstile em staging; Google/MFA não fazem parte deste fechamento. Mídia privada e consistência de pagamento também exigem correção antes de uso real em escala.
 
 Após o P0, recomenda-se uma segunda revisão focada nas mudanças e um pentest autenticado em staging. Até lá, a classificação recomendada é: **risco alto; não aprovar produção com dados/pagamentos reais sem mitigação**.

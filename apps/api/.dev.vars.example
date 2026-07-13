@@ -5,10 +5,10 @@ TURNSTILE_EXPECTED_HOSTNAMES=localhost,127.0.0.1,example.com
 
 # Email auth (Resend)
 RESEND_API_KEY=
-AUTH_CODE_SECRET=replace-with-at-least-32-random-bytes
+AUTH_CODE_SECRET=replace-with-independent-at-least-32-random-bytes
 EMAIL_FROM=Delivo <auth@example.com>
 PUBLIC_WEB_URL=http://localhost:5173
-# Opcional em local/staging; proibido em producao.
+# Opcional em local/staging; proibido em producao. Em staging, cadastrar como Worker secret para nao versionar PII.
 EMAIL_ALLOWED_RECIPIENTS=
 
 # FCM (opcional - sem isso o push e silenciosamente pulado)
