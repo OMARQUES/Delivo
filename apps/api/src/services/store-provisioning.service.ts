@@ -1,7 +1,7 @@
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import { and, desc, eq, isNull, or } from 'drizzle-orm'
 import type { Db } from '../db/client'
-import { authChallenges, stores, users } from '../db/schema'
+import { authActionTickets, authChallenges, emailOutbox, stores, users } from '../db/schema'
 import { enqueueChallengeEmail } from '../email/outbox.service'
 import { ChallengeError, createChallenge, replaceChallenge } from './auth-challenge.service'
 import { isUniqueViolation, toPublicUser, type PublicUser } from './auth.service'
@@ -78,16 +78,16 @@ function assertPendingActivation(input: {
   }
 }
 
-function currentStoreChallengeCondition(userId: string) {
+function storeChallengeCondition(userId: string) {
   return and(
     eq(authChallenges.userId, userId),
     eq(authChallenges.purpose, 'STORE_ACTIVATION'),
-    isNull(authChallenges.consumedAt),
-    or(
-      isNull(authChallenges.invalidatedAt),
-      eq(authChallenges.invalidationReason, 'ATTEMPTS_EXHAUSTED'),
-    ),
   )
+}
+
+function restartableStoreChallenge(challenge: typeof authChallenges.$inferSelect): boolean {
+  if (!challenge.invalidatedAt) return true
+  return !challenge.consumedAt && challenge.invalidationReason === 'ATTEMPTS_EXHAUSTED'
 }
 
 export async function provisionStoreWithOwner(
@@ -176,12 +176,14 @@ export async function getPendingStoreActivationTarget(
   if (!row) throw new StoreError('Loja não encontrada', 404)
   assertPendingActivation(row)
 
-  const [challenge] = await db.select({ id: authChallenges.id })
+  const [challenge] = await db.select()
     .from(authChallenges)
-    .where(currentStoreChallengeCondition(row.ownerId))
+    .where(storeChallengeCondition(row.ownerId))
     .orderBy(desc(authChallenges.createdAt), desc(authChallenges.id))
     .limit(1)
-  if (!challenge) throw new StoreError('Ativação da loja indisponível', 409)
+  if (!challenge || !restartableStoreChallenge(challenge)) {
+    throw new StoreError('Ativação da loja indisponível', 409)
+  }
   return { email: row.email }
 }
 
@@ -217,22 +219,49 @@ export async function resendStoreActivation(
 
       const [current] = await tx.select()
         .from(authChallenges)
-        .where(currentStoreChallengeCondition(row.ownerId))
+        .where(storeChallengeCondition(row.ownerId))
         .orderBy(desc(authChallenges.createdAt), desc(authChallenges.id))
         .limit(1)
         .for('update')
-      if (!current) throw new StoreError('Ativação da loja indisponível', 409)
+      if (!current || !restartableStoreChallenge(current)) {
+        throw new StoreError('Ativação da loja indisponível', 409)
+      }
       if (now.getTime() < current.createdAt.getTime() + RESEND_COOLDOWN_MS) {
         throw new StoreError('Aguarde antes de reenviar a ativação', 409)
       }
 
-      const replacement = await replaceChallenge(tx, {
-        challengeId: current.id,
-        expectedPurpose: 'STORE_ACTIVATION',
-        authCodeSecret: ctx.authCodeSecret.trim(),
-        expiresAt: new Date(now.getTime() + ACTIVATION_TTL_MS),
-        now,
-      })
+      await tx.update(authActionTickets).set({ consumedAt: now }).where(and(
+        eq(authActionTickets.userId, row.ownerId),
+        eq(authActionTickets.purpose, 'INITIAL_PASSWORD_SETUP'),
+        isNull(authActionTickets.consumedAt),
+      ))
+
+      const replacement = current.consumedAt
+        ? await createChallenge(tx, {
+          purpose: 'STORE_ACTIVATION',
+          userId: row.ownerId,
+          authCodeSecret: ctx.authCodeSecret.trim(),
+          expiresAt: new Date(now.getTime() + ACTIVATION_TTL_MS),
+          now,
+        })
+        : await replaceChallenge(tx, {
+          challengeId: current.id,
+          expectedPurpose: 'STORE_ACTIVATION',
+          authCodeSecret: ctx.authCodeSecret.trim(),
+          expiresAt: new Date(now.getTime() + ACTIVATION_TTL_MS),
+          now,
+        })
+      if (current.consumedAt) {
+        await tx.update(emailOutbox).set({
+          status: 'CANCELLED',
+          leasedUntil: null,
+          failureClass: 'CHALLENGE_REPLACED',
+          updatedAt: now,
+        }).where(and(
+          eq(emailOutbox.challengeId, current.id),
+          or(eq(emailOutbox.status, 'PENDING'), eq(emailOutbox.status, 'PROCESSING')),
+        ))
+      }
       const outboxId = await enqueueChallengeEmail(tx, {
         template: 'VERIFICATION_CODE',
         recipient: row.email,

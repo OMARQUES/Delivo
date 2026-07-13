@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import type { StoreCreateInput } from '@delivery/shared/schemas'
 import {
+  authActionTickets,
   authChallenges,
   authProviders,
   emailOutbox,
@@ -34,8 +35,15 @@ vi.mock('../src/email/outbox.service', async (importOriginal) => {
   }
 })
 
-import { provisionStoreWithOwner, resendStoreActivation } from '../src/services/store-provisioning.service'
+import {
+  getPendingStoreActivationTarget,
+  provisionStoreWithOwner,
+  resendStoreActivation,
+} from '../src/services/store-provisioning.service'
 import { getStoreBySlug, listPublicStores, setStoreSecurityStatus } from '../src/services/store.service'
+import { confirmEmailFlow } from '../src/services/registration.service'
+import { setupInitialPassword } from '../src/services/account-activation.service'
+import { deriveAuthCode } from '../src/security/auth-code'
 
 const now = new Date('2026-07-13T12:00:00.000Z')
 const ctx = {
@@ -177,5 +185,46 @@ describe('provisionStoreWithOwner', () => {
     ))).toHaveLength(0)
     expect(await testDb.select().from(emailOutbox).where(inArray(emailOutbox.status, ['PENDING', 'PROCESSING'])))
       .toHaveLength(0)
+  })
+
+  it('restarts activation after a consumed code and revokes the lost setup ticket', async () => {
+    const provisioned = await provisionStoreWithOwner(testDb, input, ctx)
+    const firstCode = await deriveAuthCode(ctx.authCodeSecret, {
+      challengeId: provisioned.verificationId,
+      purpose: 'STORE_ACTIVATION',
+    })
+    const firstConfirmation = await confirmEmailFlow(testDb, {
+      verificationId: provisioned.verificationId,
+      code: firstCode,
+    }, ctx)
+    if (firstConfirmation.kind !== 'PASSWORD_SETUP_REQUIRED') {
+      throw new Error('initial setup ticket missing')
+    }
+    await testDb.update(authChallenges).set({
+      createdAt: new Date(now.getTime() - 61_000),
+    }).where(eq(authChallenges.id, provisioned.verificationId))
+
+    await expect(getPendingStoreActivationTarget(testDb, provisioned.store.id))
+      .resolves.toEqual({ email: input.owner.email })
+    await resendStoreActivation(testDb, provisioned.store.id, {
+      ...ctx,
+      requestId: crypto.randomUUID(),
+    })
+
+    const [revokedTicket] = await testDb.select().from(authActionTickets)
+      .where(eq(authActionTickets.userId, provisioned.owner.id))
+    expect(revokedTicket?.consumedAt).toEqual(now)
+    await expect(setupInitialPassword(
+      testDb,
+      firstConfirmation.passwordSetupTicket,
+      'a strong store password',
+      ctx,
+    )).rejects.toMatchObject({ code: 'FLOW_INVALID_OR_EXPIRED' })
+
+    const challenges = await testDb.select().from(authChallenges)
+      .where(eq(authChallenges.userId, provisioned.owner.id))
+    expect(challenges).toHaveLength(2)
+    const replacement = challenges.find((challenge) => challenge.consumedAt === null)
+    expect(replacement).toMatchObject({ purpose: 'STORE_ACTIVATION', invalidatedAt: null })
   })
 })

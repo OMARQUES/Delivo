@@ -19,7 +19,7 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function buildPublicUrl(publicWebUrl: string, flowId?: string): string {
+function buildPublicUrl(publicWebUrl: string, template: EmailTemplate, flowId: string): string {
   let url: URL
   try {
     url = new URL(publicWebUrl)
@@ -27,7 +27,10 @@ function buildPublicUrl(publicWebUrl: string, flowId?: string): string {
     throw new Error('Invalid public web url')
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Invalid public web url')
-  if (flowId) url.searchParams.set('flowId', flowId)
+  url.pathname = template === 'PASSWORD_RECOVERY' ? '/recuperar-senha/codigo' : '/verificar-email'
+  url.search = ''
+  url.hash = ''
+  url.searchParams.set('id', flowId)
   return url.href
 }
 
@@ -91,9 +94,10 @@ function htmlShell(title: string, body: string): string {
 
 export function renderEmail(input: RenderEmailInput): EmailEnvelope {
   assertCode(input.template, input.code)
-  const publicUrl = buildPublicUrl(input.publicWebUrl, CODE_TEMPLATES.has(input.template) ? input.flowId : undefined)
 
   if (CODE_TEMPLATES.has(input.template)) {
+    if (!input.flowId) throw new Error('Template requires a flow id')
+    const publicUrl = buildPublicUrl(input.publicWebUrl, input.template, input.flowId)
     const code = input.code!
     const copy = codeCopy(input.template)
     const escapedTo = escapeHtml(input.to)

@@ -33,6 +33,24 @@ describe('auth email templates', () => {
     },
   )
 
+  it.each([
+    ['VERIFICATION_CODE', '/verificar-email'],
+    ['PASSWORD_RECOVERY', '/recuperar-senha/codigo'],
+  ] as const)('builds the %s app link with the public flow selector', (template, pathname) => {
+    const email = renderEmail({
+      to: 'user@example.com',
+      template,
+      code: '012345',
+      publicWebUrl: 'https://app.example.com/stale-path?stale=value#fragment',
+      flowId: '123e4567-e89b-42d3-a456-426614174000',
+    })
+
+    const link = email.text.split('\n').at(-1)
+    expect(link).toBe(`https://app.example.com${pathname}?id=123e4567-e89b-42d3-a456-426614174000`)
+    expect(email.text).not.toContain('flowId=')
+    expect(email.text).not.toContain('stale=value')
+  })
+
   it('escapes html in URLs and attributes', () => {
     const email = renderEmail({
       to: 'evil"@example.com',
@@ -46,7 +64,8 @@ describe('auth email templates', () => {
     expect(email.html).not.toContain('<svg')
     expect(email.html).not.toContain('evil"@example.com')
     expect(email.html).toContain('evil&quot;@example.com')
-    expect(email.html).toContain('%22%3E%3Cscript%3Ealert%281%29%3C%2Fscript%3E')
+    expect(email.html).not.toContain('script')
+    expect(email.html).toContain('id=%22%3E%3Csvg+onload%3Dalert%281%29%3E')
   })
 
   it('rejects invalid public web urls', () => {
@@ -55,6 +74,7 @@ describe('auth email templates', () => {
       template: 'VERIFICATION_CODE',
       code: '123456',
       publicWebUrl: 'javascript:alert(1)',
+      flowId: '123e4567-e89b-42d3-a456-426614174000',
     })).toThrow(/public web url/i)
   })
 

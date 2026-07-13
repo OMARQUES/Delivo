@@ -91,7 +91,7 @@ describe('email outbox', () => {
     const [envelope] = send.mock.calls[0]!
     expect(envelope.text).toContain(challenge.code)
     expect(envelope.html).toContain(challenge.code)
-    expect(envelope.text).toContain(`flowId=${challenge.id}`)
+    expect(envelope.text).toContain(`/recuperar-senha/codigo?id=${challenge.id}`)
     const [row] = await testDb.select().from(emailOutbox).where(eq(emailOutbox.id, id))
     expect(JSON.stringify(row)).not.toContain(challenge.code)
     expect(row).toMatchObject({ status: 'SENT', attemptCount: 1, providerMessageId: 'email-code' })
