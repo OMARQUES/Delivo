@@ -48,6 +48,7 @@ export const POLICIES = Object.freeze({
   recoveryStartIpDay: policy({ scope: 'recovery-start-ip-day', subjectKind: 'opaque', limit: 30, windowMs: DAY, retentionMs: 2 * DAY }),
   recoveryVerifyIpHour: policy({ scope: 'recovery-verify-ip-hour', subjectKind: 'opaque', limit: 30, windowMs: HOUR, retentionMs: DAY }),
   ticketUseIpHour: policy({ scope: 'identity-ticket-use-ip-hour', subjectKind: 'opaque', limit: 30, windowMs: HOUR, retentionMs: DAY }),
+  ticketUseFingerprintHour: policy({ scope: 'identity-ticket-use-fingerprint-hour', subjectKind: 'opaque', limit: 30, windowMs: HOUR, retentionMs: DAY }),
 
   loginIp15Minutes: policy({ scope: 'login-ip-15m', subjectKind: 'opaque', limit: 30, windowMs: 15 * MINUTE, retentionMs: HOUR }),
   loginFailureIdentity15Minutes: policy({ scope: 'login-failure-identity-15m', subjectKind: 'identity', limit: 5, windowMs: 15 * MINUTE, retentionMs: HOUR }),

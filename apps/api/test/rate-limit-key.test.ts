@@ -69,6 +69,7 @@ describe('rate limit policies', () => {
       recoveryStartIpDay: { scope: 'recovery-start-ip-day', limit: 30, windowMs: 86_400_000, retentionMs: 172_800_000 },
       recoveryVerifyIpHour: { scope: 'recovery-verify-ip-hour', limit: 30, windowMs: 3_600_000, retentionMs: 86_400_000 },
       ticketUseIpHour: { scope: 'identity-ticket-use-ip-hour', limit: 30, windowMs: 3_600_000, retentionMs: 86_400_000 },
+      ticketUseFingerprintHour: { scope: 'identity-ticket-use-fingerprint-hour', limit: 30, windowMs: 3_600_000, retentionMs: 86_400_000 },
       loginIp15Minutes: { scope: 'login-ip-15m', limit: 30, windowMs: 900_000, retentionMs: 3_600_000 },
       loginFailureIdentity15Minutes: { scope: 'login-failure-identity-15m', limit: 5, windowMs: 900_000, retentionMs: 3_600_000 },
       loginFailureIdentityHour: { scope: 'login-failure-identity-hour', limit: 10, windowMs: 3_600_000, retentionMs: 86_400_000, cooldownMs: 900_000 },
@@ -102,7 +103,7 @@ describe('rate limit policies', () => {
         'loginFailureIdentity15Minutes',
         'loginFailureIdentityHour',
       ])
-    expect(Object.values(POLICIES).filter((value) => value.subjectKind === 'opaque')).toHaveLength(24)
+    expect(Object.values(POLICIES).filter((value) => value.subjectKind === 'opaque')).toHaveLength(25)
 
     expect(Object.isFrozen(POLICIES)).toBe(true)
     for (const policy of Object.values(POLICIES)) {

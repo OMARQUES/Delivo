@@ -83,6 +83,24 @@ export const LoginSchema = z.object({
 }).strict()
 export type LoginInput = z.infer<typeof LoginSchema>
 
+export const StartRecoverySchema = z.object({
+  email: NormalizedEmail,
+  turnstileToken: TurnstileTokenValueSchema,
+}).strict()
+export type StartRecoveryInput = z.infer<typeof StartRecoverySchema>
+
+export const VerifyRecoverySchema = z.object({
+  recoveryId: z.uuid(),
+  code: z.string().regex(/^\d{6}$/),
+}).strict()
+export type VerifyRecoveryInput = z.infer<typeof VerifyRecoverySchema>
+
+export const ResetPasswordSchema = z.object({
+  resetTicket: z.string().min(40).max(512),
+  newPassword: z.string().min(8).max(PASSWORD_MAX_LENGTH),
+}).strict()
+export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>
+
 export const RefreshSchema = z.object({
   refreshToken: z.string().min(20).max(512),
 })

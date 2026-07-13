@@ -4,7 +4,10 @@ import {
   LoginSchema,
   RegisterSchema,
   ResendVerificationSchema,
+  ResetPasswordSchema,
+  StartRecoverySchema,
   StartRegistrationSchema,
+  VerifyRecoverySchema,
 } from './auth.schema'
 
 describe('RegisterSchema', () => {
@@ -157,5 +160,65 @@ describe('ResendVerificationSchema', () => {
     expect(() => ResendVerificationSchema.parse({ ...valid, turnstileToken: 'x'.repeat(2049) })).toThrow()
     expect(() => ResendVerificationSchema.parse({ ...valid, email: 'other@example.com' })).toThrow()
     expect(() => ResendVerificationSchema.parse({ ...valid, code: '123456' })).toThrow()
+  })
+})
+
+describe('StartRecoverySchema', () => {
+  it('normalizes email and requires a bounded Turnstile token', () => {
+    expect(StartRecoverySchema.parse({
+      email: ' Person@Example.COM ',
+      turnstileToken: ' token ',
+    })).toEqual({ email: 'person@example.com', turnstileToken: 'token' })
+
+    expect(() => StartRecoverySchema.parse({ email: 'person@example.com' })).toThrow()
+    expect(() => StartRecoverySchema.parse({ email: 'person@example.com', turnstileToken: '   ' })).toThrow()
+    expect(() => StartRecoverySchema.parse({
+      email: 'person@example.com',
+      turnstileToken: 'x'.repeat(2049),
+    })).toThrow()
+  })
+
+  it('rejects unexpected identity selectors', () => {
+    const valid = { email: 'person@example.com', turnstileToken: 'token' }
+    for (const field of ['userId', 'identifier', 'role']) {
+      expect(() => StartRecoverySchema.parse({ ...valid, [field]: 'attacker-controlled' })).toThrow()
+    }
+  })
+})
+
+describe('VerifyRecoverySchema', () => {
+  const valid = { recoveryId: '123e4567-e89b-42d3-a456-426614174000', code: '000000' }
+
+  it('accepts only a UUID and exactly six ASCII digits', () => {
+    expect(VerifyRecoverySchema.parse(valid)).toEqual(valid)
+    for (const code of ['12345', '1234567', '12a456', ' 123456 ']) {
+      expect(() => VerifyRecoverySchema.parse({ ...valid, code })).toThrow()
+    }
+    expect(() => VerifyRecoverySchema.parse({ ...valid, recoveryId: 'not-a-uuid' })).toThrow()
+  })
+
+  it('rejects unexpected identity fields', () => {
+    expect(() => VerifyRecoverySchema.parse({ ...valid, email: 'person@example.com' })).toThrow()
+    expect(() => VerifyRecoverySchema.parse({ ...valid, userId: crypto.randomUUID() })).toThrow()
+  })
+})
+
+describe('ResetPasswordSchema', () => {
+  const valid = { resetTicket: 't'.repeat(40), newPassword: 'new pass' }
+
+  it('bounds ticket and password without mutating password whitespace', () => {
+    expect(ResetPasswordSchema.parse(valid)).toEqual(valid)
+    expect(ResetPasswordSchema.parse({ ...valid, newPassword: '  secure password  ' }).newPassword)
+      .toBe('  secure password  ')
+    expect(() => ResetPasswordSchema.parse({ ...valid, resetTicket: 't'.repeat(39) })).toThrow()
+    expect(() => ResetPasswordSchema.parse({ ...valid, resetTicket: 't'.repeat(513) })).toThrow()
+    expect(() => ResetPasswordSchema.parse({ ...valid, newPassword: 'x'.repeat(7) })).toThrow()
+    expect(() => ResetPasswordSchema.parse({ ...valid, newPassword: 'x'.repeat(129) })).toThrow()
+  })
+
+  it('accepts no attacker-controlled identity or proof selectors', () => {
+    for (const field of ['email', 'userId', 'code', 'role']) {
+      expect(() => ResetPasswordSchema.parse({ ...valid, [field]: 'attacker-controlled' })).toThrow()
+    }
   })
 })
