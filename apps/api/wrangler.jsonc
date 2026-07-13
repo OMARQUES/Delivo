@@ -29,5 +29,27 @@
       "id": "00000000000000000000000000000000",
       "localConnectionString": "postgres://postgres:postgres@localhost:5432/delivery"
     }
-  ]
+  ],
+  "env": {
+    "staging": {
+      "workers_dev": true,
+      "preview_urls": false,
+      "triggers": { "crons": ["*/5 * * * *"] },
+      "vars": {
+        "APP_ENV": "staging",
+        "ALLOWED_ORIGINS": "https://delivery-web-staging.otavio-marques20.workers.dev,https://delivery-driver-staging.otavio-marques20.workers.dev",
+        "TURNSTILE_EXPECTED_HOSTNAMES": "delivery-web-staging.otavio-marques20.workers.dev,delivery-driver-staging.otavio-marques20.workers.dev",
+        "EMAIL_FROM": "Delivery staging <onboarding@resend.dev>",
+        "PUBLIC_WEB_URL": "https://delivery-web-staging.otavio-marques20.workers.dev",
+        "PUBLIC_API_URL": "https://delivery-api-staging.otavio-marques20.workers.dev",
+        "MP_PUBLIC_KEY": ""
+      },
+      "r2_buckets": [
+        { "binding": "BUCKET", "bucket_name": "delivo-media-staging" }
+      ],
+      "hyperdrive": [
+        { "binding": "HYPERDRIVE", "id": "ee44ff9aa75d4b57826982d04a569c1d" }
+      ]
+    }
+  }
 }

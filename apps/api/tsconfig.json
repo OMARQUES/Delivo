@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["@cloudflare/workers-types", "vitest/globals", "node"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "worker-configuration.d.ts"]
 }

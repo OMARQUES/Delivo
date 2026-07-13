@@ -1,10 +1,10 @@
 import type { Db } from './db/client'
 import type { LivePrincipal } from './services/security-session.service'
 
-export type Env = {
+type PlatformBindings = Pick<CloudflareBindings, 'HYPERDRIVE' | 'BUCKET'>
+
+export type Env = PlatformBindings & {
   APP_ENV: 'local' | 'staging' | 'production'
-  HYPERDRIVE: Hyperdrive
-  BUCKET: R2Bucket
   JWT_SECRET: string
   RATE_LIMIT_HMAC_SECRET: string
   TURNSTILE_SECRET_KEY: string

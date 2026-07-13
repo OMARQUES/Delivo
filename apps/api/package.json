@@ -11,7 +11,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx src/db/seed.ts",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types worker-configuration.d.ts --env staging --env-interface CloudflareBindings --strict-vars=false --include-runtime=false"
   },
   "dependencies": {
     "@delivery/shared": "workspace:*",
