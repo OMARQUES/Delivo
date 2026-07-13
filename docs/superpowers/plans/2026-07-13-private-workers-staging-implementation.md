@@ -620,6 +620,13 @@ Before Task 1:
 
 ### Task 7: Migrate Neon and enforce runtime least privilege
 
+> **Implementation correction (2026-07-13):** Create the runtime role with SQL,
+> not through the Neon Console, CLI, or API, because control-plane-created roles
+> inherit `neon_superuser`. The tracked grant script validates safe role
+> attributes instead of issuing `ALTER ROLE ... NOSUPERUSER`, which Neon rejects
+> for non-superusers. The tracked scripts supersede the older inline excerpts in
+> this task.
+
 **Files:**
 - Create: `apps/api/scripts/grant-staging-runtime.sql`
 - Create: `apps/api/scripts/verify-staging-runtime.sql`
@@ -786,7 +793,11 @@ Before Task 1:
 
 - [ ] **Step 5: Create and constrain runtime role**
 
-  Create `delivo_app_staging` with a new random password using Neon role management. Then run the tracked psql scripts from a private terminal; they contain psql meta-commands and must not be pasted into the Neon SQL editor:
+  Create `delivo_app_staging` through SQL with a new random password and explicit
+  `LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
+  NOBYPASSRLS` attributes. Do not create it through the Neon Console, CLI, or API.
+  Then run the tracked psql scripts from a private terminal; they contain psql
+  meta-commands and must not be pasted into the Neon SQL editor:
 
   ```bash
   set +o history
@@ -797,7 +808,6 @@ Before Task 1:
   export PGSSLMODE=require
   read -rsp 'Neon owner password: ' PGPASSWORD && printf '\n'
   export PGPASSWORD
-  psql -c 'REVOKE neon_superuser FROM delivo_app_staging'
   psql -v migration_owner=neondb_owner -f apps/api/scripts/grant-staging-runtime.sql
   psql -f apps/api/scripts/verify-staging-runtime.sql
   unset PGPASSWORD PGHOST PGPORT PGDATABASE PGUSER PGSSLMODE
