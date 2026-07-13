@@ -32,6 +32,8 @@ let driverToken: string
 let otherDriverToken: string
 let customerToken: string
 let linkId: string
+const driverEmail = 'driver.terms@example.test'
+const otherDriverEmail = 'other.driver.terms@example.test'
 
 beforeAll(migrateTestDb)
 beforeEach(async () => {
@@ -44,15 +46,22 @@ beforeEach(async () => {
     owner: { name: 'Outra', email: 'outra@termos.test', password: 'senha123' },
   })
   otherStoreToken = await createTestSession({ sub: otherStore.ownerUserId, role: 'STORE', name: 'Outra' }, env.JWT_SECRET)
-  const input = { name: 'D', phone: '44911111111', password: 'senha123', role: 'DRIVER' as const, acceptedTerms: true as const }
+  const input = {
+    name: 'D', email: driverEmail, phone: '44911111111', password: 'senha123',
+    role: 'DRIVER' as const, acceptedTerms: true as const,
+  }
   const driver = await createVerifiedTestAccount(testDb, input, env.JWT_SECRET)
-  const other = await createVerifiedTestAccount(testDb, { ...input, phone: '44922222222' }, env.JWT_SECRET)
+  const other = await createVerifiedTestAccount(testDb, {
+    ...input, email: otherDriverEmail, phone: '44922222222',
+  }, env.JWT_SECRET)
   driverId = driver.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(inArray(users.id, [driver.user.id, other.user.id]))
   driverToken = await createTestSession({ sub: driver.user.id, role: 'DRIVER', name: 'D' }, env.JWT_SECRET)
   otherDriverToken = await createTestSession({ sub: other.user.id, role: 'DRIVER', name: 'O' }, env.JWT_SECRET)
   customerToken = await createTestSession({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'C' }, env.JWT_SECRET)
-  const link = await inviteDriver(testDb, storeId, input.phone, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow() })
+  const link = await inviteDriver(testDb, storeId, input.email, {
+    dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow(),
+  })
   linkId = link.id
   await confirmLink(testDb, driverId, linkId)
 })
@@ -66,6 +75,25 @@ function req(path: string, init: RequestInit, token: string) {
 }
 
 describe('termos e reajuste via HTTP', () => {
+  it('convida por email normalizado, rejeita phone e protege RBAC', async () => {
+    const terms = { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [] }
+    const legacy = await req('/store/me/drivers', {
+      method: 'POST', body: JSON.stringify({ ...terms, phone: '44922222222' }),
+    }, storeToken)
+    expect(legacy.status).toBe(400)
+
+    const forbidden = await req('/store/me/drivers', {
+      method: 'POST', body: JSON.stringify({ ...terms, email: otherDriverEmail }),
+    }, customerToken)
+    expect(forbidden.status).toBe(403)
+
+    const invited = await req('/store/me/drivers', {
+      method: 'POST', body: JSON.stringify({ ...terms, email: `  ${otherDriverEmail.toUpperCase()}  ` }),
+    }, storeToken)
+    expect(invited.status).toBe(201)
+    expect(await invited.json()).toMatchObject({ status: 'INVITED' })
+  })
+
   it('inicia por storeDriverId e protege ownership/RBAC', async () => {
     expect((await req('/driver/shifts', { method: 'POST', body: JSON.stringify({ storeDriverId: linkId, lat: -23.55, lng: -51.9 }) }, otherDriverToken)).status).toBe(404)
     expect((await req('/driver/shifts', { method: 'POST', body: JSON.stringify({ storeDriverId: linkId, lat: -23.55, lng: -51.9 }) }, customerToken)).status).toBe(403)

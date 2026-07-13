@@ -29,6 +29,8 @@ const storeInput: StoreFixtureInput = {
   owner: { name: 'Lojista', email: 'turno@loja.test', password: 'senha123' },
 }
 const customerInput = { name: 'Ana', phone: '44999998888', password: 'senha123', role: 'CUSTOMER' as const, acceptedTerms: true as const }
+const driverEmail = 'fixed.driver@example.test'
+const freelanceEmail = 'freelance.driver@example.test'
 let storeId: string
 let driverId: string
 let freelanceId: string
@@ -51,8 +53,12 @@ beforeEach(async () => {
   addressId = (await createAddress(testDb, customerId, { addressText: 'Rua B', lat: -23.56, lng: -51.9 })).id
   const category = await createCategory(testDb, storeId, { name: 'Itens' })
   productId = (await createProduct(testDb, storeId, { categoryId: category.id, name: 'Item', basePriceCents: 10_000, isAvailable: true })).id
-  driverId = (await createVerifiedTestAccount(testDb, { ...customerInput, name: 'Fixo', phone: '44911111111', role: 'DRIVER' }, 'secret')).user.id
-  freelanceId = (await createVerifiedTestAccount(testDb, { ...customerInput, name: 'Freela', phone: '44922222222', role: 'DRIVER' }, 'secret')).user.id
+  driverId = (await createVerifiedTestAccount(testDb, {
+    ...customerInput, name: 'Fixo', email: driverEmail, phone: '44911111111', role: 'DRIVER',
+  }, 'secret')).user.id
+  freelanceId = (await createVerifiedTestAccount(testDb, {
+    ...customerInput, name: 'Freela', email: freelanceEmail, phone: '44922222222', role: 'DRIVER',
+  }, 'secret')).user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverId))
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, freelanceId))
   await setAvailability(testDb, driverId, true)
@@ -82,8 +88,65 @@ async function deliverOwn() {
 }
 
 describe('entregadores próprios', () => {
+  it('convida somente DRIVER ativo e verificado usando email normalizado', async () => {
+    const link = await inviteDriver(testDb, storeId, '  FIXED.DRIVER@EXAMPLE.TEST  ', {
+      dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [],
+    })
+
+    expect(link).toMatchObject({ storeId, driverUserId: driverId, status: 'INVITED' })
+  })
+
+  it('usa erro idêntico para email ausente ou conta inelegível', async () => {
+    const pending = await createVerifiedTestAccount(testDb, {
+      ...customerInput,
+      name: 'Pending',
+      email: 'pending.driver@example.test',
+      phone: '44933333333',
+      role: 'DRIVER',
+    }, 'secret')
+    const blocked = await createVerifiedTestAccount(testDb, {
+      ...customerInput,
+      name: 'Blocked',
+      email: 'blocked.driver@example.test',
+      phone: '44944444444',
+      role: 'DRIVER',
+    }, 'secret')
+    await testDb.update(users).set({ status: 'BLOCKED' }).where(eq(users.id, blocked.user.id))
+    await createVerifiedTestAccount(testDb, {
+      ...customerInput,
+      name: 'Customer',
+      email: 'customer@example.test',
+      phone: '44955555555',
+    }, 'secret')
+    await testDb.insert(users).values({
+      name: 'Unverified',
+      email: 'unverified.driver@example.test',
+      phone: '44966666666',
+      role: 'DRIVER',
+      status: 'ACTIVE',
+      emailVerifiedAt: null,
+    })
+
+    expect(pending.user.status).toBe('PENDING_APPROVAL')
+    for (const email of [
+      'missing.driver@example.test',
+      'pending.driver@example.test',
+      'blocked.driver@example.test',
+      'customer@example.test',
+      'unverified.driver@example.test',
+    ]) {
+      await expect(inviteDriver(testDb, storeId, email, {
+        dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [],
+      })).rejects.toMatchObject({
+        status: 404,
+        message: 'Entregador não encontrado ou indisponível',
+      })
+    }
+    expect(await testDb.select().from(storeDrivers)).toHaveLength(0)
+  })
+
   it('não encerra enquanto houver entrega associada em andamento', async () => {
-    const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
+    const link = await inviteDriver(testDb, storeId, driverEmail, {
       dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow(),
     })
     await confirmLink(testDb, driverId, link.id)
@@ -95,7 +158,7 @@ describe('entregadores próprios', () => {
   })
 
   it('isola o broadcast, congela valores e lança extra + diária de forma idempotente', async () => {
-    const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
+    const link = await inviteDriver(testDb, storeId, driverEmail, {
       dailyRateCents: 8_000, perDeliveryCents: 700, schedule: scheduleForNow(),
     })
     await confirmLink(testDb, driverId, link.id)
@@ -141,7 +204,7 @@ describe('entregadores próprios', () => {
 
   it('mantém termos ativos até confirmação e permite recusar a proposta', async () => {
     const schedule = [{ dow: 1, start: '09:00', end: '18:00' }]
-    const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
+    const link = await inviteDriver(testDb, storeId, driverEmail, {
       dailyRateCents: 5_000, perDeliveryCents: 500, schedule,
     })
     await confirmLink(testDb, driverId, link.id)
@@ -171,7 +234,7 @@ describe('entregadores próprios', () => {
   })
 
   it('reconcilia retroativo pelo saldo real de cada pedido e usa novos valores no futuro', async () => {
-    const link = await inviteDriver(testDb, storeId, '44 91111-1111', {
+    const link = await inviteDriver(testDb, storeId, driverEmail, {
       dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow(),
     })
     await confirmLink(testDb, driverId, link.id)
@@ -212,10 +275,10 @@ describe('entregadores próprios', () => {
   })
 
   it('reconvidar após remover cria novo vínculo e preserva histórico', async () => {
-    const first = await inviteDriver(testDb, storeId, '44 91111-1111', { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [] })
+    const first = await inviteDriver(testDb, storeId, driverEmail, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: [] })
     await removeLink(testDb, storeId, first.id)
     // Um novo convite cria uma nova identidade; o removido permanece histórico.
-    const again = await inviteDriver(testDb, storeId, '44 91111-1111', { dailyRateCents: 9_000, perDeliveryCents: 900, schedule: [] })
+    const again = await inviteDriver(testDb, storeId, driverEmail, { dailyRateCents: 9_000, perDeliveryCents: 900, schedule: [] })
     expect(again.id).not.toBe(first.id)
     expect(again).toMatchObject({ status: 'INVITED', dailyRateCents: 9_000, perDeliveryCents: 900 })
     expect(await testDb.select().from(storeDrivers).where(eq(storeDrivers.driverUserId, driverId))).toHaveLength(2)
@@ -259,8 +322,8 @@ describe('entregadores próprios', () => {
   })
 
   it('direciona a um entregador, permite recusa e redirecionamento explícito', async () => {
-    for (const [id, phone] of [[driverId, '44911111111'], [freelanceId, '44922222222']] as const) {
-      const link = await inviteDriver(testDb, storeId, phone, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow() })
+    for (const [id, email] of [[driverId, driverEmail], [freelanceId, freelanceEmail]] as const) {
+      const link = await inviteDriver(testDb, storeId, email, { dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow() })
       await confirmLink(testDb, id, link.id)
       await startShift(testDb, id, link.id, { lat: -23.55, lng: -51.9 })
     }
@@ -289,7 +352,7 @@ describe('entregadores próprios', () => {
   })
 
   it('serializa início de turno com aceite do pool geral', async () => {
-    const link = await inviteDriver(testDb, storeId, '44911111111', {
+    const link = await inviteDriver(testDb, storeId, driverEmail, {
       dailyRateCents: 5_000, perDeliveryCents: 500, schedule: scheduleForNow(),
     })
     await confirmLink(testDb, driverId, link.id)

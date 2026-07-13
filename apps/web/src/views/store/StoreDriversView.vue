@@ -26,7 +26,7 @@ const saving = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
 // convite (novo entregador) — agenda multi-dia: dias marcados usam o mesmo horário
-const form = reactive({ phone: '', daily: '', extra: '', days: [1] as number[], start: '09:00', end: '18:00' })
+const form = reactive({ email: '', daily: '', extra: '', days: [1] as number[], start: '09:00', end: '18:00' })
 // edição inline de um vínculo existente
 const editing = ref<string | null>(null)
 const editForm = reactive({ daily: '', extra: '', days: [] as number[], start: '09:00', end: '18:00' })
@@ -65,10 +65,10 @@ async function invite() {
   saving.value = true; error.value = ''
   try {
     await api('/store/me/drivers', { method: 'POST', body: JSON.stringify({
-      phone: form.phone, dailyRateCents, perDeliveryCents,
+      email: form.email, dailyRateCents, perDeliveryCents,
       schedule: scheduleFrom(form.days, form.start, form.end),
     }) })
-    form.phone = ''; form.daily = ''; form.extra = ''; form.days = [1]
+    form.email = ''; form.daily = ''; form.extra = ''; form.days = [1]
     await load()
   } catch (e) { error.value = e instanceof Error ? e.message : 'Erro' }
   finally { saving.value = false }
@@ -169,7 +169,7 @@ onBeforeUnmount(() => clearInterval(refreshTimer))
     <p v-if="error" class="mt-2 text-sm text-red-600">{{ error }}</p>
 
     <form class="mt-4 grid gap-2 rounded border p-3 sm:grid-cols-3" @submit.prevent="invite">
-      <input v-model="form.phone" required placeholder="Telefone" class="rounded border p-2" />
+      <input v-model="form.email" type="email" autocomplete="email" required placeholder="Email do entregador" class="rounded border p-2" />
       <input v-model="form.daily" required inputmode="decimal" placeholder="Diária (R$)" class="rounded border p-2" />
       <input v-model="form.extra" required inputmode="decimal" placeholder="Extra/entrega (R$)" class="rounded border p-2" />
       <div class="flex flex-wrap items-center gap-1 sm:col-span-3">

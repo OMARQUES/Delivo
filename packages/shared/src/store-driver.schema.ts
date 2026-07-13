@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { normalizePhone } from './auth.schema'
+import { NormalizedEmail } from './auth.schema'
 import { scheduleHasInternalConflict } from './offers'
 
 const TimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
@@ -21,8 +21,8 @@ export const StoreDriverTermsSchema = z.object({
 })
 
 export const InviteStoreDriverSchema = StoreDriverTermsSchema.extend({
-  phone: z.string().transform(normalizePhone).pipe(z.string().min(10).max(13)),
-})
+  email: NormalizedEmail,
+}).strict()
 
 export const UpdateStoreDriverTermsSchema = StoreDriverTermsSchema.partial().refine(
   (value) => Object.keys(value).length > 0,

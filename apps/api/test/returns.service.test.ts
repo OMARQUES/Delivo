@@ -32,6 +32,7 @@ let customerId: string
 let driverId: string
 let productId: string
 let addressId: string
+const driverEmail = 'returns.driver@example.test'
 
 beforeAll(migrateTestDb)
 beforeEach(async () => {
@@ -46,7 +47,9 @@ beforeEach(async () => {
   addressId = (await createAddress(testDb, customerId, { addressText: 'Rua Cliente', lat: -23.56, lng: -51.9 })).id
   const category = await createCategory(testDb, storeId, { name: 'Itens' })
   productId = (await createProduct(testDb, storeId, { categoryId: category.id, name: 'Item', basePriceCents: 5_000, isAvailable: true })).id
-  driverId = (await createVerifiedTestAccount(testDb, { ...person, name: 'Driver', phone: '44911111111', role: 'DRIVER' }, 'secret')).user.id
+  driverId = (await createVerifiedTestAccount(testDb, {
+    ...person, name: 'Driver', email: driverEmail, phone: '44911111111', role: 'DRIVER',
+  }, 'secret')).user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(eq(users.id, driverId))
   await setAvailability(testDb, driverId, true)
 })
@@ -106,7 +109,7 @@ describe('devolução após falha', () => {
   })
 
   it('congela o extra do fixo na falha e suporte pode confirmar a devolução', async () => {
-    const link = await inviteDriver(testDb, storeId, '44911111111', { dailyRateCents: 5_000, perDeliveryCents: 700, schedule: scheduleForNow() })
+    const link = await inviteDriver(testDb, storeId, driverEmail, { dailyRateCents: 5_000, perDeliveryCents: 700, schedule: scheduleForNow() })
     await confirmLink(testDb, driverId, link.id)
     const shift = await startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 })
     const order = await assignAndCollect(true)
@@ -144,7 +147,7 @@ describe('chegada e meia-taxa', () => {
     await storeReleaseDriver(testDb, storeId, first.id, ownerId)
     expect(await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, first.id))).toEqual([])
 
-    const link = await inviteDriver(testDb, storeId, '44911111111', { dailyRateCents: 5_000, perDeliveryCents: 700, schedule: scheduleForNow() })
+    const link = await inviteDriver(testDb, storeId, driverEmail, { dailyRateCents: 5_000, perDeliveryCents: 700, schedule: scheduleForNow() })
     await confirmLink(testDb, driverId, link.id)
     await startShift(testDb, driverId, link.id, { lat: -23.55, lng: -51.9 })
     const fixed = await makeOrder(); await requestDriverOwn(testDb, storeId, fixed.id); await acceptShiftDelivery(testDb, driverId, fixed.id)

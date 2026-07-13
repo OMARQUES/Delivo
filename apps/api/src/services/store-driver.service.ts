@@ -1,5 +1,4 @@
-import { and, desc, eq, gt, inArray, ne } from 'drizzle-orm'
-import { normalizePhone } from '@delivery/shared/schemas'
+import { and, desc, eq, gt, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import { datedScheduleExpiry, saoPauloDate, schedulesConflict, type ScheduleItem } from '@delivery/shared'
 import type { Db } from '../db/client'
 import { driverShifts, shiftStartAuthorizations, storeDrivers, stores, users, type DriverSchedule } from '../db/schema'
@@ -61,15 +60,16 @@ async function assertNoActiveShift(db: ScheduleReader, linkId: string, message: 
   if (active) throw new StoreDriverError(message, 409)
 }
 
-export async function inviteDriver(db: Db, storeId: string, phone: string, terms: StoreDriverTerms) {
-  const normalized = normalizePhone(phone)
-  const [driver] = await db.select().from(users).where(eq(users.phone, normalized)).limit(1)
-  if (!driver) throw new StoreDriverError('Entregador não encontrado', 404)
-  if (driver.role !== 'DRIVER' || driver.status !== 'ACTIVE') {
-    throw new StoreDriverError('A conta informada não é de um entregador ativo', 400)
-  }
+export async function inviteDriver(db: Db, storeId: string, email: string, terms: StoreDriverTerms) {
+  const normalizedEmail = email.trim().toLowerCase()
   return db.transaction(async (tx) => {
-    await tx.select({ id: users.id }).from(users).where(eq(users.id, driver.id)).for('update')
+    const [driver] = await tx.select({ id: users.id }).from(users).where(and(
+      sql`lower(${users.email}) = ${normalizedEmail}`,
+      eq(users.role, 'DRIVER'),
+      eq(users.status, 'ACTIVE'),
+      isNotNull(users.emailVerifiedAt),
+    )).limit(1).for('update')
+    if (!driver) throw new StoreDriverError('Entregador não encontrado ou indisponível', 404)
     await assertNoScheduleConflict(tx, driver.id, terms.schedule)
     const [link] = await tx.insert(storeDrivers).values({ storeId, driverUserId: driver.id, ...terms,
       expiresAt: datedScheduleExpiry(terms.schedule),

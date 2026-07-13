@@ -52,6 +52,8 @@ let productId: string
 let otherProductId: string
 let driver1: string
 let driver2: string
+const driver1Email = 'batch.driver.one@example.test'
+const driver2Email = 'batch.driver.two@example.test'
 
 beforeAll(migrateTestDb)
 beforeEach(async () => {
@@ -94,8 +96,12 @@ beforeEach(async () => {
     basePriceCents: 4000,
     isAvailable: true,
   })).id
-  const d1 = await createVerifiedTestAccount(testDb, { ...person, name: 'Duda', phone: '44911111111', role: 'DRIVER' }, 'test-secret')
-  const d2 = await createVerifiedTestAccount(testDb, { ...person, name: 'Edu', phone: '44922222222', role: 'DRIVER' }, 'test-secret')
+  const d1 = await createVerifiedTestAccount(testDb, {
+    ...person, name: 'Duda', email: driver1Email, phone: '44911111111', role: 'DRIVER',
+  }, 'test-secret')
+  const d2 = await createVerifiedTestAccount(testDb, {
+    ...person, name: 'Edu', email: driver2Email, phone: '44922222222', role: 'DRIVER',
+  }, 'test-secret')
   driver1 = d1.user.id
   driver2 = d2.user.id
   await testDb.update(users).set({ status: 'ACTIVE' }).where(inArray(users.id, [driver1, driver2]))
@@ -177,8 +183,8 @@ describe('store-side batches', () => {
   })
 
   it('direciona pacote a próprios/específico e aceite em turno grava shiftId', async () => {
-    for (const [id, phone] of [[driver1, '44911111111'], [driver2, '44922222222']] as const) {
-      const link = await inviteDriver(testDb, storeId, phone, { dailyRateCents: 5_000, perDeliveryCents: 600, schedule: scheduleForNow() })
+    for (const [id, email] of [[driver1, driver1Email], [driver2, driver2Email]] as const) {
+      const link = await inviteDriver(testDb, storeId, email, { dailyRateCents: 5_000, perDeliveryCents: 600, schedule: scheduleForNow() })
       await confirmLink(testDb, id, link.id)
       await startShift(testDb, id, link.id, { lat: -23.55, lng: -51.9 })
     }

@@ -59,8 +59,8 @@ storeDriverRoutes.openapi(createRoute({
   request: { body: { content: { 'application/json': { schema: InviteStoreDriverSchema } } } },
   responses: { 201: { description: 'Convite criado', content: { 'application/json': { schema: Out } } } },
 }), async (c) => {
-  const { phone, ...terms } = c.req.valid('json')
-  return c.json(await inviteDriver(c.get('db'), await ownStoreId(c), phone, terms).catch(rethrow), 201)
+  const { email, ...terms } = c.req.valid('json')
+  return c.json(await inviteDriver(c.get('db'), await ownStoreId(c), email, terms).catch(rethrow), 201)
 })
 
 storeDriverRoutes.openapi(createRoute({
