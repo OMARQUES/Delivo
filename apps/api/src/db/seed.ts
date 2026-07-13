@@ -1,42 +1,97 @@
 /**
- * Seed idempotente. Lê DATABASE_URL + ADMIN_* do apps/api/.env.
- * Uso: pnpm --filter @delivery/api db:seed
+ * Bootstrap idempotente do primeiro ADMIN.
+ * Segredos vêm somente do ambiente; nenhum argumento CLI é aceito ou impresso.
  */
 import 'dotenv/config'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import { sql } from 'drizzle-orm'
+import type { Env } from '../env'
 import * as schema from './schema'
-import { hashPassword } from '../lib/password'
+import { resolveEmailConfig } from '../email/config'
+import { dispatchOutboxById } from '../email/outbox.service'
+import { createResendSender } from '../email/resend-sender'
+import { AdminBootstrapError, bootstrapAdmin } from '../services/admin-bootstrap.service'
 
-const { DATABASE_URL, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME } = process.env
-if (!DATABASE_URL || !ADMIN_EMAIL || !ADMIN_PASSWORD) {
-  throw new Error('Defina DATABASE_URL, ADMIN_EMAIL e ADMIN_PASSWORD no apps/api/.env')
+class BootstrapConfigError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BootstrapConfigError'
+  }
 }
 
-const client = postgres(DATABASE_URL, { max: 1 })
-const db = drizzle(client, { schema })
-
-const email = ADMIN_EMAIL.trim().toLowerCase()
-const existing = await db
-  .select({ id: schema.users.id })
-  .from(schema.users)
-  .where(sql`lower(${schema.users.email}) = ${email}`)
-  .limit(1)
-
-if (existing.length > 0) {
-  console.log(`admin já existe (${email}) — nada a fazer`)
-} else {
-  const [admin] = await db
-    .insert(schema.users)
-    .values({ name: ADMIN_NAME ?? 'Admin', email, role: 'ADMIN', status: 'ACTIVE' })
-    .returning()
-  await db.insert(schema.authProviders).values({
-    userId: admin!.id,
-    provider: 'PASSWORD',
-    passwordHash: await hashPassword(ADMIN_PASSWORD),
-  })
-  console.log(`admin criado: ${email}`)
+function required(name: string): string {
+  const value = process.env[name]?.trim()
+  if (!value) throw new BootstrapConfigError(`${name}_REQUIRED`)
+  return value
 }
 
-await client.end()
+function appEnvironment(): Env['APP_ENV'] {
+  const value = process.env.APP_ENV?.trim() || 'local'
+  if (value !== 'local' && value !== 'staging' && value !== 'production') {
+    throw new BootstrapConfigError('APP_ENV_INVALID')
+  }
+  return value
+}
+
+async function main(): Promise<void> {
+  const databaseUrl = required('DATABASE_URL')
+  const authCodeSecret = required('AUTH_CODE_SECRET')
+  const runtimeEnv = {
+    APP_ENV: appEnvironment(),
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    AUTH_CODE_SECRET: authCodeSecret,
+    EMAIL_FROM: process.env.EMAIL_FROM,
+    PUBLIC_WEB_URL: process.env.PUBLIC_WEB_URL,
+    EMAIL_ALLOWED_RECIPIENTS: process.env.EMAIL_ALLOWED_RECIPIENTS,
+  } as Env
+  // Fail before DB mutation when email delivery cannot be configured safely.
+  let emailConfig: ReturnType<typeof resolveEmailConfig>
+  try {
+    emailConfig = resolveEmailConfig(runtimeEnv)
+  } catch {
+    throw new BootstrapConfigError('EMAIL_CONFIG_INVALID')
+  }
+
+  const client = postgres(databaseUrl, { max: 1, fetch_types: false })
+  const db = drizzle(client, { schema })
+
+  try {
+    const result = await bootstrapAdmin(db, {
+      name: process.env.ADMIN_NAME?.trim() || 'Admin',
+      email: required('ADMIN_EMAIL'),
+      password: required('ADMIN_PASSWORD'),
+    }, {
+      authCodeSecret,
+      requestId: crypto.randomUUID(),
+    })
+
+    let delivery = 'NOT_REQUIRED'
+    if (result.outboxId) {
+      try {
+        const dispatched = await dispatchOutboxById(
+          db,
+          createResendSender(emailConfig),
+          runtimeEnv,
+          result.outboxId,
+        )
+        delivery = dispatched.status
+      } catch {
+        // Transaction is committed; cron/manual rerun can safely retry queued delivery.
+        delivery = 'QUEUED'
+      }
+    }
+    console.log(`admin bootstrap state=${result.state} delivery=${delivery}`)
+  } finally {
+    await client.end()
+  }
+}
+
+try {
+  await main()
+} catch (error) {
+  const code = error instanceof AdminBootstrapError || error instanceof BootstrapConfigError
+    ? error.message
+    : 'BOOTSTRAP_FAILED'
+  console.error(`admin bootstrap state=FAILED code=${code}`)
+  process.exitCode = 1
+}

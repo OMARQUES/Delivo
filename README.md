@@ -16,11 +16,30 @@ corepack enable && pnpm install
 cp apps/api/.dev.vars.example apps/api/.dev.vars  # contém JWT_SECRET local
 docker compose up -d postgres
 pnpm --filter @delivery/api db:migrate
-pnpm --filter @delivery/api db:seed  # cria admin — precisa ADMIN_EMAIL/ADMIN_PASSWORD no apps/api/.env
 pnpm dev:api     # http://localhost:8787 (docs em /docs)
 pnpm dev:web     # http://localhost:5173
 pnpm dev:driver  # http://localhost:5174
 ```
+
+### Bootstrap seguro do primeiro ADMIN
+
+Configure `DATABASE_URL`, `APP_ENV`, `ADMIN_EMAIL`, `ADMIN_NAME`, `AUTH_CODE_SECRET`,
+`RESEND_API_KEY`, `EMAIL_FROM`, `PUBLIC_WEB_URL` e, em staging, `EMAIL_ALLOWED_RECIPIENTS`
+no `apps/api/.env`. Forneça senha de 15–128 caracteres por variável temporária, evitando
+argumentos CLI e histórico do shell:
+
+```bash
+read -rsp 'Senha inicial do ADMIN: ' ADMIN_PASSWORD && printf '\n'
+export ADMIN_PASSWORD
+pnpm --filter @delivery/api db:seed
+unset ADMIN_PASSWORD
+```
+
+Comando cria somente um ADMIN `PENDING_EMAIL` e envia código de ativação. Confirmação
+não cria sessão; depois dela, faça login normal com email e senha. Reexecução com mesmo
+email/senha reenvia após cooldown de 60 segundos enquanto ativação estiver pendente;
+ADMIN já ativo vira no-op. Saída contém somente estado e status de entrega — nunca email,
+senha, código ou ID de verificação.
 
 Auth já funciona: registro/login por email ou telefone, guards por role em `/loja` e `/admin`. Admin cria lojas em `/admin/lojas` e aprova entregadores em `/admin/entregadores`. Cardápio da loja em `/loja/cardapio`; import CSV: `POST /admin/stores/:id/catalog/import` (text/csv). Fluxo de pedido completo: cliente pede, loja gerencia em `/loja/pedidos`, solicita entregador, e o app driver aceita/coleta/entrega.
 
