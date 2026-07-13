@@ -37,6 +37,43 @@ export async function closeTestDb() {
   await client.end()
 }
 
+function collectTextValues(value: unknown, output: string[]) {
+  if (typeof value === 'string') {
+    output.push(value)
+    return
+  }
+  if (value instanceof Date || value === null || value === undefined) return
+  if (Array.isArray(value)) {
+    for (const item of value) collectTextValues(item, output)
+    return
+  }
+  if (typeof value === 'object') {
+    for (const [key, nested] of Object.entries(value)) {
+      output.push(key)
+      collectTextValues(nested, output)
+    }
+  }
+}
+
+/** All persisted identity text/JSON values, for raw-secret regression scans. */
+export async function identityPersistenceTextValues(): Promise<string[]> {
+  const rowSets = await Promise.all([
+    testDb.select().from(schema.users),
+    testDb.select().from(schema.authProviders),
+    testDb.select().from(schema.pendingRegistrations),
+    testDb.select().from(schema.authChallenges),
+    testDb.select().from(schema.authActionTickets),
+    testDb.select().from(schema.emailOutbox),
+    testDb.select().from(schema.identitySecurityEvents),
+    testDb.select().from(schema.rateLimitBuckets),
+    testDb.select().from(schema.refreshTokens),
+    testDb.select().from(schema.stores),
+  ])
+  const values: string[] = []
+  collectTextValues(rowSets, values)
+  return values
+}
+
 export async function createTestSession(
   principal: { sub: string; role: 'CUSTOMER' | 'STORE' | 'DRIVER' | 'ADMIN'; name: string },
   secret: string,

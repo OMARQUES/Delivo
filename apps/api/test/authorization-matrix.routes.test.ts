@@ -19,16 +19,18 @@ const env = {
 const ID = '00000000-0000-4000-8000-000000000000'
 const STORE_SLUG = 'loja-matriz'
 
-type Role = 'ANON' | 'CUSTOMER' | 'DRIVER' | 'STORE' | 'ADMIN'
-type Allowed = Role | 'ANY'
+type Actor = 'ANON' | 'CUSTOMER' | 'DRIVER' | 'STORE_A' | 'STORE_B' | 'ADMIN'
+type Allowed = 'CUSTOMER' | 'DRIVER' | 'STORE' | 'ADMIN' | 'ANY'
 type Entry = { m: string; p: string; role: Allowed }
 
-const AUTHENTICATED: Role[] = ['CUSTOMER', 'DRIVER', 'STORE', 'ADMIN']
-let tokens: Record<Role, string | null>
+const ACTORS: Actor[] = ['ANON', 'CUSTOMER', 'DRIVER', 'STORE_A', 'STORE_B', 'ADMIN']
+const AUTHENTICATED: Actor[] = ACTORS.filter((actor) => actor !== 'ANON')
+let tokens: Record<Actor, string | null>
 
 const anyAuthenticated = ['GET /auth/me', 'POST /auth/logout', 'POST /auth/logout-all']
 
 const customer = [
+  'PATCH /auth/me/contact',
   'GET /me/addresses',
   'POST /me/addresses',
   'DELETE /me/addresses/{id}',
@@ -143,6 +145,7 @@ const admin = [
   'GET /admin/returns',
   'POST /admin/orders/{id}/confirm-return',
   'POST /admin/stores',
+  'POST /admin/stores/{id}/activation/resend',
   'GET /admin/stores',
   'PATCH /admin/stores/{id}/security-status',
   'PATCH /admin/stores/{id}/commission',
@@ -173,8 +176,8 @@ function fill(path: string) {
   return path.replace(/\{[^}]+\}/g, ID)
 }
 
-function call(method: string, path: string, role: Role) {
-  const token = tokens[role]
+function call(method: string, path: string, actor: Actor) {
+  const token = tokens[actor]
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
   const init: RequestInit = { method, headers }
@@ -185,19 +188,31 @@ function call(method: string, path: string, role: Role) {
   return app.request(fill(path), init, env)
 }
 
+function actorAllowed(role: Allowed, actor: Actor) {
+  if (role === 'ANY') return actor !== 'ANON'
+  if (role === 'STORE') return actor === 'STORE_A' || actor === 'STORE_B'
+  return role === actor
+}
+
 beforeAll(migrateTestDb)
 beforeEach(async () => {
   await truncateAll()
-  const store = await createActiveStoreTestFixture({
+  const storeA = await createActiveStoreTestFixture({
     name: 'Loja Matriz', slug: STORE_SLUG, category: 'PIZZARIA', phone: '4433334444',
     city: 'Cidade Exemplo', addressText: 'Rua Central, 100', lat: -23.5, lng: -51.9,
     owner: { name: 'Dono', email: 'dono-matriz@email.com', password: 'senha123' },
+  })
+  const storeB = await createActiveStoreTestFixture({
+    name: 'Loja B', slug: 'loja-matriz-b', category: 'OUTROS', phone: '4455556666',
+    city: 'Cidade Exemplo', addressText: 'Rua B, 200', lat: -23.51, lng: -51.91,
+    owner: { name: 'Dona B', email: 'dona-b@email.com', password: 'senha123' },
   })
   tokens = {
     ANON: null,
     CUSTOMER: await createTestSession({ sub: crypto.randomUUID(), role: 'CUSTOMER', name: 'Cliente' }, env.JWT_SECRET),
     DRIVER: await createTestSession({ sub: crypto.randomUUID(), role: 'DRIVER', name: 'Entregador' }, env.JWT_SECRET),
-    STORE: await createTestSession({ sub: store.ownerUserId, role: 'STORE', name: 'Dono' }, env.JWT_SECRET),
+    STORE_A: await createTestSession({ sub: storeA.ownerUserId, role: 'STORE', name: 'Dono' }, env.JWT_SECRET),
+    STORE_B: await createTestSession({ sub: storeB.ownerUserId, role: 'STORE', name: 'Dona B' }, env.JWT_SECRET),
     ADMIN: await createTestSession({ sub: crypto.randomUUID(), role: 'ADMIN', name: 'Admin' }, env.JWT_SECRET),
   }
 })
@@ -207,11 +222,11 @@ describe('authorization matrix — every protected route', () => {
   for (const { m, p, role } of MANIFEST) {
     it(`${m} ${p} (allowed: ${role})`, async () => {
       // ANON is always rejected with 401.
-      expect((await call(m, p, 'ANON' as Role)).status).toBe(401)
+      expect((await call(m, p, 'ANON')).status).toBe(401)
 
       for (const actor of AUTHENTICATED) {
         const status = (await call(m, p, actor)).status
-        const isAllowed = role === 'ANY' || role === actor
+        const isAllowed = actorAllowed(role, actor)
         if (isAllowed) {
           // Passed authorization: business validation may still 400/404/409, never 401/403.
           expect(status, `${m} ${p} as ${actor} must pass authz`).not.toBe(401)
@@ -219,6 +234,30 @@ describe('authorization matrix — every protected route', () => {
         } else {
           expect(status, `${m} ${p} as ${actor} must be forbidden`).toBe(403)
         }
+      }
+    })
+  }
+})
+
+describe('public auth allowlist — authentication never changes reachability', () => {
+  const publicAuthPosts = [
+    '/auth/register',
+    '/auth/verification/confirm',
+    '/auth/verification/resend',
+    '/auth/recovery/start',
+    '/auth/recovery/verify',
+    '/auth/recovery/reset',
+    '/auth/password-setup',
+    '/auth/login',
+    '/auth/refresh',
+  ]
+
+  for (const path of publicAuthPosts) {
+    it(`POST ${path} is public for every principal`, async () => {
+      for (const actor of ACTORS) {
+        const status = (await call('POST', path, actor)).status
+        expect(status, `${path} as ${actor} must remain public`).not.toBe(401)
+        expect(status, `${path} as ${actor} must remain public`).not.toBe(403)
       }
     })
   }

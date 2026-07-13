@@ -8,7 +8,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { orders, users } from '../src/db/schema'
+import { orders, stores, users } from '../src/db/schema'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -68,6 +68,33 @@ async function seedOrderFor(storeId: string, storeSlug: string) {
   return { customer, addressId: addr.id, order }
 }
 
+async function seedPendingStore(n: string) {
+  const [owner] = await testDb.insert(users).values({
+    name: `Dono pendente ${n}`,
+    email: `pendente-${n}@email.com`,
+    role: 'STORE',
+    status: 'PENDING_EMAIL',
+    emailVerifiedAt: null,
+    registrationSource: 'ADMIN_PROVISIONED',
+  }).returning()
+  if (!owner) throw new Error('pending owner fixture was not created')
+  const [store] = await testDb.insert(stores).values({
+    ownerUserId: owner.id,
+    name: `Loja pendente ${n}`,
+    slug: `loja-pendente-${n}`,
+    category: 'OUTROS',
+    phone: '44999990000',
+    city: 'C',
+    addressText: 'Rua pendente, 1',
+    lat: -23.55,
+    lng: -51.9,
+    securityStatus: 'PENDING_ACTIVATION',
+  }).returning()
+  if (!store) throw new Error('pending store fixture was not created')
+  const token = await createTestSession({ sub: owner.id, role: 'STORE', name: owner.name }, env.JWT_SECRET)
+  return { owner, store, token }
+}
+
 beforeAll(migrateTestDb)
 beforeEach(truncateAll)
 afterAll(closeTestDb)
@@ -78,6 +105,30 @@ afterAll(closeTestDb)
 const blocked = (status: number) => expect([404, 409]).toContain(status)
 
 describe('cross-tenant isolation — foreign resources are inaccessible', () => {
+  it('keeps pending stores private and denies their owner plus foreign stores', async () => {
+    const a = await seedOpenStore('a')
+    const pending = await seedPendingStore('b')
+
+    const publicList = await req('/stores', null)
+    expect(publicList.status).toBe(200)
+    expect(JSON.stringify(await publicList.json())).not.toContain(pending.store.slug)
+    expect((await req(`/stores/${pending.store.slug}`, null)).status).toBe(404)
+    expect((await req(`/stores/${pending.store.slug}/menu`, null)).status).toBe(404)
+
+    expect((await req('/store/me', pending.token)).status).toBe(403)
+    expect((await req('/store/me/catalog', pending.token)).status).toBe(403)
+
+    const foreignResend = await req(`/admin/stores/${pending.store.id}/activation/resend`, a.token, {
+      method: 'POST', body: '{}',
+    })
+    const unknownResend = await req(`/admin/stores/${crypto.randomUUID()}/activation/resend`, a.token, {
+      method: 'POST', body: '{}',
+    })
+    expect(foreignResend.status).toBe(403)
+    expect(await foreignResend.json()).toEqual(await unknownResend.json())
+    expect((await req('/admin/stores', a.token)).status).toBe(403)
+  })
+
   it('store B cannot read or mutate store A catalog or orders', async () => {
     const a = await seedOpenStore('a')
     const b = await seedOpenStore('b')
@@ -153,5 +204,27 @@ describe('security-event transitions — old credentials fail immediately', () =
     expect((await req('/store/me', ownerSession)).status).toBe(200)
     await setStoreSecurityStatus(testDb, store.id, 'SUSPENDED')
     forbidden((await req('/store/me', ownerSession)).status)
+  })
+
+  it('rejects forged sessions for every pending or blocked principal class', async () => {
+    const principals = [
+      { role: 'CUSTOMER' as const, status: 'BLOCKED' as const, verified: true, path: '/auth/me' },
+      { role: 'DRIVER' as const, status: 'PENDING_APPROVAL' as const, verified: true, path: '/driver/me' },
+      { role: 'ADMIN' as const, status: 'PENDING_EMAIL' as const, verified: false, path: '/admin/stores' },
+    ]
+
+    for (const [index, principal] of principals.entries()) {
+      const [user] = await testDb.insert(users).values({
+        name: `Principal ${index}`,
+        email: `principal-${index}@email.com`,
+        role: principal.role,
+        status: principal.status,
+        emailVerifiedAt: principal.verified ? new Date() : null,
+      }).returning()
+      if (!user) throw new Error('principal fixture was not created')
+      const token = await createTestSession({ sub: user.id, role: principal.role, name: user.name }, env.JWT_SECRET)
+
+      expect((await req(principal.path, token)).status, `${principal.role}/${principal.status}`).toBe(403)
+    }
   })
 })
