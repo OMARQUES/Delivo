@@ -40,7 +40,16 @@ import { app } from '../src/app'
 import { authMiddleware, requireRole } from '../src/middleware/auth'
 import { signAccessToken } from '../src/lib/tokens'
 import { errorHandler } from '../src/middleware/error-handler'
-import { authChallenges, authProviders, pendingRegistrations, refreshTokens, users } from '../src/db/schema'
+import { EmailDeliveryError } from '../src/email/resend-sender'
+import {
+  authActionTickets,
+  authChallenges,
+  authProviders,
+  emailOutbox,
+  pendingRegistrations,
+  refreshTokens,
+  users,
+} from '../src/db/schema'
 import { PostgresRateLimiter } from '../src/security/rate-limit'
 import { POLICIES } from '../src/security/rate-limit-policies'
 import { SecurityHttpError, TURNSTILE_INVALID_MESSAGE } from '../src/security/http'
@@ -152,6 +161,32 @@ async function challengeAndCode(verificationId: string) {
     purpose: challenge.purpose,
   })
   return { challenge, code }
+}
+
+async function recoveryAndCode(email: string) {
+  const started = await post('/auth/recovery/start', {
+    email,
+    turnstileToken: 'recovery-turnstile',
+  })
+  const flow = await started.json() as { recoveryId: string; expiresAt: string }
+  const code = await deriveAuthCode(env.AUTH_CODE_SECRET, {
+    challengeId: flow.recoveryId,
+    purpose: 'PASSWORD_RECOVERY',
+  })
+  return { started, flow, code }
+}
+
+async function recoveryTicket(email: string) {
+  const recovery = await recoveryAndCode(email)
+  const verified = await post('/auth/recovery/verify', {
+    recoveryId: recovery.flow.recoveryId,
+    code: recovery.code,
+  })
+  return {
+    ...recovery,
+    verified,
+    ticket: await verified.clone().json() as { resetTicket: string; expiresAt: string },
+  }
 }
 
 describe('POST /auth/register', () => {
@@ -302,6 +337,190 @@ describe('POST /auth/verification/*', () => {
     const { challenge: replacement } = await challengeAndCode(flow.verificationId)
     expect(replacement.id).not.toBe(oldChallenge.id)
     expect(resent.headers.get('cache-control')).toBe('no-store')
+  })
+})
+
+describe('POST /auth/recovery/*', () => {
+  it('requires Turnstile at start before identity work', async () => {
+    const response = await post('/auth/recovery/start', { email: 'missing@example.test' })
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ error: 'Validation failed' })
+    expect(verifyTurnstileMock).not.toHaveBeenCalled()
+    expect(await testDb.select().from(authChallenges)).toHaveLength(0)
+    expect(await testDb.select().from(emailOutbox)).toHaveLength(0)
+  })
+
+  it('returns the same detached 202 envelope for eligible and synthetic flows', async () => {
+    await seedAccount({ email: 'eligible-recovery@example.test' })
+    await seedAccount({ email: 'blocked-recovery@example.test', status: 'BLOCKED' })
+
+    const responses = await Promise.all([
+      post('/auth/recovery/start', {
+        email: 'eligible-recovery@example.test',
+        turnstileToken: 'recovery-turnstile',
+      }),
+      post('/auth/recovery/start', {
+        email: 'blocked-recovery@example.test',
+        turnstileToken: 'recovery-turnstile',
+      }),
+      post('/auth/recovery/start', {
+        email: 'unknown-recovery@example.test',
+        turnstileToken: 'recovery-turnstile',
+      }),
+    ])
+
+    for (const response of responses) {
+      expect(response.status).toBe(202)
+      expect(Object.keys(await response.json() as object).sort()).toEqual(['expiresAt', 'recoveryId'])
+      expect(response.headers.get('cache-control')).toBe('no-store')
+    }
+    expect(verifyTurnstileMock).toHaveBeenCalledTimes(3)
+    expect(sendEmailMock).toHaveBeenCalledTimes(1)
+    expect(await testDb.select().from(authChallenges)).toHaveLength(1)
+  })
+
+  it('fails closed on invalid email config only after abuse checks and before flow creation', async () => {
+    await seedAccount({ email: 'config-recovery@example.test' })
+
+    const response = await postWithEnv('/auth/recovery/start', {
+      email: 'config-recovery@example.test',
+      turnstileToken: 'recovery-turnstile',
+    }, { RESEND_API_KEY: undefined })
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: 'Serviço de email temporariamente indisponível.',
+      code: 'EMAIL_DELIVERY_UNAVAILABLE',
+    })
+    expect(verifyTurnstileMock).toHaveBeenCalledTimes(1)
+    expect(await testDb.select().from(authChallenges)).toHaveLength(0)
+  })
+
+  it('dispatches only after commit and keeps 202 generic when the provider fails', async () => {
+    await seedAccount({ email: 'dispatch-recovery@example.test' })
+    sendEmailMock.mockImplementationOnce(async () => {
+      expect(await testDb.select().from(authChallenges)).toHaveLength(1)
+      expect(await testDb.select().from(emailOutbox)).toHaveLength(1)
+      throw new EmailDeliveryError('PROVIDER_UNAVAILABLE', 'provider-secret-detail')
+    })
+
+    const known = await post('/auth/recovery/start', {
+      email: 'dispatch-recovery@example.test',
+      turnstileToken: 'recovery-turnstile',
+    })
+    const unknown = await post('/auth/recovery/start', {
+      email: 'no-account@example.test',
+      turnstileToken: 'recovery-turnstile',
+    })
+
+    expect(known.status).toBe(202)
+    expect(unknown.status).toBe(202)
+    expect(Object.keys(await known.json() as object).sort()).toEqual(['expiresAt', 'recoveryId'])
+    expect(Object.keys(await unknown.json() as object).sort()).toEqual(['expiresAt', 'recoveryId'])
+    expect(sendEmailMock).toHaveBeenCalledTimes(1)
+    const [queued] = await testDb.select().from(emailOutbox)
+    expect(queued).toMatchObject({ status: 'PENDING', failureClass: 'PROVIDER_UNAVAILABLE', attemptCount: 1 })
+  })
+
+  it('verifies a correct code into a reset ticket only', async () => {
+    await seedAccount({ email: 'verify-recovery@example.test' })
+    const { verified } = await recoveryTicket('verify-recovery@example.test')
+
+    expect(verified.status).toBe(200)
+    const body = await verified.json() as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(['expiresAt', 'resetTicket'])
+    expect(body.resetTicket).toEqual(expect.stringMatching(/^[A-Za-z0-9_-]{43}$/))
+    expect(body).not.toHaveProperty('user')
+    expect(body).not.toHaveProperty('accessToken')
+    expect(verified.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('maps synthetic, wrong, and expired verification to one stable code', async () => {
+    const synthetic = await recoveryAndCode('synthetic-recovery@example.test')
+    const syntheticResult = await post('/auth/recovery/verify', {
+      recoveryId: synthetic.flow.recoveryId,
+      code: synthetic.code,
+    })
+    const genericError = {
+      error: 'Código inválido ou expirado.',
+      code: 'CODE_INVALID_OR_EXPIRED',
+    }
+    expect(syntheticResult.status).toBe(400)
+    expect(await syntheticResult.json()).toEqual(genericError)
+
+    await seedAccount({ email: 'wrong-recovery@example.test' })
+    const real = await recoveryAndCode('wrong-recovery@example.test')
+    const wrong = await post('/auth/recovery/verify', {
+      recoveryId: real.flow.recoveryId,
+      code: real.code === '999999' ? '000000' : '999999',
+    })
+    expect(wrong.status).toBe(400)
+    expect(await wrong.json()).toEqual(genericError)
+
+    await testDb.update(authChallenges).set({ expiresAt: new Date(0) }).where(eq(authChallenges.id, real.flow.recoveryId))
+    const expired = await post('/auth/recovery/verify', {
+      recoveryId: real.flow.recoveryId,
+      code: real.code,
+    })
+    expect(expired.status).toBe(400)
+    expect(await expired.json()).toEqual(genericError)
+  })
+
+  it('resets with strict ticket-only identity input, returns 204, and rejects replay generically', async () => {
+    const user = await seedAccount({ email: 'reset-route@example.test', password: 'old route password' })
+    const { ticket } = await recoveryTicket(user.email)
+
+    const selectorAttack = await post('/auth/recovery/reset', {
+      resetTicket: ticket.resetTicket,
+      newPassword: 'new route password',
+      email: 'victim@example.test',
+      userId: crypto.randomUUID(),
+    })
+    expect(selectorAttack.status).toBe(400)
+    const [before] = await testDb.select().from(authActionTickets)
+    expect(before?.consumedAt).toBeNull()
+
+    const reset = await post('/auth/recovery/reset', {
+      resetTicket: ticket.resetTicket,
+      newPassword: 'new route password',
+    })
+    expect(reset.status).toBe(204)
+    expect(await reset.text()).toBe('')
+    expect(reset.headers.get('cache-control')).toBe('no-store')
+
+    const replay = await post('/auth/recovery/reset', {
+      resetTicket: ticket.resetTicket,
+      newPassword: 'another route password',
+    })
+    expect(replay.status).toBe(400)
+    expect(await replay.json()).toEqual({
+      error: 'Fluxo inválido ou expirado.',
+      code: 'FLOW_INVALID_OR_EXPIRED',
+    })
+  })
+
+  it('returns stable policy rejection without consuming the reset ticket', async () => {
+    const user = await seedAccount({
+      email: 'driver-policy-recovery@example.test',
+      role: 'DRIVER',
+      status: 'PENDING_APPROVAL',
+      password: 'safe existing driver password',
+    })
+    const { ticket } = await recoveryTicket(user.email)
+
+    const response = await post('/auth/recovery/reset', {
+      resetTicket: ticket.resetTicket,
+      newPassword: 'shortpass',
+    })
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: 'A senha não atende à política de segurança.',
+      code: 'PASSWORD_POLICY_REJECTED',
+    })
+    const [stored] = await testDb.select().from(authActionTickets)
+    expect(stored?.consumedAt).toBeNull()
   })
 })
 

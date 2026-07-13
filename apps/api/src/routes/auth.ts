@@ -5,8 +5,11 @@ import {
   LoginSchema,
   RefreshSchema,
   RegisterSchema,
+  ResetPasswordSchema,
   ResendVerificationSchema,
+  StartRecoverySchema,
   UpdateCustomerContactSchema,
+  VerifyRecoverySchema,
 } from '@delivery/shared/schemas'
 import type { Context } from 'hono'
 import { and, eq } from 'drizzle-orm'
@@ -18,6 +21,12 @@ import { resolveEmailConfig } from '../email/config'
 import { dispatchOutboxById } from '../email/outbox.service'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { AuthError, loginUser, rotateRefreshToken } from '../services/auth.service'
+import {
+  PasswordRecoveryError,
+  resetPassword,
+  startPasswordRecovery,
+  verifyPasswordRecovery,
+} from '../services/password-recovery.service'
 import {
   confirmRegistration,
   RegistrationError,
@@ -34,11 +43,18 @@ import {
   protectRegistration,
   recordLoginFailure,
 } from '../security/auth-abuse'
-import { protectCodeAttempt, protectCodeSend } from '../security/identity-abuse'
+import {
+  protectCodeAttempt,
+  protectCodeSend,
+  protectRecoveryStart,
+  protectRecoveryVerify,
+  protectTicketUse,
+} from '../security/identity-abuse'
 import {
   CODE_INVALID_OR_EXPIRED_MESSAGE,
   EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
   FLOW_INVALID_OR_EXPIRED_MESSAGE,
+  PASSWORD_POLICY_REJECTED_MESSAGE,
   SecurityHttpError,
 } from '../security/http'
 
@@ -66,6 +82,14 @@ const ConfirmationShape = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('CUSTOMER_SESSION'), user: UserShape, accessToken: z.string(), refreshToken: z.string() }),
   z.object({ kind: z.literal('DRIVER_PENDING_APPROVAL'), user: UserShape }),
 ])
+const RecoveryFlowShape = z.object({
+  recoveryId: z.uuid(),
+  expiresAt: z.iso.datetime(),
+})
+const ResetTicketShape = z.object({
+  resetTicket: z.string(),
+  expiresAt: z.iso.datetime(),
+})
 
 function rethrow(e: unknown): never {
   if (e instanceof AuthError) throw new HTTPException(e.status, { message: e.message })
@@ -73,6 +97,14 @@ function rethrow(e: unknown): never {
     const message = e.code === 'CODE_INVALID_OR_EXPIRED'
       ? CODE_INVALID_OR_EXPIRED_MESSAGE
       : FLOW_INVALID_OR_EXPIRED_MESSAGE
+    throw new SecurityHttpError(400, e.code, message)
+  }
+  if (e instanceof PasswordRecoveryError) {
+    const message = e.code === 'CODE_INVALID_OR_EXPIRED'
+      ? CODE_INVALID_OR_EXPIRED_MESSAGE
+      : e.code === 'PASSWORD_POLICY_REJECTED'
+        ? PASSWORD_POLICY_REJECTED_MESSAGE
+        : FLOW_INVALID_OR_EXPIRED_MESSAGE
     throw new SecurityHttpError(400, e.code, message)
   }
   throw e
@@ -133,6 +165,84 @@ authRoutes.openapi(
       .returning({ phone: users.phone })
     if (!updated) throw new HTTPException(404, { message: 'Conta não encontrada' })
     return c.json({ phone: updated.phone }, 200)
+  },
+)
+
+authRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/auth/recovery/start',
+    request: { body: { content: { 'application/json': { schema: StartRecoverySchema } } } },
+    responses: {
+      202: {
+        description: 'Recuperação iniciada',
+        content: { 'application/json': { schema: RecoveryFlowShape } },
+      },
+    },
+  }),
+  async (c) => {
+    const input = c.req.valid('json')
+    await protectRecoveryStart(c, input.email, input.turnstileToken)
+    const email = emailDelivery(c)
+    const started = await startPasswordRecovery(
+      c.get('db'),
+      input.email,
+      identityContext(c, email.authCodeSecret),
+    ).catch(rethrow)
+    if (started.outboxId) {
+      await dispatchOutboxById(
+        c.get('db'),
+        createResendSender(email.config),
+        c.env,
+        started.outboxId,
+      ).catch(() => undefined)
+    }
+    return c.json(started.response, 202)
+  },
+)
+
+authRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/auth/recovery/verify',
+    request: { body: { content: { 'application/json': { schema: VerifyRecoverySchema } } } },
+    responses: {
+      200: {
+        description: 'Código confirmado',
+        content: { 'application/json': { schema: ResetTicketShape } },
+      },
+    },
+  }),
+  async (c) => {
+    const input = c.req.valid('json')
+    await protectRecoveryVerify(c, input.recoveryId)
+    const result = await verifyPasswordRecovery(
+      c.get('db'),
+      input.recoveryId,
+      input.code,
+      identityContext(c, requireAuthCodeSecret(c)),
+    ).catch(rethrow)
+    return c.json(result, 200)
+  },
+)
+
+authRoutes.openapi(
+  createRoute({
+    method: 'post',
+    path: '/auth/recovery/reset',
+    request: { body: { content: { 'application/json': { schema: ResetPasswordSchema } } } },
+    responses: { 204: { description: 'Senha alterada' } },
+  }),
+  async (c) => {
+    const input = c.req.valid('json')
+    await protectTicketUse(c, input.resetTicket)
+    await resetPassword(
+      c.get('db'),
+      input.resetTicket,
+      input.newPassword,
+      identityContext(c, requireAuthCodeSecret(c)),
+    ).catch(rethrow)
+    return c.body(null, 204)
   },
 )
 
