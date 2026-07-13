@@ -1,6 +1,7 @@
 import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { drivers, refreshTokens, stores, users } from '../db/schema'
+import type { DbTx } from '../db/types'
 import type { AccessTokenPayload } from '../lib/tokens'
 
 export type LivePrincipal = {
@@ -84,19 +85,22 @@ export async function revokeSessionFamily(db: Db, familyId: string, now = new Da
     .where(and(eq(refreshTokens.familyId, familyId), isNull(refreshTokens.revokedAt)))
 }
 
+export async function revokeAllSessionsInTx(tx: DbTx, userId: string, now: Date): Promise<number> {
+  const [user] = await tx
+    .update(users)
+    .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
+    .where(eq(users.id, userId))
+    .returning({ tokenVersion: users.tokenVersion })
+  if (!user) throw new PrincipalError('INVALID', 401)
+  await tx
+    .update(refreshTokens)
+    .set({ revokedAt: now })
+    .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)))
+  return user.tokenVersion
+}
+
 export async function revokeAllSessions(db: Db, userId: string, now = new Date()) {
-  await db.transaction(async (tx) => {
-    const [user] = await tx
-      .update(users)
-      .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
-      .where(eq(users.id, userId))
-      .returning({ id: users.id })
-    if (!user) throw new PrincipalError('INVALID', 401)
-    await tx
-      .update(refreshTokens)
-      .set({ revokedAt: now })
-      .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)))
-  })
+  await db.transaction((tx) => revokeAllSessionsInTx(tx, userId, now))
 }
 
 export async function setDriverAccountStatus(

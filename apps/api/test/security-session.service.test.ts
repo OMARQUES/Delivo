@@ -2,7 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { signAccessToken } from '../src/lib/tokens'
 import { refreshTokens, users } from '../src/db/schema'
-import { resolveLivePrincipal } from '../src/services/security-session.service'
+import {
+  resolveLivePrincipal,
+  revokeAllSessions,
+  revokeAllSessionsInTx,
+} from '../src/services/security-session.service'
 import { closeTestDb, migrateTestDb, testDb, truncateAll } from './helpers/test-db'
 
 const secret = 'test-secret'
@@ -66,5 +70,61 @@ describe('resolveLivePrincipal', () => {
       status: 403,
       code: 'ACCOUNT_BLOCKED',
     })
+  })
+})
+
+describe('session revocation', () => {
+  it('increments tokenVersion once and revokes every live family in the caller transaction', async () => {
+    const { user } = await principalFixture()
+    const alreadyRevokedAt = new Date(now.getTime() - 1_000)
+    await testDb.insert(refreshTokens).values([
+      {
+        userId: user.id,
+        familyId: crypto.randomUUID(),
+        tokenHash: `live-${crypto.randomUUID()}`,
+        expiresAt: new Date(now.getTime() + 60_000),
+      },
+      {
+        userId: user.id,
+        familyId: crypto.randomUUID(),
+        tokenHash: `revoked-${crypto.randomUUID()}`,
+        expiresAt: new Date(now.getTime() + 60_000),
+        revokedAt: alreadyRevokedAt,
+      },
+    ])
+
+    const nextVersion = await testDb.transaction((tx) => revokeAllSessionsInTx(tx, user.id, now))
+
+    expect(nextVersion).toBe(1)
+    const [updated] = await testDb.select().from(users).where(eq(users.id, user.id))
+    expect(updated?.tokenVersion).toBe(1)
+    const tokens = await testDb.select().from(refreshTokens).where(eq(refreshTokens.userId, user.id))
+    expect(tokens.filter((token) => token.revokedAt === null)).toHaveLength(0)
+    expect(tokens.find((token) => token.revokedAt?.getTime() === alreadyRevokedAt.getTime())).toBeTruthy()
+  })
+
+  it('rolls back version and revocations when later work in the outer transaction fails', async () => {
+    const { user } = await principalFixture()
+
+    await expect(testDb.transaction(async (tx) => {
+      await revokeAllSessionsInTx(tx, user.id, now)
+      throw new Error('later mutation failed')
+    })).rejects.toThrow('later mutation failed')
+
+    const [unchanged] = await testDb.select().from(users).where(eq(users.id, user.id))
+    expect(unchanged?.tokenVersion).toBe(0)
+    const tokens = await testDb.select().from(refreshTokens).where(eq(refreshTokens.userId, user.id))
+    expect(tokens.every((token) => token.revokedAt === null)).toBe(true)
+  })
+
+  it('keeps the public helper behavior while using the transactional primitive', async () => {
+    const { user } = await principalFixture()
+
+    await revokeAllSessions(testDb, user.id, now)
+
+    const [updated] = await testDb.select().from(users).where(eq(users.id, user.id))
+    expect(updated?.tokenVersion).toBe(1)
+    const tokens = await testDb.select().from(refreshTokens).where(eq(refreshTokens.userId, user.id))
+    expect(tokens.every((token) => token.revokedAt?.getTime() === now.getTime())).toBe(true)
   })
 })
