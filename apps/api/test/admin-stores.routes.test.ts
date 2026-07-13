@@ -107,7 +107,7 @@ describe('POST /admin/stores', () => {
     }, token)
     expect(password.status).toBe(400)
 
-    const { RESEND_API_KEY: _, ...missingEmailEnv } = env
+    const missingEmailEnv = { ...env, RESEND_API_KEY: undefined }
     const missingConfig = await app.request('/admin/stores', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
