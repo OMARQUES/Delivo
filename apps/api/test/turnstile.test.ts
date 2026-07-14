@@ -79,6 +79,20 @@ describe('CloudflareTurnstileVerifier', () => {
     }))).not.toContain('token-2')
   })
 
+  it('calls the runtime fetch with the global execution context', async () => {
+    const runtimeFetch = vi.fn(function (this: unknown) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation')
+      return Promise.resolve(jsonResponse(success()))
+    })
+
+    await expect(verifier(runtimeFetch as typeof fetch).verify({
+      token: 'token',
+      remoteIp: '127.0.0.1',
+      action: 'register',
+      now: NOW,
+    })).resolves.toBeUndefined()
+  })
+
   it('accepts documented provider extensions without weakening challenge checks', async () => {
     const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse(success({
       cdata: 'provider-owned-custom-data',

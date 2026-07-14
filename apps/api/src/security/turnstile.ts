@@ -89,7 +89,7 @@ export class CloudflareTurnstileVerifier implements TurnstileVerifier {
         remoteip: input.remoteIp,
         idempotency_key: crypto.randomUUID(),
       })
-      response = await this.fetchImpl(SITEVERIFY_URL, {
+      response = await this.fetchImpl.call(globalThis, SITEVERIFY_URL, {
         method: 'POST',
         body,
         signal: controller.signal,
