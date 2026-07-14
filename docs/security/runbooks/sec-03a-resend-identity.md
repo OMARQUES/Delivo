@@ -4,11 +4,13 @@
 
 Operar cadastro por email, verificação, recuperação de senha, ativação de STORE e bootstrap de ADMIN sem expor senha, código, ticket, token ou credencial de provedor.
 
+**Status em 2026-07-14:** cadastro e recuperação de CUSTOMER foram validados no staging privado. A evidência sanitizada está no [runbook de private workers.dev staging](private-workers-staging.md). STORE e produção continuam bloqueados.
+
 Este runbook não autoriza produção. Antes da promoção ainda são obrigatórios:
 
 - gate local final da Stage 4, Task 9 — concluído; evidência ao fim deste documento;
-- staging privado em `workers.dev`, protegido por Cloudflare Access;
-- smoke com um único destinatário permitido;
+- staging privado em `workers.dev`, protegido por Cloudflare Access — concluído para CUSTOMER/recovery;
+- smoke com um único destinatário permitido — concluído para CUSTOMER/recovery;
 - domínio próprio e DNS de envio verificado no Resend para produção.
 
 Google OAuth (SEC-03B), MFA (SEC-17), modernização do hash de senha e webhooks de bounce/complaint/suppression permanecem fora do SEC-03A.
@@ -269,3 +271,7 @@ resend_message_ids: NOT APPLICABLE
 ```
 
 O seed local usou valores fictícios e destinatário bloqueado pela allowlist da aplicação; nenhuma chamada externa ao Resend ocorreu. Esta evidência fecha somente o gate de código. Não substitui o smoke privado com Resend/Turnstile reais e não autoriza produção.
+
+## Evidência privada de staging — 2026-07-14
+
+Cadastro/verificação de CUSTOMER, Turnstile, recuperação com revogação de sessão, allowlist de destinatário, CORS, Access, Hyperdrive e R2 passaram no staging privado. Evidência operacional contém apenas PASS/FAIL e identificadores não secretos no [runbook de staging](private-workers-staging.md). STORE e produção permanecem bloqueados.
