@@ -33,12 +33,14 @@ export type CloudflareTurnstileVerifierOptions = Readonly<{
 }>
 
 type SiteverifyResponse = z.infer<typeof SiteverifyResponseSchema>
+type TurnstileUnavailableReason = 'config' | 'transport' | 'http' | 'json' | 'schema' | 'provider'
 
 function invalid(): never {
   throw new SecurityHttpError(403, 'TURNSTILE_INVALID', TURNSTILE_INVALID_MESSAGE)
 }
 
-function unavailable(): never {
+function unavailable(reason: TurnstileUnavailableReason): never {
+  console.warn('turnstile unavailable', { reason })
   throw new SecurityHttpError(503, 'SECURITY_CHECK_UNAVAILABLE', SECURITY_CHECK_UNAVAILABLE_MESSAGE)
 }
 
@@ -59,7 +61,7 @@ function assertProviderSuccess(response: SiteverifyResponse): void {
   if (response.success) return
   const codes = response['error-codes'] ?? []
   if (codes.some((code) => INVALID_PROVIDER_CODES.has(code))) invalid()
-  unavailable()
+  unavailable('provider')
 }
 
 export class CloudflareTurnstileVerifier implements TurnstileVerifier {
@@ -93,22 +95,22 @@ export class CloudflareTurnstileVerifier implements TurnstileVerifier {
         signal: controller.signal,
       })
     } catch {
-      unavailable()
+      unavailable('transport')
     } finally {
       clearTimeout(timeout)
     }
 
-    if (!response.ok) unavailable()
+    if (!response.ok) unavailable('http')
 
     let raw: unknown
     try {
       raw = await response.json()
     } catch {
-      unavailable()
+      unavailable('json')
     }
 
     const parsed = SiteverifyResponseSchema.safeParse(raw)
-    if (!parsed.success) unavailable()
+    if (!parsed.success) unavailable('schema')
 
     const siteverify = parsed.data
     if (this.environment === 'local' && isProviderTestingResponse(siteverify)) return
@@ -130,7 +132,7 @@ export function createTurnstileVerifier(env: Env): TurnstileVerifier {
     .split(',')
     .map((hostname) => hostname.trim())
     .filter(Boolean)
-  if (!secret || expectedHostnames.length === 0) unavailable()
+  if (!secret || expectedHostnames.length === 0) unavailable('config')
   return new CloudflareTurnstileVerifier({
     secret,
     expectedHostnames,

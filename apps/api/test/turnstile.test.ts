@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CloudflareTurnstileVerifier } from '../src/security/turnstile'
 import { SecurityHttpError } from '../src/security/http'
 
@@ -43,6 +43,14 @@ async function expectSecurityError(promise: Promise<unknown>, code: SecurityHttp
 }
 
 describe('CloudflareTurnstileVerifier', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('posts Siteverify form data and accepts a valid challenge', async () => {
     const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse(success()))
 
@@ -103,6 +111,25 @@ describe('CloudflareTurnstileVerifier', () => {
       action: 'register',
       now: NOW,
     }), code)
+  })
+
+  it('logs only a safe unavailable classification', async () => {
+    const warn = vi.mocked(console.warn)
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse({
+      success: false,
+      'error-codes': ['internal-error'],
+    }))
+
+    await expectSecurityError(verifier(fetchSpy, { secret: 'provider-secret' }).verify({
+      token: 'visitor-token',
+      remoteIp: '127.0.0.1',
+      action: 'register',
+      now: NOW,
+    }), 'SECURITY_CHECK_UNAVAILABLE')
+
+    expect(warn).toHaveBeenCalledWith('turnstile unavailable', { reason: 'provider' })
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('provider-secret')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('visitor-token')
   })
 
   it.each([
