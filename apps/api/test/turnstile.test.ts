@@ -71,6 +71,20 @@ describe('CloudflareTurnstileVerifier', () => {
     }))).not.toContain('token-2')
   })
 
+  it('accepts documented provider extensions without weakening challenge checks', async () => {
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse(success({
+      cdata: 'provider-owned-custom-data',
+      metadata: { ephemeral_id: 'provider-owned-device-id' },
+    })))
+
+    await expect(verifier(fetchSpy).verify({
+      token: 'token',
+      remoteIp: '127.0.0.1',
+      action: 'register',
+      now: NOW,
+    })).resolves.toBeUndefined()
+  })
+
   it.each([
     [['invalid-input-response'], 'TURNSTILE_INVALID'],
     [['timeout-or-duplicate'], 'TURNSTILE_INVALID'],

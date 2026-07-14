@@ -15,8 +15,8 @@ const SiteverifyResponseSchema = z.object({
   'error-codes': z.array(z.string()).optional(),
   metadata: z.object({
     result_with_testing_key: z.boolean().optional(),
-  }).strict().optional(),
-}).strict()
+  }).optional(),
+})
 
 export type TurnstileAction = 'register' | 'login' | 'email_resend' | 'password_recovery'
 
