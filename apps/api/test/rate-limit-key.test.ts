@@ -81,6 +81,7 @@ describe('rate limit policies', () => {
       orderCreateUserHour: { scope: 'order-create-user-hour', limit: 10, windowMs: 3_600_000, retentionMs: 86_400_000 },
       orderCreateUserDay: { scope: 'order-create-user-day', limit: 30, windowMs: 86_400_000, retentionMs: 172_800_000 },
       orderCreateIpHour: { scope: 'order-create-ip-hour', limit: 30, windowMs: 3_600_000, retentionMs: 86_400_000 },
+      paymentWebhookInvalidIpMinute: { scope: 'payment-webhook-invalid-ip-minute', limit: 120, windowMs: 60_000, retentionMs: 3_600_000 },
       logoUploadPrincipalHour: { scope: 'logo-upload-principal-hour', limit: 20, windowMs: 3_600_000, retentionMs: 86_400_000 },
       logoUploadPrincipalDay: { scope: 'logo-upload-principal-day', limit: 100, windowMs: 86_400_000, retentionMs: 172_800_000 },
       logoUploadIpHour: { scope: 'logo-upload-ip-hour', limit: 100, windowMs: 3_600_000, retentionMs: 86_400_000 },
@@ -103,7 +104,7 @@ describe('rate limit policies', () => {
         'loginFailureIdentity15Minutes',
         'loginFailureIdentityHour',
       ])
-    expect(Object.values(POLICIES).filter((value) => value.subjectKind === 'opaque')).toHaveLength(25)
+    expect(Object.values(POLICIES).filter((value) => value.subjectKind === 'opaque')).toHaveLength(26)
 
     expect(Object.isFrozen(POLICIES)).toBe(true)
     for (const policy of Object.values(POLICIES)) {

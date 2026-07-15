@@ -63,6 +63,7 @@ export const POLICIES = Object.freeze({
   orderCreateUserHour: policy({ scope: 'order-create-user-hour', subjectKind: 'opaque', limit: 10, windowMs: HOUR, retentionMs: DAY }),
   orderCreateUserDay: policy({ scope: 'order-create-user-day', subjectKind: 'opaque', limit: 30, windowMs: DAY, retentionMs: 2 * DAY }),
   orderCreateIpHour: policy({ scope: 'order-create-ip-hour', subjectKind: 'opaque', limit: 30, windowMs: HOUR, retentionMs: DAY }),
+  paymentWebhookInvalidIpMinute: policy({ scope: 'payment-webhook-invalid-ip-minute', subjectKind: 'opaque', limit: 120, windowMs: MINUTE, retentionMs: HOUR }),
 
   logoUploadPrincipalHour: policy({ scope: 'logo-upload-principal-hour', subjectKind: 'opaque', limit: 20, windowMs: HOUR, retentionMs: DAY }),
   logoUploadPrincipalDay: policy({ scope: 'logo-upload-principal-day', subjectKind: 'opaque', limit: 100, windowMs: DAY, retentionMs: 2 * DAY }),
