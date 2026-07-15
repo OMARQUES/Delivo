@@ -53,9 +53,136 @@ describe('payment reconciliation', () => {
     expect(Object.keys(summary)).not.toContain('resourceId')
   })
 
-  it.each(['leases', 'dependencies', 'inbox', 'operations', 'creates', 'snapshots', 'expirations', 'reviews'] as const)('runs stage %s without enabling unrelated stages', async (stage) => {
-    const summary = await runPaymentReconciliation(testDb, provider(), new Date(), context, only(stage))
-    expect(summary.stageFailures).toBeGreaterThanOrEqual(0)
+  it.each(['leases', 'dependencies', 'inbox', 'operations', 'creates', 'snapshots', 'expirations', 'reviews'] as const)('isolates reconciliation stage %s', async (stage) => {
+    const now = new Date()
+    const unrelatedNext = new Date(now.getTime() + 60 * 60_000)
+    const unrelated = await pendingPayment(unrelatedNext)
+    await testDb.update(payments).set({ nextReconcileAt: unrelatedNext }).where(eq(payments.id, unrelated.id))
+    const stageProvider = provider()
+    const expected: Record<string, number> = {}
+
+    if (stage === 'leases') {
+      const payment = await pendingPayment()
+      const operation = await enqueuePaymentOperation(testDb, {
+        paymentId: payment.id,
+        type: 'CANCEL',
+        amountCents: null,
+        businessKey: `cancel:${payment.id}:lease-matrix`,
+        idempotencyKey: `cancel:${payment.id}:lease-matrix`,
+      }, now)
+      await testDb.update(paymentOperations).set({ status: 'PROCESSING', leasedUntil: new Date(now.getTime() - 1_000) }).where(eq(paymentOperations.id, operation.id))
+      const inbox = await enqueueWebhook(testDb, { topic: 'order', resourceId: 'lease-matrix', requestId: 'lease-matrix', signatureTimestamp: '1' }, now)
+      await testDb.update(paymentWebhookInbox).set({ status: 'PROCESSING', leasedUntil: new Date(now.getTime() - 1_000) }).where(eq(paymentWebhookInbox.id, inbox.id))
+      expected.leasesRecovered = 2
+    }
+
+    if (stage === 'dependencies') {
+      const payment = await pendingPayment()
+      const predecessor = await enqueuePaymentOperation(testDb, {
+        paymentId: payment.id,
+        type: 'CANCEL',
+        amountCents: null,
+        businessKey: `cancel:${payment.id}:dependency-predecessor`,
+        idempotencyKey: `cancel:${payment.id}:dependency-predecessor`,
+      }, now)
+      await testDb.update(paymentOperations).set({ status: 'REVIEW_REQUIRED' }).where(eq(paymentOperations.id, predecessor.id))
+      await testDb.insert(paymentOperations).values({
+        paymentId: payment.id,
+        type: 'CANCEL',
+        businessKey: `cancel:${payment.id}:dependency-child`,
+        idempotencyKey: `cancel:${payment.id}:dependency-child`,
+        dependsOnOperationId: predecessor.id,
+        nextAttemptAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      expected.dependenciesReviewed = 1
+    }
+
+    if (stage === 'inbox') {
+      await enqueueWebhook(testDb, { topic: 'order', resourceId: 'unknown-matrix', requestId: 'unknown-matrix', signatureTimestamp: '1' }, now)
+      expected.inboxProcessed = 1
+    }
+
+    if (stage === 'operations') {
+      const payment = await pendingPayment()
+      await testDb.update(payments).set({ status: 'APPROVED' }).where(eq(payments.id, payment.id))
+      const operation = await enqueuePaymentOperation(testDb, {
+        paymentId: payment.id,
+        type: 'CANCEL',
+        amountCents: null,
+        businessKey: `cancel:${payment.id}:operation-matrix`,
+        idempotencyKey: `cancel:${payment.id}:operation-matrix`,
+      }, now)
+      stageProvider.cancelOrder = vi.fn(async () => snapshot(payment, { orderStatus: 'canceled', orderStatusDetail: 'canceled' }))
+      expected.operationsReleased = 1
+      expected.operationsProcessed = 1
+      expect(operation.id).toBeTruthy()
+    }
+
+    if (stage === 'creates') {
+      const payment = await pendingPayment()
+      await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, payment.id))
+      const recovered = snapshot({ ...payment, providerOrderId: 'recovered-order', providerTransactionId: 'recovered-transaction' }, { externalReference: payment.orderId })
+      stageProvider.searchOrders = vi.fn(async () => [recovered])
+      expected.createsRecovered = 1
+    }
+
+    if (stage === 'snapshots') {
+      const payment = await pendingPayment()
+      stageProvider.getOrder = vi.fn(async () => snapshot(payment))
+      expected.snapshotsRefreshed = 1
+    }
+
+    if (stage === 'expirations') {
+      await pendingPayment(new Date(now.getTime() - 1_000))
+      expected.pixExpired = 1
+    }
+
+    if (stage === 'reviews') {
+      const payment = await pendingPayment()
+      await testDb.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'ORDER_NOT_FOUND', nextReconcileAt: now }).where(eq(payments.id, payment.id))
+      stageProvider.getOrder = vi.fn(async () => snapshot(payment))
+      expected.reviewsRechecked = 1
+    }
+
+    const summary = await runPaymentReconciliation(testDb, stageProvider, now, context, only(stage))
+    expect(summary.stageFailures).toBe(0)
+    for (const [key, value] of Object.entries(summary)) {
+      expect(value).toBe(expected[key as keyof typeof expected] ?? 0)
+    }
+
+    const [unrelatedAfter] = await testDb.select().from(payments).where(eq(payments.id, unrelated.id))
+    expect(unrelatedAfter).toMatchObject({ status: 'PENDING', reconciliationState: 'PENDING', reconciliationAttemptCount: 0, nextReconcileAt: unrelatedNext })
+
+    const calls = {
+      getAccountId: stageProvider.getAccountId,
+      getOrder: stageProvider.getOrder,
+      searchOrders: stageProvider.searchOrders,
+      createOrder: stageProvider.createOrder,
+      cancelOrder: stageProvider.cancelOrder,
+      refundOrder: stageProvider.refundOrder,
+      refundPartial: stageProvider.refundPartial,
+    }
+    const allowed = stage === 'inbox' || stage === 'snapshots' ? ['getAccountId', 'getOrder'] : stage === 'operations' ? ['cancelOrder'] : stage === 'creates' ? ['searchOrders'] : stage === 'reviews' ? ['getOrder'] : []
+    for (const [name, spy] of Object.entries(calls)) {
+      if (!allowed.includes(name)) expect(spy).not.toHaveBeenCalled()
+    }
+  })
+
+  it('keeps reconciliation summaries, logs, and errors sanitized', async () => {
+    const forbidden = ['provider-body-9f4a', 'access-token-9f4a', 'webhook-secret-9f4a', 'signature-9f4a', 'payer@example.invalid', 'qr-content-9f4a', 'postgresql://forbidden.invalid/db']
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const leakingProvider = provider({ getAccountId: vi.fn(async () => { throw new Error(forbidden.join('|')) }) })
+      const summary = await runPaymentReconciliation(testDb, leakingProvider, new Date(), context, only('snapshots'))
+      const output = JSON.stringify(summary) + [...logs.mock.calls, ...errors.mock.calls].flat().join(' ')
+      expect(forbidden.some((marker) => output.includes(marker))).toBe(false)
+    } finally {
+      logs.mockRestore()
+      errors.mockRestore()
+    }
   })
 
   it('persists known account mismatch as stable review', async () => {

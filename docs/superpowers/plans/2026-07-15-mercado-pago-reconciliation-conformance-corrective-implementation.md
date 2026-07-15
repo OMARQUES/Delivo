@@ -33,7 +33,7 @@
 - Produces: deterministic tests proving one enabled stage does not execute unrelated stages.
 - Produces: sanitization regression test for summary, logs, and errors.
 
-- [ ] **Step 1: Replace vacuous stage test**
+- [x] **Step 1: Replace vacuous stage test**
 
 Use exact stage list:
 
@@ -43,27 +43,27 @@ const stages = ['leases', 'dependencies', 'inbox', 'operations', 'creates', 'sna
 
 Each table case creates an eligible selected-stage sentinel plus unrelated sentinels that would change if another stage ran. Enable exactly one stage, assert selected durable transition, assert unrelated rows unchanged, assert unrelated provider spies have zero calls, and assert exact summary deltas. For intentional provider-failure cases, assert exact `stageFailures` and retry/review state; never use only `toBeGreaterThanOrEqual(0)`.
 
-- [ ] **Step 2: Add sanitization test before implementation changes**
+- [x] **Step 2: Add sanitization test before implementation changes**
 
 Add focused test with unique forbidden markers for provider body, access token, webhook secret, signature, payer email, QR content, and database URL. Serialize returned summary and capture `console.log`/`console.error`; assert no marker occurs in summary, log arguments, or thrown error text. Restore spies in `finally`. Do not add production logging.
 
-- [ ] **Step 3: Run focused tests and verify RED**
+- [x] **Step 3: Run focused tests and verify RED**
 
 Run `pnpm --filter @delivery/api exec vitest run test/payment-reconciliation.test.ts --no-file-parallelism --maxWorkers=1`.
 
 Expected: isolation matrix fails on current vacuous assertions. Sanitization test must fail only if existing behavior leaks a forbidden marker.
 
-- [ ] **Step 4: Implement only test/fixture corrections**
+- [x] **Step 4: Implement only test/fixture corrections**
 
 Strengthen fixtures and assertions until every selected stage is observable and unrelated stages are provably untouched. Do not alter reconciliation behavior in this task. If a test reveals production behavior violation, stop and report blocker; do not weaken assertion.
 
-- [ ] **Step 5: Run focused and API tests**
+- [x] **Step 5: Run focused and API tests**
 
 Run `pnpm --filter @delivery/api exec vitest run test/payment-reconciliation.test.ts --no-file-parallelism --maxWorkers=1` and `pnpm --filter @delivery/api test`.
 
 Expected: all stage cases pass with exact counters, provider-call assertions, unchanged sentinels, and sanitized output.
 
-- [ ] **Step 6: Review and commit Task 20**
+- [x] **Step 6: Review and commit Task 20**
 
 Run `git diff --check`, inspect test diff, then execute:
 
