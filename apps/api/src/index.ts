@@ -6,10 +6,10 @@ import type { Env } from './env'
 import { resolveEmailConfig } from './email/config'
 import { dispatchDueOutbox } from './email/outbox.service'
 import { EmailDeliveryError, createResendSender } from './email/resend-sender'
-import { createPaymentProvider } from './lib/mercadopago'
+import { createPaymentProvider } from './payments/mercadopago'
 import { cleanupIdentityState } from './services/identity-cleanup.service'
 import { cancelStalePendingOrders } from './services/order-status.service'
-import { expireStaleAwaitingPayment } from './services/payment.service'
+import { runPaymentReconciliation } from './payments/reconciliation.service'
 import { autoApproveStaleShiftDailies } from './services/shift.service'
 import { deleteExpiredRateLimitBuckets } from './security/rate-limit-cleanup'
 
@@ -52,11 +52,13 @@ export default {
         console.error('cron: falha na limpeza de identidade', { failureClass: 'UNEXPECTED' })
       }
 
-      const provider = createPaymentProvider(env)
-      const n = await cancelStalePendingOrders(db, 30, provider)
+      const n = await cancelStalePendingOrders(db, 30)
       if (n > 0) console.log(`cron: ${n} pedidos PENDING expirados cancelados`)
-      const expired = await expireStaleAwaitingPayment(db, provider)
-      if (expired > 0) console.log(`cron: ${expired} pagamentos expirados`)
+      const provider = createPaymentProvider(env)
+      if (provider) {
+        const reconciliation = await runPaymentReconciliation(db, provider, now)
+        if (Object.values(reconciliation).some((count) => count > 0)) console.log('cron: pagamentos reconciliados', reconciliation)
+      }
       const dailies = await autoApproveStaleShiftDailies(db)
       if (dailies > 0) console.log(`cron: ${dailies} diárias de turno aprovadas automaticamente`)
       const buckets = await deleteExpiredRateLimitBuckets(db)
