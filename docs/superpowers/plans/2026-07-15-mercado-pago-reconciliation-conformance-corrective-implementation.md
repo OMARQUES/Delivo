@@ -244,7 +244,7 @@ git commit -m "fix(payments): count inbox claims exactly"
 
 Production files are out of scope. If a strengthened test reveals a production violation, stop, leave the test failing, and report the exact mismatch; do not weaken the assertion or modify production under Task 22.
 
-- [ ] **Step 1: Replace the incomplete isolation fixture with eight simultaneously eligible sentinels**
+- [x] **Step 1: Replace the incomplete isolation fixture with eight simultaneously eligible sentinels**
 
 Keep the exact stage list:
 
@@ -354,7 +354,7 @@ Assert these exact selected durable outcomes:
 | `leases` | inbox and operation become `PENDING`; attempt counts stay zero |
 | `dependencies` | child becomes `REVIEW_REQUIRED/DEPENDENCY_REVIEW_REQUIRED` |
 | `inbox` | row becomes `REVIEW_REQUIRED/UNKNOWN_ORDER` with attempt count one |
-| `operations` | operation becomes `SUCCEEDED/CANCELLED`, attempt count one, payment becomes `CANCELLED` |
+| `operations` | operation becomes `SUCCEEDED/CANCELLED`, attempt count one, payment remains `APPROVED` by the authoritative monotonic-transition rule |
 | `creates` | recovered provider IDs persist and reconciliation becomes `HEALTHY` |
 | `snapshots` | reconciliation becomes `HEALTHY`, attempt count resets to zero, provider status becomes `created`, next reconciliation is `now + 5m` |
 | `expirations` | exactly one `cancel:<paymentId>:PIX_EXPIRED` operation exists |
@@ -362,7 +362,7 @@ Assert these exact selected durable outcomes:
 
 Use an exact summary object with every public counter. Expected non-zero values are: `leasesRecovered: 2`; both operation counters equal one for `operations`; the selected stage counter equals one for every other stage; all remaining counters and `stageFailures` equal zero.
 
-- [ ] **Step 2: Enforce exact provider-call isolation, including snapshots without account lookup**
+- [x] **Step 2: Enforce exact provider-call isolation, including snapshots without account lookup**
 
 Replace the permissive `allowed` array with exact call counts:
 
@@ -385,7 +385,7 @@ for (const [name, spy] of Object.entries(calls)) {
 
 `snapshots` must expect zero `getAccountId` calls. Do not allow a method merely because another stage uses it.
 
-- [ ] **Step 3: Make the sanitization test execute a marker-bearing provider failure**
+- [x] **Step 3: Make the sanitization test execute a marker-bearing provider failure**
 
 Replace the unused `getAccountId` failure with an eligible payment and a failing `getOrder` spy:
 
@@ -428,7 +428,7 @@ it('keeps reconciliation summaries, logs, and errors sanitized', async () => {
 
 The `getOrder` call-count and persisted retry assertions are mandatory: they prove the forbidden markers entered the reconciliation failure path. Do not serialize `providerError` directly into the inspected output.
 
-- [ ] **Step 4: Prove the new isolation test is sensitive, then restore the correct selected-stage call**
+- [x] **Step 4: Prove the new isolation test is sensitive, then restore the correct selected-stage call**
 
 First run the focused file with the correct `only(stage)` call:
 
@@ -446,7 +446,7 @@ const summary = await runPaymentReconciliation(testDb, fixture.provider, now, co
 
 Run the same focused command. Expected: the isolation matrix fails because unrelated counters, durable states, or provider call counts change. Restore `only(stage)` immediately with `apply_patch`, rerun the focused command, and require PASS. Never commit the temporary mutation.
 
-- [ ] **Step 5: Run focused, API, and migration-from-zero verification**
+- [x] **Step 5: Run focused, API, and migration-from-zero verification**
 
 Run each command separately:
 
@@ -462,7 +462,7 @@ git diff --check
 
 The Docker commands target only the disposable local `delivery_test` database inside the repository's Compose PostgreSQL service. They must not use `DATABASE_URL`, Neon, Hyperdrive, staging, or any remote hostname. Expected: migrations `0000` through `0029`, focused tests, 75 API files/744 or more tests, typecheck, and diff check all pass.
 
-- [ ] **Step 6: Run the full repository and Worker dry-run gate**
+- [x] **Step 6: Run the full repository and Worker dry-run gate**
 
 Run fresh, one command at a time:
 
@@ -482,7 +482,7 @@ git status --short
 
 Expected: every command exits zero. Before commit, status contains only `apps/api/test/payment-reconciliation.test.ts` and this plan file. Dry-runs must not deploy or mutate remote Workers.
 
-- [ ] **Step 7: Prove Orders-only code and tracked-file secret safety**
+- [x] **Step 7: Prove Orders-only code and tracked-file secret safety**
 
 Run exactly:
 
@@ -495,7 +495,7 @@ rg -n '"binding": "BUCKET"|"bucket_name": "delivo-media-staging"|"binding": "HYP
 
 Expected: the first three commands return no matches and exit zero because of `!`; the Wrangler scan finds the existing local/staging `BUCKET`, `delivo-media-staging`, `HYPERDRIVE`, and exact Hyperdrive ID. Never print environment files or secret values.
 
-- [ ] **Step 8: Review and commit Task 22**
+- [x] **Step 8: Review and commit Task 22**
 
 Review `git diff --check`, the complete test diff, and the plan checkbox diff. Confirm no production, schema, migration, Wrangler, secret, or environment file changed. Then execute:
 
