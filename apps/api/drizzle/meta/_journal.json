@@ -183,6 +183,13 @@
       "when": 1783893592947,
       "tag": "0025_sec_03a_email_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1784124510015,
+      "tag": "0026_mercado_pago_orders",
+      "breakpoints": true
     }
   ]
 }
