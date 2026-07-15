@@ -7,7 +7,7 @@ Plano executado: `docs/superpowers/plans/2026-07-11-p0-authorization-session-fou
 | Achado | Estado P0 | Evidência implementada | Limite remanescente |
 | --- | --- | --- | --- |
 | SEC-01 | Remediado | CUSTOMER obrigatório em `/orders*` e `/me/addresses*`; matriz exaustiva ANON/CUSTOMER/DRIVER/STORE/ADMIN sobre todas as rotas protegidas em `authorization-matrix.routes.test.ts`. | — |
-| SEC-02 | Remediado em código | PostgreSQL rate limits atômicos por IP/identidade/fingerprint/ator/propósito; Turnstile obrigatório em cadastro e adaptativo em login; proteção de refresh, cotação/criação de pedido e uploads antes de trabalho caro/R2; limpeza por cron. | WAF Cloudflare, smoke real de Turnstile e staging privado dependem de recursos externos do ambiente. Webhook segue para SEC-08; identidade segue no estado SEC-03 abaixo. |
+| SEC-02 | Remediado em código | PostgreSQL rate limits atômicos por IP/identidade/fingerprint/ator/propósito; Turnstile obrigatório em cadastro e adaptativo em login; proteção de refresh, cotação/criação de pedido e uploads antes de trabalho caro/R2; limpeza por cron. | WAF Cloudflare e smoke real de Turnstile/staging dependem de recursos externos. |
 | SEC-03 | Remediado em código | SEC-03A tornou identidade email-first, verificação obrigatória, recovery não enumerável, códigos/tickets hash-only, Resend/outbox e ativação segura de STORE/ADMIN. Matriz final cobre ANON/CUSTOMER/DRIVER/STORE_A/STORE_B/ADMIN e varredura de segredos persistidos/logados; gate local final passou em 2026-07-13. | Smoke real allowlisted em staging não executado: ambiente nomeado/credenciais externos ainda indisponíveis. Domínio/DNS/remetente verificado seguem obrigatórios para produção. SEC-03B Google, SEC-17 MFA, modernização do hash e webhooks Resend permanecem pendentes. |
 | SEC-04 | Remediado | JWT completo (`iss/aud/nbf/jti/sid/ver`) e principal vivo consultado no PostgreSQL a cada request; revogação por família e por `tokenVersion`. | MFA e identidade verificada continuam fora do P0. |
 | SEC-05 | Remediado | `securityStatus` ACTIVE/SUSPENDED/CLOSED; suspensão incrementa `tokenVersion` do dono, revoga refresh e bloqueia descoberta pública. | — |
@@ -20,7 +20,7 @@ Contratos negativos cross-tenant e transições de evento de segurança (logout,
 
 Desvios do plano registrados: a emissão/rotação de tokens permaneceu em `auth.service.ts` (o plano sugeria mover para `security-session.service.ts`); a organização de arquivo difere mas as propriedades de segurança — claims completos, vínculo de família, revogação viva — são idênticas e cobertas por teste.
 
-SEC-03A concluiu o gate local automatizado da Stage 4, Task 9. A validação operacional externa permanece aberta: WAF/Turnstile/Resend reais em staging dependem de configuração Cloudflare/Resend manual. SEC-08 continua pendente do plano de confiabilidade de pagamentos. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida nem autoriza produção.
+SEC-03A concluiu o gate local automatizado da Stage 4, Task 9. A validação operacional externa permanece aberta: WAF/Turnstile/Resend reais em staging dependem de configuração Cloudflare/Resend manual. SEC-08 está remediado em código; validação externa Orders/sandbox/live permanece pendente. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida nem autoriza produção.
 
 ### Remediação SEC-02 — 2026-07-12
 
@@ -48,7 +48,7 @@ Pendências explícitas:
 
 - regra WAF Free para `/auth/*` só pode ser ativada após Cloudflare zone/domínio;
 - smoke real de Turnstile staging/produção depende de widgets e secrets reais;
-- webhook anti-replay/rate controls segue no SEC-08;
+- webhook anti-replay/rate controls implementados no hardening Orders; smoke externo segue pendente;
 - verificação de email, recuperação e limites de códigos foram implementados no SEC-03A; gate local passou e staging externo segue pendente.
 
 ### Remediação SEC-03A — gate local concluído
@@ -159,7 +159,7 @@ Referências de controle usadas: [OWASP REST Security](https://cheatsheetseries.
 | `/media/*`           | nenhuma                       | chave do R2 fornecida pelo cliente                                | Logos/produtos públicos e evidências privadas misturados.                      |
 | lojas/cardápio/busca | pública intencional           | somente lojas ativas                                              | Adequado para descoberta pública.                                              |
 | health/docs/OpenAPI  | pública                       | n/a                                                               | Baixo risco; superfície desnecessária em produção.                             |
-| webhook Mercado Pago | HMAC + reconsulta ao provedor | `providerPaymentId`                                               | Origem razoavelmente protegida; replay e integridade transacional incompletos. |
+| webhook Mercado Pago Orders | HMAC + inbox deduplicado + reconsulta bounded | `providerOrderId`/`externalReference` | Código remediado; smoke externo e credenciais reais pendentes. |
 
 ### Pontos positivos confirmados
 
@@ -272,6 +272,8 @@ O vínculo ao entregador está corretamente verificado; o problema é propriedad
 **Correção robusta:** DTOs explícitos por estado. Durante entrega ativa, retornar somente dados necessários. Após `DELIVERED`, remover telefone, referência e coordenadas imediatamente ou após janela operacional curta. Nunca retornar `taxId` ao driver. Evitar qualquer spread de entidade de banco em respostas externas.
 
 ### SEC-08 — Pagamento confirmado sem atomicidade e sem vínculo financeiro completo
+
+**Estado atual:** remediado em código no hardening Mercado Pago Orders. Validação externa de assinatura, credenciais, sandbox/live e webhook permanece pendente; produção continua bloqueada.
 
 **Severidade:** Alta
 **Categoria:** Integridade financeira / unsafe consumption of API

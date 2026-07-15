@@ -18,6 +18,9 @@ FIREBASE_SERVICE_ACCOUNT=
 # Mercado Pago (opcional - sem MP_ACCESS_TOKEN o checkout online responde 503)
 MP_ACCESS_TOKEN=
 MP_WEBHOOK_SECRET=
+MP_APPLICATION_ID=
+MP_ACCOUNT_ID=
+MP_LIVE_MODE=false
 # Sandbox: email do comprador de TESTE (credencial de teste recusa emails reais). Vazio em producao.
 MP_TEST_PAYER_EMAIL=
 PUBLIC_API_URL=

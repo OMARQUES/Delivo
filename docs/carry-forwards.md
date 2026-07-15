@@ -54,14 +54,13 @@
 | listCustomerOrders/listStoreOrders sem paginação real (limit fixo) | Plano Pedidos | Quando volume crescer |
 | Pool/aceite do driver não é gated em isAvailable (toggle afeta só FCM+UI) — driver indisponível ainda pode aceitar via API. Design aceito; endurecer se virar problema | Audit Plano 6 | Se comportamento incomodar |
 | Cron auto-cancel de PENDING não notifica entregador se houver atribuição legada; após fix A o estado é inatingível, linha de defesa mantida | Fix pós-Plano 6 | N/A (estado inválido bloqueado) |
-| MP: integração usa Payments API clássica (/v1/payments, webhook "Pagamentos (legacy)") — MP empurra novas integrações pra Orders API; migrar se a clássica for deprecada | Plano 7 setup | Monitorar avisos do MP |
 | Pagamentos centralizados na conta MP da plataforma — split nativo/automação = fases futuras (ver runbook) | Plano 7 | Plano 8 (ledger) + futuro split |
 | Webhook exige URL pública (PUBLIC_API_URL) — em dev usar tunnel (cloudflared) ou confirmar via reconsulta; produção resolve no deploy CF | Plano 7 | Deploy prod |
 | Cartão: MVP 1x sem parcelamento; sem 3DS challenge flow | Plano 7 | Se recusas indicarem necessidade |
 | Tracking não tem botão "regenerar PIX" após expirar — cliente refaz o pedido | Plano 7 | UX futura |
 | Alertas do driver: avaliar FCM-only (push-to-sync: refetch em push/focus/online, toast global via store de eventos, notificationclick no SW, guard permissão↔disponibilidade, polling lento 60-120s de segurança ou remoção total) — SUJEITO a validação de necessidade em testes reais no Capacitor; WebSocket descartado (FCM já é push persistente) | Discussão pós-Plano 7 | Plano 9 (Capacitor) |
 | Polling em 1s (todas as telas) — escolha pra testes locais; RECALIBRAR antes de prod (1s × N usuários = carga alta; valores anteriores: 10-15s) | Ajuste dev 2026-07-10 | Antes do deploy prod |
-| Estorno parcial (amendment) roda PÓS-commit: se gateway falhar, amendment fica APPROVED sem estorno e sem flag "estorno devido" — replay manual é seguro (idempotency key `refund-{id}-{cents}`), mas não há retry automático nem consulta de pendências | Plano 5b (audit) | Plano 8 (ledger/reconciliação) |
+| Mercado Pago Orders webhook externo e credenciais reais ainda não validados fora de local | Hardening Orders Task 11 | Staging allowlisted/prod após domínio e secrets |
 | Ledger de DELIVERED agora é atômico com a transição; outros efeitos externos pós-commit ainda dependem de retry/reconciliação | Plano 8 + Emenda Devolução | Hardening/reconciliação |
 | DELIVERY_FAILED cash/maquininha freelance: frete é liberado na devolução sem débito da loja; plataforma absorve por decisão de negócio | Emenda Devolução | Decisão aceita |
 | `markStoreInvoicePaid`/`markStorePayoutPaid`/`markDriverPayoutPaid` sem guard `status='OPEN'` — remarcar sobrescreve `paidAt`. Menor | Plano 8 (audit) | Oportunista |

@@ -13,7 +13,10 @@
     "EMAIL_FROM": "",
     "PUBLIC_WEB_URL": "http://localhost:5173",
     "EMAIL_ALLOWED_RECIPIENTS": "",
-    "MP_PUBLIC_KEY": ""
+    "MP_PUBLIC_KEY": "",
+    "MP_APPLICATION_ID": "",
+    "MP_ACCOUNT_ID": "",
+    "MP_LIVE_MODE": "false"
   },
   "r2_buckets": [
     {
@@ -42,7 +45,10 @@
         "EMAIL_FROM": "Delivery staging <onboarding@resend.dev>",
         "PUBLIC_WEB_URL": "https://delivery-web-staging.otavio-marques20.workers.dev",
         "PUBLIC_API_URL": "https://delivery-api-staging.otavio-marques20.workers.dev",
-        "MP_PUBLIC_KEY": ""
+        "MP_PUBLIC_KEY": "",
+        "MP_APPLICATION_ID": "",
+        "MP_ACCOUNT_ID": "",
+        "MP_LIVE_MODE": "false"
       },
       "r2_buckets": [
         { "binding": "BUCKET", "bucket_name": "delivo-media-staging" }
