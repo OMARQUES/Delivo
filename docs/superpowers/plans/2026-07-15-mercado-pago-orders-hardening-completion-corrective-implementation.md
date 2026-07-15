@@ -59,7 +59,7 @@ export function retryDisposition(
 - `operation.service.ts` owns cancel-to-refund escalation and persists the dependent full-refund operation before completing the cancel operation.
 - `enqueuePaymentOperation` keeps its public signature, but locks the payment before accepting a duplicate and compares the persisted cumulative target in every deterministic full-refund/race path.
 
-- [ ] **Step 1: Add RED pure snapshot-validation tests**
+- [x] **Step 1: Add RED pure snapshot-validation tests**
 
 Create `apps/api/test/snapshot-validation.test.ts`:
 
@@ -132,7 +132,7 @@ pnpm --filter @delivery/api exec vitest run test/snapshot-validation.test.ts --n
 
 Expected: FAIL because `aggregator` and refunded totals below 6400 are currently accepted.
 
-- [ ] **Step 2: Add RED transition tests that preserve authoritative local state**
+- [x] **Step 2: Add RED transition tests that preserve authoritative local state**
 
 Extend `apps/api/test/payment.service.test.ts` inside `describe('applyProviderSnapshot')`:
 
@@ -202,7 +202,7 @@ pnpm --filter @delivery/api exec vitest run test/payment.service.test.ts --no-fi
 
 Expected: FAIL because review currently spreads conflicting provider fields and refunded status forces the expected total.
 
-- [ ] **Step 3: Add RED exact operation, escalation, retry-exhaustion, and dedupe tests**
+- [x] **Step 3: Add RED exact operation, escalation, retry-exhaustion, and dedupe tests**
 
 Extend `apps/api/test/payment-operation.service.test.ts` with these cases:
 
@@ -342,7 +342,7 @@ pnpm --filter @delivery/api exec vitest run test/payment-operation.service.test.
 
 Expected: FAIL for final partial `REFUNDED`, retry exhaustion, cancel order preservation, or target comparison.
 
-- [ ] **Step 4: Implement fail-closed snapshot validation and safe review persistence**
+- [x] **Step 4: Implement fail-closed snapshot validation and safe review persistence**
 
 In `snapshot-validation.ts`, insert processing-mode validation before financial-state classification and require the exact total for refunded status:
 
@@ -381,7 +381,7 @@ const releaseOrderOnApproval = options.releaseOrderOnApproval !== false
 
 Gate the `AWAITING_PAYMENT → PENDING` transition with `releaseOrderOnApproval`.
 
-- [ ] **Step 5: Centralize retry disposition and make operation settlement atomic**
+- [x] **Step 5: Centralize retry disposition and make operation settlement atomic**
 
 Extend `retry.ts`:
 
@@ -423,7 +423,7 @@ const key = `refund-full:${operation.paymentId}:ESCALATED_CANCEL:${operation.id}
 
 For an already fully refunded cancel result, require both decision `REFUNDED` and exact cents equal to `operation.expectedRefundedAmountCents ?? payment.expectedAmountCents` before success.
 
-- [ ] **Step 6: Verify operation identity after locking the payment**
+- [x] **Step 6: Verify operation identity after locking the payment**
 
 In `operation-queue.service.ts`, move the initial business-key lookup below the payment `FOR UPDATE`. Compute the canonical target before returning an existing row. For a partial replay, use the predecessor target while it is active; after successful completion, validate the stored target against the persisted payment total and requested delta:
 
@@ -487,7 +487,7 @@ function sameIntent(
 
 Use `sameIntent` for both a pre-existing row and the `onConflictDoNothing` race result. For a previously completed partial operation, its stored target remains authoritative; validate that it is a safe integer, does not exceed the payment total, and equals the stored cumulative completion before accepting the identical replay. Do not increment attempts or create another dependency on reuse.
 
-- [ ] **Step 7: Run Task 16 focused and package gates**
+- [x] **Step 7: Run Task 16 focused and package gates**
 
 ```bash
 pnpm --filter @delivery/api exec vitest run test/snapshot-validation.test.ts test/payment.service.test.ts test/payment-operation.service.test.ts --no-file-parallelism --maxWorkers=1
@@ -499,7 +499,7 @@ git status --short
 
 Expected: every command PASS. Review the diff and prove no provider call was moved inside a database transaction.
 
-- [ ] **Step 8: Commit Task 16**
+- [x] **Step 8: Commit Task 16**
 
 ```bash
 git add apps/api/src/payments apps/api/test/snapshot-validation.test.ts apps/api/test/payment.service.test.ts apps/api/test/payment-operation.service.test.ts apps/api/test/helpers/payment-provider.ts

@@ -21,6 +21,7 @@ export function validateSnapshot(snapshot: ProviderOrderSnapshot, expected: Expe
   if (snapshot.applicationId !== expected.applicationId) return review('MISMATCH_APPLICATION')
   if (snapshot.accountId !== expected.accountId) return review('MISMATCH_ACCOUNT')
   if (snapshot.liveMode !== expected.liveMode) return review('MISMATCH_ENVIRONMENT')
+  if (snapshot.processingMode !== 'automatic') return review('UNSUPPORTED_PROCESSING_MODE')
   if (snapshot.transactionCount !== 1) return review('MISMATCH_TRANSACTION_COUNT')
   if (!Number.isSafeInteger(snapshot.refundedAmountCents) || snapshot.refundedAmountCents < 0 || snapshot.refundedAmountCents > snapshot.totalAmountCents) return review('MISMATCH_REFUNDED_AMOUNT')
 
@@ -39,7 +40,11 @@ export function validateSnapshot(snapshot: ProviderOrderSnapshot, expected: Expe
   if (orderStatus === 'failed' || orderStatus === 'rejected' || rejectionDetail.some((value) => value.startsWith('cc_rejected') || value === 'rejected')) return rejectionDetail.some((value) => value.startsWith('cc_rejected') || value === 'rejected') ? { kind: 'REJECTED' } : review('UNSUPPORTED_REJECTION')
   if (orderStatus === 'canceled' || orderStatus === 'cancelled') return { kind: 'CANCELLED' }
   if (orderStatus === 'expired') return { kind: 'EXPIRED' }
-  if (orderStatus === 'refunded') return { kind: 'REFUNDED' }
+  if (orderStatus === 'refunded') {
+    return snapshot.refundedAmountCents === expected.amountCents
+      ? { kind: 'REFUNDED' }
+      : review('MISMATCH_REFUNDED_AMOUNT')
+  }
   if (orderStatus === 'processed' && (snapshot.orderStatusDetail.toLowerCase() === 'accredited' || transactionStatus === 'accredited' || transactionStatus === 'processed')) return { kind: 'APPROVED' }
   if (['created', 'pending', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_transfer'].includes(orderStatus)) return { kind: 'PENDING', qrAvailable: snapshot.pix !== null }
   return review('UNSUPPORTED_PROVIDER_STATE')

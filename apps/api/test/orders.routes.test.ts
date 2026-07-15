@@ -161,7 +161,7 @@ function providerSnapshot(overrides: Partial<ProviderOrderSnapshot> = {}): Provi
     refundedAmountCents: 0,
     countryCode: 'BR',
     currency: 'BRL',
-    processingMode: 'aggregator',
+    processingMode: 'automatic',
     method: 'PIX',
     paymentMethodId: 'pix',
     applicationId: 'app-test',

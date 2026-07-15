@@ -31,7 +31,7 @@ async function event(tx: Parameters<Parameters<Db['transaction']>[0]>[0], orderI
   await tx.insert(orderEvents).values({ orderId, status, actorRole: 'SYSTEM', actorId: null, note })
 }
 
-export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paymentId: string, snapshot: ProviderOrderSnapshot, now: Date, options: { enqueueLateRefund?: boolean } = {}): Promise<TransitionResult> {
+export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paymentId: string, snapshot: ProviderOrderSnapshot, now: Date, options: { enqueueLateRefund?: boolean; releaseOrderOnApproval?: boolean } = {}): Promise<TransitionResult> {
     const [payment] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for('update')
     if (!payment) throw new Error('payment not found')
     const [order] = await tx.select().from(orders).where(eq(orders.id, payment.orderId)).for('update')
@@ -60,7 +60,15 @@ export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paym
 
     if (decision.kind === 'REVIEW_REQUIRED') {
       const changed = payment.reconciliationState !== 'REVIEW_REQUIRED' || payment.reconciliationFailure !== decision.failureCode
-      await tx.update(payments).set({ ...providerFields, reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: decision.failureCode, nextReconcileAt: null }).where(eq(payments.id, payment.id))
+      await tx.update(payments).set({
+        providerStatus: snapshot.orderStatus,
+        providerStatusDetail: snapshot.orderStatusDetail,
+        lastReconciledAt: now,
+        updatedAt: now,
+        reconciliationState: 'REVIEW_REQUIRED',
+        reconciliationFailure: decision.failureCode,
+        nextReconcileAt: null,
+      }).where(eq(payments.id, payment.id))
       if (changed) await event(tx, order.id, order.status, 'pagamento em revisão')
       return { changed, decision: decision.kind, operationEnqueued: false }
     }
@@ -78,14 +86,14 @@ export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paym
 
     if (decision.kind === 'APPROVED' || decision.kind === 'PARTIALLY_REFUNDED' || decision.kind === 'REFUNDED') {
       const alreadyApproved = payment.status === 'APPROVED'
-      await tx.update(payments).set({ ...providerFields, status: decision.kind === 'REFUNDED' ? 'REFUNDED' : 'APPROVED', refundedAmountCents: decision.kind === 'REFUNDED' ? payment.expectedAmountCents : snapshot.refundedAmountCents, reconciliationState: 'HEALTHY', reconciliationFailure: null, nextReconcileAt: null }).where(eq(payments.id, payment.id))
+      await tx.update(payments).set({ ...providerFields, status: decision.kind === 'REFUNDED' ? 'REFUNDED' : 'APPROVED', refundedAmountCents: snapshot.refundedAmountCents, reconciliationState: 'HEALTHY', reconciliationFailure: null, nextReconcileAt: null }).where(eq(payments.id, payment.id))
       if (order.status === 'CANCELLED' && options.enqueueLateRefund !== false) {
         const operation = await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund-full:${payment.id}:LATE_APPROVAL`, idempotencyKey: `refund-full:${payment.id}:LATE_APPROVAL` }, now)
         if (operation.inserted) await event(tx, order.id, order.status, 'pagamento tardio: estorno pendente')
         return { changed: !alreadyApproved || operation.inserted, decision: decision.kind, operationEnqueued: operation.inserted }
       }
       if (alreadyApproved) return { changed: false, decision: decision.kind, operationEnqueued: false }
-      if (order.status === 'AWAITING_PAYMENT') {
+      if (order.status === 'AWAITING_PAYMENT' && options.releaseOrderOnApproval !== false) {
         await tx.update(orders).set({ status: 'PENDING', updatedAt: now }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
         await event(tx, order.id, 'PENDING', 'pagamento confirmado')
       }
@@ -102,6 +110,6 @@ export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paym
     return { changed, decision: decision.kind, operationEnqueued: false }
 }
 
-export async function applyProviderSnapshot(db: Db, paymentId: string, snapshot: ProviderOrderSnapshot, now: Date, options: { enqueueLateRefund?: boolean } = {}): Promise<TransitionResult> {
+export async function applyProviderSnapshot(db: Db, paymentId: string, snapshot: ProviderOrderSnapshot, now: Date, options: { enqueueLateRefund?: boolean; releaseOrderOnApproval?: boolean } = {}): Promise<TransitionResult> {
   return db.transaction((tx) => applyProviderSnapshotInTransaction(tx, paymentId, snapshot, now, options))
 }

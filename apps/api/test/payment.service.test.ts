@@ -157,6 +157,62 @@ describe('applyProviderSnapshot', () => {
       refundedAmountCents: 1000,
     })
   })
+
+  it('moves contradictory snapshot to review without replacing confirmed financial fields', async () => {
+    const { order, payment } = await makePayment()
+    await testDb.update(payments).set({
+      status: 'APPROVED',
+      refundedAmountCents: 1200,
+      providerOrderId: `confirmed-order-${order.id}`,
+      providerTransactionId: `confirmed-tx-${order.id}`,
+      qrCode: 'confirmed-qr',
+      qrCodeBase64: 'confirmed-b64',
+    }).where(eq(payments.id, payment.id))
+
+    const result = await applyProviderSnapshot(testDb, payment.id, providerSnapshot({
+      providerOrderId: `other-order-${order.id}`,
+      providerTransactionId: `other-tx-${order.id}`,
+      externalReference: order.id,
+      totalAmountCents: order.totalCents,
+      orderStatus: 'processed',
+      orderStatusDetail: 'partially_refunded',
+      transactionStatus: 'partially_refunded',
+      transactionStatusDetail: 'partially_refunded',
+      refundedAmountCents: 500,
+      pix: null,
+    }), new Date())
+
+    expect(result.decision).toBe('REVIEW_REQUIRED')
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      status: 'APPROVED',
+      refundedAmountCents: 1200,
+      providerOrderId: `confirmed-order-${order.id}`,
+      providerTransactionId: `confirmed-tx-${order.id}`,
+      qrCode: 'confirmed-qr',
+      qrCodeBase64: 'confirmed-b64',
+      reconciliationState: 'REVIEW_REQUIRED',
+      reconciliationFailure: 'MISMATCH_PROVIDER_IDS',
+    })
+  })
+
+  it('never fabricates a full refund from refunded status with partial cents', async () => {
+    const { order, payment } = await makePayment()
+    await testDb.update(payments).set({ status: 'APPROVED' }).where(eq(payments.id, payment.id))
+    await applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents, {
+      orderStatus: 'refunded',
+      orderStatusDetail: 'refunded',
+      transactionStatus: 'refunded',
+      transactionStatusDetail: 'refunded',
+      refundedAmountCents: order.totalCents - 1,
+    }), new Date())
+
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      status: 'APPROVED',
+      refundedAmountCents: 0,
+      reconciliationState: 'REVIEW_REQUIRED',
+      reconciliationFailure: 'MISMATCH_REFUNDED_AMOUNT',
+    })
+  })
 })
 
 describe('Orders checkout orchestration', () => {

@@ -34,7 +34,13 @@ describe('validateSnapshot', () => {
     ['expired', 'expired', 'EXPIRED'],
     ['refunded', 'refunded', 'REFUNDED'],
   ] as const)('%s/%s maps to %s', (orderStatus, transactionStatus, kind) => {
-    const decision = validateSnapshot({ ...valid, orderStatus, transactionStatus, transactionStatusDetail: transactionStatus }, expected)
+    const decision = validateSnapshot({
+      ...valid,
+      orderStatus,
+      transactionStatus,
+      transactionStatusDetail: transactionStatus,
+      ...(orderStatus === 'refunded' ? { refundedAmountCents: expected.amountCents } : {}),
+    }, expected)
     expect(decision).toEqual(kind === 'PENDING' ? { kind, qrAvailable: true } : { kind })
   })
 

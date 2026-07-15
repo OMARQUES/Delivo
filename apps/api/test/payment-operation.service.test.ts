@@ -33,7 +33,7 @@ async function payment() {
 }
 
 function snapshot(paymentId: string, amount: number, patch: Partial<ProviderOrderSnapshot> = {}): ProviderOrderSnapshot {
-  return { providerOrderId: paymentId, providerTransactionId: `tx-${paymentId}`, orderStatus: 'refunded', orderStatusDetail: 'refunded', transactionStatus: 'refunded', transactionStatusDetail: 'refunded', externalReference: 'unused', totalAmountCents: amount, refundedAmountCents: amount, countryCode: 'BR', currency: 'BRL', processingMode: 'aggregator', method: 'PIX', paymentMethodId: 'pix', applicationId: 'app-test', accountId: 'account-test', liveMode: false, transactionCount: 1, pix: null, updatedAt: new Date(), ...patch }
+  return { providerOrderId: paymentId, providerTransactionId: `tx-${paymentId}`, orderStatus: 'refunded', orderStatusDetail: 'refunded', transactionStatus: 'refunded', transactionStatusDetail: 'refunded', externalReference: 'unused', totalAmountCents: amount, refundedAmountCents: amount, countryCode: 'BR', currency: 'BRL', processingMode: 'automatic', method: 'PIX', paymentMethodId: 'pix', applicationId: 'app-test', accountId: 'account-test', liveMode: false, transactionCount: 1, pix: null, updatedAt: new Date(), ...patch }
 }
 
 function provider(overrides: Partial<PaymentProvider> = {}): PaymentProvider {
@@ -140,5 +140,129 @@ describe('durable payment operations', () => {
     await processPaymentOperation(testDb, provider({ cancelOrder: vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'processed', orderStatusDetail: 'accredited', transactionStatus: 'processed', transactionStatusDetail: 'accredited' })) }), cancelId!, 'worker-a', now)
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, cancelId!)))[0]).toMatchObject({ status: 'SUCCEEDED', resultCode: 'ESCALATED_TO_REFUND' })
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.paymentId, row.id))).filter((operation) => operation.type === 'REFUND_FULL')).toHaveLength(1)
+  })
+
+  it('escalates expired PIX approval without reopening awaiting order', async () => {
+    const row = await payment()
+    const now = new Date()
+    await testDb.update(orders).set({ status: 'AWAITING_PAYMENT' }).where(eq(orders.id, row.orderId))
+    const cancel = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id,
+      type: 'CANCEL',
+      amountCents: null,
+      businessKey: `cancel-expired:${row.id}`,
+      idempotencyKey: `cancel-expired:${row.id}`,
+    }, now)
+    const [cancelId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const approved = snapshot(row.providerOrderId!, row.expectedAmountCents, {
+      providerTransactionId: row.providerTransactionId!,
+      externalReference: row.orderId,
+      orderStatus: 'processed',
+      orderStatusDetail: 'accredited',
+      transactionStatus: 'processed',
+      transactionStatusDetail: 'accredited',
+    })
+    await processPaymentOperation(testDb, provider({ cancelOrder: vi.fn(async () => approved) }), cancelId!, 'worker-a', now)
+
+    const operations = await testDb.select().from(paymentOperations).where(eq(paymentOperations.paymentId, row.id))
+    expect(operations.find((operation) => operation.id === cancel.id)).toMatchObject({
+      status: 'SUCCEEDED',
+      resultCode: 'ESCALATED_TO_REFUND',
+    })
+    expect(operations.find((operation) => operation.type === 'REFUND_FULL')).toMatchObject({
+      status: 'PENDING',
+      dependsOnOperationId: cancel.id,
+      expectedRefundedAmountCents: row.expectedAmountCents,
+    })
+    expect((await testDb.select().from(orders).where(eq(orders.id, row.orderId)))[0]!.status).toBe('CANCELLED')
+  })
+
+  it('accepts final partial refund when provider reports full refund at exact target', async () => {
+    const row = await payment()
+    const now = new Date()
+    await testDb.update(payments).set({
+      status: 'APPROVED',
+      refundedAmountCents: row.expectedAmountCents - 1000,
+    }).where(eq(payments.id, row.id))
+    await enqueuePaymentOperation(testDb, {
+      paymentId: row.id,
+      type: 'REFUND_PARTIAL',
+      amountCents: 1000,
+      businessKey: `partial-final:${row.id}`,
+      idempotencyKey: `partial-final:${row.id}`,
+    }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    await processPaymentOperation(testDb, provider({ refundPartial: vi.fn(async () => snapshot(
+      row.providerOrderId!, row.expectedAmountCents, {
+        providerTransactionId: row.providerTransactionId!,
+        externalReference: row.orderId,
+        orderStatus: 'refunded',
+        orderStatusDetail: 'refunded',
+        transactionStatus: 'refunded',
+        transactionStatusDetail: 'refunded',
+        refundedAmountCents: row.expectedAmountCents,
+      },
+    )) }), operationId!, 'worker-a', now)
+
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, operationId!)))[0]).toMatchObject({
+      status: 'SUCCEEDED',
+      resultCode: 'PARTIALLY_REFUNDED',
+      expectedRefundedAmountCents: row.expectedAmountCents,
+    })
+  })
+
+  it.each(['CANCEL', 'REFUND_FULL', 'REFUND_PARTIAL'] as const)('moves direct retry result to review on attempt eight: %s', async (type) => {
+    const row = await payment()
+    const now = new Date()
+    const amountCents = type === 'REFUND_PARTIAL' ? 1000 : null
+    const queued = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id,
+      type,
+      amountCents,
+      businessKey: `exhaust:${type}:${row.id}`,
+      idempotencyKey: `exhaust:${type}:${row.id}`,
+    }, now)
+    await testDb.update(paymentOperations).set({ attemptCount: 7 }).where(eq(paymentOperations.id, queued.id))
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const pending = snapshot(row.providerOrderId!, row.expectedAmountCents, {
+      providerTransactionId: row.providerTransactionId!,
+      externalReference: row.orderId,
+      orderStatus: type === 'REFUND_PARTIAL' ? 'processed' : 'pending',
+      orderStatusDetail: type === 'REFUND_PARTIAL' ? 'partially_refunded' : 'pending',
+      transactionStatus: type === 'REFUND_PARTIAL' ? 'partially_refunded' : 'pending',
+      transactionStatusDetail: type === 'REFUND_PARTIAL' ? 'partially_refunded' : 'pending',
+      refundedAmountCents: type === 'REFUND_PARTIAL' ? 500 : 0,
+    })
+    await processPaymentOperation(testDb, provider({
+      cancelOrder: vi.fn(async () => pending),
+      refundOrder: vi.fn(async () => pending),
+      refundPartial: vi.fn(async () => pending),
+    }), operationId!, 'worker-a', now)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({
+      status: 'REVIEW_REQUIRED',
+      failureClass: 'RETRY_EXHAUSTED',
+      leaseOwner: null,
+      leasedUntil: null,
+    })
+  })
+
+  it('rejects an identical full-refund key with a conflicting persisted target', async () => {
+    const row = await payment()
+    const key = `refund-full-conflict:${row.id}`
+    await testDb.insert(paymentOperations).values({
+      paymentId: row.id,
+      type: 'REFUND_FULL',
+      amountCents: null,
+      expectedRefundedAmountCents: row.expectedAmountCents - 1,
+      businessKey: key,
+      idempotencyKey: key,
+    })
+    await expect(enqueuePaymentOperation(testDb, {
+      paymentId: row.id,
+      type: 'REFUND_FULL',
+      amountCents: null,
+      businessKey: key,
+      idempotencyKey: key,
+    }, new Date())).rejects.toThrow('payment operation business key conflict')
   })
 })
