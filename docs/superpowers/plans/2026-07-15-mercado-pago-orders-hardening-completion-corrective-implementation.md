@@ -815,7 +815,7 @@ git status --short
 
 Expected: every command PASS. Review that all provider calls remain outside transactions and every financial intent shares the business-decision transaction.
 
-- [ ] **Step 8: Commit Task 17**
+- [x] **Step 8: Commit Task 17**
 
 ```bash
 git add apps/api/src/payments/checkout.service.ts apps/api/src/services/amendment.service.ts apps/api/src/services/dispatch.service.ts apps/api/src/services/order-status.service.ts apps/api/src/services/payment.service.ts apps/api/test/payment.service.test.ts apps/api/test/amendment.service.test.ts apps/api/test/dispatch.service.test.ts apps/api/test/cron.test.ts
@@ -875,7 +875,7 @@ export async function processWebhookInBackground(
 - `runPaymentReconciliation` replaces its fifth `Limits` argument with `ReconciliationOptions`; production callers omit it.
 - Webhook inbox and payment reconciliation use `retryDisposition` and enter review after attempt eight.
 
-- [ ] **Step 1: Add RED schema test for durable reconciliation attempts**
+- [x] **Step 1: Add RED schema test for durable reconciliation attempts**
 
 Extend `payment.schema.test.ts`:
 
@@ -901,7 +901,7 @@ pnpm --filter @delivery/api exec vitest run test/payment.schema.test.ts --no-fil
 
 Expected: FAIL because migration `0029` and the column do not exist.
 
-- [ ] **Step 2: Add RED dependency convergence and inbox exhaustion tests**
+- [x] **Step 2: Add RED dependency convergence and inbox exhaustion tests**
 
 Extend `payment-operation.service.test.ts`:
 
@@ -959,7 +959,7 @@ pnpm --filter @delivery/api exec vitest run test/payment-operation.service.test.
 
 Expected: FAIL because propagation recounts reviewed rows and inbox retry has no terminal attempt guard.
 
-- [ ] **Step 3: Replace the minimal reconciliation tests with the complete RED stage matrix**
+- [x] **Step 3: Replace the minimal reconciliation tests with the complete RED stage matrix**
 
 In `payment-reconciliation.test.ts`, change provider snapshots to `processingMode: 'automatic'`. Add an explicit stage helper:
 
@@ -1045,7 +1045,7 @@ pnpm --filter @delivery/api exec vitest run test/payment-reconciliation.test.ts 
 
 Expected: FAIL because zero limits currently disable stages, account mismatch is not persisted, payment attempts are absent, and stage coverage is incomplete.
 
-- [ ] **Step 4: Add RED dedicated-background-client lifecycle test**
+- [x] **Step 4: Add RED dedicated-background-client lifecycle test**
 
 In `webhooks.routes.test.ts`, change the `createDb` mock to expose separate request/background clients:
 
@@ -1074,7 +1074,7 @@ pnpm --filter @delivery/api exec vitest run test/webhooks.routes.test.ts --no-fi
 
 Expected: FAIL because the route currently passes `c.get('db')` into background work while request cleanup closes the same client.
 
-- [ ] **Step 5: Add schema field and generate migration `0029`**
+- [x] **Step 5: Add schema field and generate migration `0029`**
 
 In `payments.ts`, add:
 
@@ -1106,7 +1106,7 @@ If Drizzle generates a different descriptive suffix, rename only the SQL file an
 
 The SQL must add one non-null integer column with default zero and one non-negative check. It must not drop or recreate payment data.
 
-- [ ] **Step 6: Implement bounded dependency, inbox, and payment retry lifecycles**
+- [x] **Step 6: Implement bounded dependency, inbox, and payment retry lifecycles**
 
 Change dependency propagation to select only actionable children:
 
@@ -1120,7 +1120,7 @@ In `webhook-inbox.service.ts`, use `retryDisposition(now, claimed.attemptCount, 
 
 In reconciliation, increment `payments.reconciliationAttemptCount` when claiming or processing a due payment. Successful authoritative transition resets it to zero. A retryable provider failure uses `retryDisposition`; exhaustion stores `REVIEW_REQUIRED/RETRY_EXHAUSTED`, clears `nextReconcileAt`, and stops automatic selection.
 
-- [ ] **Step 7: Refactor reconciliation options and persist known failures**
+- [x] **Step 7: Refactor reconciliation options and persist known failures**
 
 Implement the exact exported types from this task's Interfaces block. Replace zero-limit stage disabling with:
 
@@ -1136,7 +1136,7 @@ Remove the manual `snapshot.accountId !== account` throw from the snapshot stage
 
 Use one helper for retryable payment reconciliation failures; it records only the stable failure class, attempt count, last/next timestamps, and review state. Never include provider messages or response bodies.
 
-- [ ] **Step 8: Give webhook background processing its own database client**
+- [x] **Step 8: Give webhook background processing its own database client**
 
 In `webhook-inbox.service.ts`, add:
 
@@ -1169,7 +1169,7 @@ if (queued.inserted) {
 
 Durable insertion still completes before the `200` response. Background failure remains recoverable by cron.
 
-- [ ] **Step 9: Run focused tests and prove migrations from zero**
+- [x] **Step 9: Run focused tests and prove migrations from zero**
 
 ```bash
 pnpm --filter @delivery/api exec vitest run test/payment.schema.test.ts test/payment-operation.service.test.ts test/payment-reconciliation.test.ts test/webhooks.routes.test.ts --no-file-parallelism --maxWorkers=1
@@ -1189,7 +1189,7 @@ flatpak-spawn --host sh -lc "cd '$PWD' && docker compose exec -T postgres psql -
 
 Expected: migrations `0000` through `0029` apply to an empty test database and every focused/API test passes.
 
-- [ ] **Step 10: Update sanitized operational documentation**
+- [x] **Step 10: Update sanitized operational documentation**
 
 Update `docs/security/runbooks/mercado-pago-orders.md` with:
 
@@ -1202,7 +1202,7 @@ Update `docs/security/runbooks/mercado-pago-orders.md` with:
 
 Update SEC-08 in `docs/security/2026-07-11-backend-security-review.md` only after all automated gates pass. State that code remediation is validated locally while external credentials, sandbox/live, webhook delivery, staging, and production remain pending. Do not claim external validation.
 
-- [ ] **Step 11: Use verification-before-completion and run the full repository gate**
+- [x] **Step 11: Use verification-before-completion and run the full repository gate**
 
 Invoke `superpowers:verification-before-completion`, then run fresh:
 
@@ -1222,7 +1222,7 @@ git status --short
 
 Expected: every command PASS. Status contains only intentional Task 18 files before commit.
 
-- [ ] **Step 12: Prove Orders-only code and tracked-file secret safety**
+- [x] **Step 12: Prove Orders-only code and tracked-file secret safety**
 
 ```bash
 ! rg -n "/v1/payments|providerPaymentId|createPixPayment|createCardPayment|getPayment|refundPayment|cancelPayment|src/lib/payment-provider|lib/payment-provider|src/lib/mercadopago|lib/mercadopago" apps/api/src apps/api/test
@@ -1233,14 +1233,14 @@ rg -n '"binding": "BUCKET"|"bucket_name": "delivo-media-staging"|"binding": "HYP
 
 Expected: legacy/provider-coupling and secret scans have no matches. Wrangler output contains the existing staging `BUCKET`, R2 bucket, `HYPERDRIVE`, and Hyperdrive ID in `env.staging` without changes.
 
-- [ ] **Step 13: Commit Task 18**
+- [x] **Step 13: Commit Task 18**
 
 ```bash
 git add apps/api/src/db/schema/payments.ts apps/api/drizzle apps/api/src/payments apps/api/src/routes/webhooks.ts apps/api/test/payment.schema.test.ts apps/api/test/payment-operation.service.test.ts apps/api/test/payment-reconciliation.test.ts apps/api/test/webhooks.routes.test.ts docs/security/runbooks/mercado-pago-orders.md docs/security/2026-07-11-backend-security-review.md
 git commit -m "fix(payments): bound reconciliation recovery"
 ```
 
-- [ ] **Step 14: Perform final inline review before integration**
+- [x] **Step 14: Perform final inline review before integration**
 
 Invoke `superpowers:requesting-code-review` without dispatching subagents. Review `main...HEAD` and manually trace these exact scenarios:
 

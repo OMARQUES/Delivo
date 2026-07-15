@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { createActiveStoreTestFixture, createVerifiedTestAccount, migrateTestDb, truncateAll, testDb, closeTestDb, type StoreFixtureInput } from './helpers/test-db'
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
@@ -106,6 +106,27 @@ describe('durable payment operations', () => {
     await testDb.update(paymentOperations).set({ status: 'REVIEW_REQUIRED' }).where(eq(paymentOperations.id, first.id))
     expect(await propagateReviewedDependencies(testDb, now, 10)).toBe(1)
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, second.id)))[0]).toMatchObject({ status: 'REVIEW_REQUIRED', failureClass: 'DEPENDENCY_REVIEW_REQUIRED' })
+  })
+
+  it('propagates review through a deep chain without recounting reviewed rows', async () => {
+    const row = await payment()
+    const now = new Date()
+    const ids: string[] = []
+    for (let index = 0; index < 5; index++) {
+      const queued = await enqueuePaymentOperation(testDb, {
+        paymentId: row.id,
+        type: 'CANCEL',
+        amountCents: null,
+        businessKey: `chain:${row.id}:${index}`,
+        idempotencyKey: `chain:${row.id}:${index}`,
+      }, now)
+      ids.push(queued.id)
+    }
+    await testDb.update(paymentOperations).set({ status: 'REVIEW_REQUIRED' }).where(eq(paymentOperations.id, ids[0]!))
+    expect(await propagateReviewedDependencies(testDb, now, 10)).toBe(4)
+    expect((await testDb.select().from(paymentOperations).where(inArray(paymentOperations.id, ids.slice(1))))
+      .every((operation) => operation.status === 'REVIEW_REQUIRED')).toBe(true)
+    expect(await propagateReviewedDependencies(testDb, now, 10)).toBe(0)
   })
 
   it('completes partial refund only at exact persisted cumulative target', async () => {

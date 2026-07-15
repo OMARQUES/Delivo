@@ -80,13 +80,13 @@ export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paym
 
     if (decision.kind === 'PENDING') {
       const changed = payment.reconciliationState !== 'HEALTHY' || payment.providerStatus !== snapshot.orderStatus
-      await tx.update(payments).set({ ...providerFields, status: payment.status === 'PENDING' ? 'PENDING' : payment.status, reconciliationState: 'HEALTHY', reconciliationFailure: null, nextReconcileAt: new Date(now.getTime() + 5 * 60_000) }).where(eq(payments.id, payment.id))
+      await tx.update(payments).set({ ...providerFields, status: payment.status === 'PENDING' ? 'PENDING' : payment.status, reconciliationState: 'HEALTHY', reconciliationFailure: null, reconciliationAttemptCount: 0, nextReconcileAt: new Date(now.getTime() + 5 * 60_000) }).where(eq(payments.id, payment.id))
       return { changed, decision: decision.kind, operationEnqueued: false }
     }
 
     if (decision.kind === 'APPROVED' || decision.kind === 'PARTIALLY_REFUNDED' || decision.kind === 'REFUNDED') {
       const alreadyApproved = payment.status === 'APPROVED'
-      await tx.update(payments).set({ ...providerFields, status: decision.kind === 'REFUNDED' ? 'REFUNDED' : 'APPROVED', refundedAmountCents: snapshot.refundedAmountCents, reconciliationState: 'HEALTHY', reconciliationFailure: null, nextReconcileAt: null }).where(eq(payments.id, payment.id))
+      await tx.update(payments).set({ ...providerFields, status: decision.kind === 'REFUNDED' ? 'REFUNDED' : 'APPROVED', refundedAmountCents: snapshot.refundedAmountCents, reconciliationState: 'HEALTHY', reconciliationFailure: null, reconciliationAttemptCount: 0, nextReconcileAt: null }).where(eq(payments.id, payment.id))
       if (order.status === 'CANCELLED' && options.enqueueLateRefund !== false) {
         const operation = await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund-full:${payment.id}:LATE_APPROVAL`, idempotencyKey: `refund-full:${payment.id}:LATE_APPROVAL` }, now)
         if (operation.inserted) await event(tx, order.id, order.status, 'pagamento tardio: estorno pendente')
@@ -102,7 +102,7 @@ export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paym
 
     const nextStatus = decision.kind
     const changed = payment.status !== nextStatus
-    await tx.update(payments).set({ ...providerFields, status: nextStatus, reconciliationState: 'HEALTHY', reconciliationFailure: null, nextReconcileAt: null }).where(eq(payments.id, payment.id))
+    await tx.update(payments).set({ ...providerFields, status: nextStatus, reconciliationState: 'HEALTHY', reconciliationFailure: null, reconciliationAttemptCount: 0, nextReconcileAt: null }).where(eq(payments.id, payment.id))
     if (changed && order.status === 'AWAITING_PAYMENT') {
       await tx.update(orders).set({ status: 'CANCELLED', updatedAt: now }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
       await event(tx, order.id, 'CANCELLED', 'pagamento não aprovado')

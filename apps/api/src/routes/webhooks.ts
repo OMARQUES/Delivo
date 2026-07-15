@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import type { AppContext } from '../env'
-import { createPaymentProvider } from '../payments/mercadopago'
-import { enqueueWebhook, processWebhookInboxItem } from '../payments/webhook-inbox.service'
+import { enqueueWebhook, processWebhookInBackground } from '../payments/webhook-inbox.service'
 import { verifyMercadoPagoSignature } from '../payments/webhook-signature'
 import { consumeAll } from '../security/auth-abuse'
 import { resolveClientIp } from '../security/client-ip'
@@ -26,9 +25,12 @@ webhookRoutes.post('/webhooks/mercadopago', async (c) => {
 
   const now = new Date()
   const queued = await enqueueWebhook(c.get('db'), { topic: 'order', resourceId: dataId, requestId, signatureTimestamp: verified.timestamp }, now)
-  const provider = createPaymentProvider(c.env)
-  if (provider && queued.inserted && c.executionCtx) {
-    c.executionCtx.waitUntil(processWebhookInboxItem(c.get('db'), provider, queued.id, crypto.randomUUID(), now).catch(() => undefined))
+  if (queued.inserted) {
+    try {
+      c.executionCtx.waitUntil(processWebhookInBackground(c.env, queued.id, now).catch(() => undefined))
+    } catch {
+      // Local/unit requests may not provide an ExecutionContext.
+    }
   }
   return c.json({ ok: true }, 200)
 })

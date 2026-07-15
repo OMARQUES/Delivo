@@ -2,14 +2,23 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { eq } from 'drizzle-orm'
 import { migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 
+const dbMockState = vi.hoisted(() => ({ clientEnds: [] as string[], clientNumber: 0 }))
+
 vi.mock('../src/db/client', async () => {
   const actual = await vi.importActual<typeof import('../src/db/client')>('../src/db/client')
-  return { ...actual, createDb: () => ({ db: testDb, client: { end: async () => {} } }) }
+  return {
+    ...actual,
+    createDb: () => {
+      const id = `client-${++dbMockState.clientNumber}`
+      return { db: testDb, client: { end: async () => { dbMockState.clientEnds.push(id) } } }
+    },
+  }
 })
 
 import { app } from '../src/app'
 import { paymentWebhookInbox } from '../src/db/schema'
 import { enqueueWebhook, processWebhookInboxItem } from '../src/payments/webhook-inbox.service'
+import { PaymentProviderError } from '../src/payments/provider'
 import { verifyMercadoPagoSignature } from '../src/payments/webhook-signature'
 import type { PaymentProvider, ProviderOrderSnapshot } from '../src/payments/provider'
 
@@ -27,7 +36,7 @@ const env = {
 }
 
 beforeAll(migrateTestDb)
-beforeEach(async () => { await truncateAll(); vi.restoreAllMocks() })
+beforeEach(async () => { await truncateAll(); vi.restoreAllMocks(); dbMockState.clientEnds.length = 0; dbMockState.clientNumber = 0 })
 afterAll(closeTestDb)
 
 async function sign(dataId: string, requestId: string, timestamp: string) {
@@ -85,6 +94,20 @@ describe('POST /webhooks/mercadopago', () => {
     const noSecret = await app.request('/webhooks/mercadopago?type=order&data.id=x', { method: 'POST' }, { ...env, MP_WEBHOOK_SECRET: undefined })
     expect(noSecret.status).toBe(503)
   })
+
+  it('uses and closes a distinct background database client', async () => {
+    const signature = `ts=1,v1=${await sign('order-1', 'background-1', '1')}`
+    const pending: Promise<unknown>[] = []
+    const executionCtx = { waitUntil: (promise: Promise<unknown>) => { pending.push(promise) }, passThroughOnException: () => {} } as ExecutionContext
+    const response = await app.fetch(new Request('http://localhost/webhooks/mercadopago?type=order&data.id=order-1', {
+      method: 'POST',
+      headers: { 'x-signature': signature, 'x-request-id': 'background-1' },
+    }), env, executionCtx)
+    expect(response.status).toBe(200)
+    await Promise.all(pending)
+    expect(new Set(dbMockState.clientEnds).size).toBe(2)
+    expect(dbMockState.clientEnds).toHaveLength(2)
+  })
 })
 
 describe('webhook inbox processor', () => {
@@ -95,5 +118,20 @@ describe('webhook inbox processor', () => {
     const [row] = await testDb.select().from(paymentWebhookInbox).where(eq(paymentWebhookInbox.id, queued.id))
     expect(row?.status).toBe('REVIEW_REQUIRED')
     expect(row?.failureClass).toBe('UNKNOWN_ORDER')
+  })
+
+  it('moves the inbox to review instead of scheduling attempt nine', async () => {
+    const now = new Date()
+    const queued = await enqueueWebhook(testDb, { topic: 'order', resourceId: 'order-1', requestId: 'attempt-eight', signatureTimestamp: '1' }, now)
+    await testDb.update(paymentWebhookInbox).set({ attemptCount: 7 }).where(eq(paymentWebhookInbox.id, queued.id))
+    const failing = provider({ getOrder: vi.fn(async () => { throw new PaymentProviderError('PROVIDER_UNAVAILABLE') }) })
+    await expect(processWebhookInboxItem(testDb, failing, queued.id, 'worker-a', now)).resolves.toBeUndefined()
+    expect((await testDb.select().from(paymentWebhookInbox).where(eq(paymentWebhookInbox.id, queued.id)))[0]).toMatchObject({
+      status: 'REVIEW_REQUIRED',
+      attemptCount: 8,
+      failureClass: 'RETRY_EXHAUSTED',
+      leaseOwner: null,
+      leasedUntil: null,
+    })
   })
 })

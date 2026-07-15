@@ -159,7 +159,7 @@ Referências de controle usadas: [OWASP REST Security](https://cheatsheetseries.
 | `/media/*`           | nenhuma                       | chave do R2 fornecida pelo cliente                                | Logos/produtos públicos e evidências privadas misturados.                      |
 | lojas/cardápio/busca | pública intencional           | somente lojas ativas                                              | Adequado para descoberta pública.                                              |
 | health/docs/OpenAPI  | pública                       | n/a                                                               | Baixo risco; superfície desnecessária em produção.                             |
-| webhook Mercado Pago Orders | HMAC + inbox deduplicado + reconsulta bounded | `providerOrderId`/`externalReference` | Código remediado; smoke externo e credenciais reais pendentes. |
+| webhook Mercado Pago Orders | HMAC + inbox deduplicado + reconsulta bounded por stage, retries duráveis e cliente DB isolado | `providerOrderId`/`externalReference` | Código remediado; smoke externo e credenciais reais pendentes. |
 
 ### Pontos positivos confirmados
 

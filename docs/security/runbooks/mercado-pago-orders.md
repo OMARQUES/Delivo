@@ -2,7 +2,7 @@
 
 ## Arquitetura
 
-Checkout cria tentativa local antes do provider. Mercado Pago Orders é consultado por HTTP bounded. Webhooks `type=order` validam HMAC, persistem inbox deduplicado e respondem após persistência; processamento ocorre assíncrono. Cancelamentos/refunds viram `payment_operations` idempotentes. Cron executa reconciliação bounded.
+Checkout cria tentativa local antes do provider. Mercado Pago Orders é consultado por HTTP bounded. Webhooks `type=order` validam HMAC, persistem inbox deduplicado e respondem após persistência; processamento ocorre assíncrono com cliente DB próprio. Cancelamentos/refunds viram `payment_operations` idempotentes. Cron executa reconciliação bounded por stages.
 
 ## Configuração não secreta
 
@@ -51,6 +51,8 @@ Script aceita apenas linha `REVIEW_REQUIRED`; preserva idempotency/business key 
 - `CREDENTIAL_OR_CONFIG`, `MISMATCH_*`, `UNSUPPORTED_*`, `CHARGEBACK`: review manual.
 - `RETRY_EXHAUSTED`: parar e investigar; não repetir cegamente.
 
+Inbox e pagamentos usam `retryDisposition` com máximo de 8 tentativas; a oitava falha persiste `REVIEW_REQUIRED/RETRY_EXHAUSTED` e não agenda uma nona. Pagamentos mantêm `reconciliation_attempt_count` não negativo e resetam o contador somente após transição autoritativa.
+
 ## Reconciliação e recovery de create incerto
 
 - `RECOVERED`: snapshot único aplicado; `lastReconciledAt` atualizado.
@@ -64,7 +66,7 @@ Não registrar email, token, QR, provider ID, idempotency key ou corpo de erro. 
 
 ## Cadeia de dependências
 
-Antes de claim outbound, reconciliador propaga predecessor `REVIEW_REQUIRED` aos descendentes. Inspecionar apenas contagem e idade:
+Antes de claim outbound, reconciliador propaga predecessor `REVIEW_REQUIRED` somente a filhos acionáveis e converge em batches dentro do orçamento total. Inspecionar apenas contagem e idade:
 
 ```sql
 select status, failure_class, count(*) as count,

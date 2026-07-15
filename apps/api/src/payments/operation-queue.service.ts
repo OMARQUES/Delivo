@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lte, ne, not, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm'
 import type { Db, DbTransaction } from '../db/client'
 import { paymentOperations, payments } from '../db/schema'
 
@@ -140,20 +140,27 @@ export async function claimDueOperations(db: Db, now: Date, limit: number, lease
 
 export async function propagateReviewedDependencies(db: Db, now: Date, limit: number): Promise<number> {
   if (limit <= 0) return 0
-  const ids = await db.select({ id: paymentOperations.id }).from(paymentOperations).where(and(
-    not(eq(paymentOperations.status, 'SUCCEEDED')),
-    sql`exists (select 1 from payment_operations predecessor where predecessor.id = ${paymentOperations.dependsOnOperationId} and predecessor.status = 'REVIEW_REQUIRED')`,
-  )).orderBy(paymentOperations.createdAt).limit(Math.max(1, Math.min(100, limit)))
-  if (ids.length === 0) return 0
-  const rows = await db.update(paymentOperations).set({
-    status: 'REVIEW_REQUIRED',
-    failureClass: 'DEPENDENCY_REVIEW_REQUIRED',
-    leaseOwner: null,
-    leasedUntil: null,
-    updatedAt: now,
-  }).where(and(
-    inArray(paymentOperations.id, ids.map((row) => row.id)),
-    not(eq(paymentOperations.status, 'SUCCEEDED')),
-  )).returning({ id: paymentOperations.id })
-  return rows.length
+  let total = 0
+  let remaining = limit
+  while (remaining > 0) {
+    const ids = await db.select({ id: paymentOperations.id }).from(paymentOperations).where(and(
+      inArray(paymentOperations.status, ['PENDING', 'PROCESSING']),
+      sql`exists (select 1 from payment_operations predecessor where predecessor.id = ${paymentOperations.dependsOnOperationId} and predecessor.status = 'REVIEW_REQUIRED')`,
+    )).orderBy(paymentOperations.createdAt).limit(Math.min(100, remaining))
+    if (ids.length === 0) break
+    const rows = await db.update(paymentOperations).set({
+      status: 'REVIEW_REQUIRED',
+      failureClass: 'DEPENDENCY_REVIEW_REQUIRED',
+      leaseOwner: null,
+      leasedUntil: null,
+      updatedAt: now,
+    }).where(and(
+      inArray(paymentOperations.id, ids.map((row) => row.id)),
+      inArray(paymentOperations.status, ['PENDING', 'PROCESSING']),
+    )).returning({ id: paymentOperations.id })
+    if (rows.length === 0) break
+    total += rows.length
+    remaining -= rows.length
+  }
+  return total
 }

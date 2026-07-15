@@ -35,6 +35,7 @@ export const payments = pgTable('payments', {
   providerStatusDetail: text('provider_status_detail'),
   reconciliationState: paymentReconciliationState('reconciliation_state').notNull().default('PENDING'),
   reconciliationFailure: text('reconciliation_failure'),
+  reconciliationAttemptCount: integer('reconciliation_attempt_count').notNull().default(0),
   refundedAmountCents: integer('refunded_amount_cents').notNull().default(0),
   qrCode: text('qr_code'),
   qrCodeBase64: text('qr_code_base64'),
@@ -50,6 +51,7 @@ export const payments = pgTable('payments', {
   uniqueIndex('payments_provider_transaction_unique').on(t.provider, t.providerTransactionId).where(sql`${t.providerTransactionId} is not null`),
   check('payments_expected_amount_positive', sql`${t.expectedAmountCents} > 0`),
   check('payments_refunded_amount_valid', sql`${t.refundedAmountCents} >= 0 and ${t.refundedAmountCents} <= ${t.expectedAmountCents}`),
+  check('payments_reconciliation_attempt_count_valid', sql`${t.reconciliationAttemptCount} >= 0`),
   check('payments_pix_artifacts_only', sql`${t.method} = 'PIX' or (${t.qrCode} is null and ${t.qrCodeBase64} is null and ${t.ticketUrl} is null)`),
 ])
 

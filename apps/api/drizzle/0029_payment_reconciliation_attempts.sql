@@ -1,0 +1,2 @@
+ALTER TABLE "payments" ADD COLUMN "reconciliation_attempt_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "payments" ADD CONSTRAINT "payments_reconciliation_attempt_count_valid" CHECK ("payments"."reconciliation_attempt_count" >= 0);

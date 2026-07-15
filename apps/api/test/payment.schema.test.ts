@@ -40,6 +40,7 @@ describe('payment schema migrations', () => {
       'provider_status_detail',
       'reconciliation_state',
       'reconciliation_failure',
+      'reconciliation_attempt_count',
       'refunded_amount_cents',
       'qr_code',
       'qr_code_base64',
@@ -48,6 +49,15 @@ describe('payment schema migrations', () => {
       'created_at',
       'updated_at',
     ]))
+
+    const paymentChecks = await testDb.execute<{ constraint_name: string }>(sql`
+      select constraint_name
+      from information_schema.table_constraints
+      where table_schema = 'public'
+        and table_name = 'payments'
+        and constraint_type = 'CHECK'
+    `)
+    expect(paymentChecks.map((row) => row.constraint_name)).toContain('payments_reconciliation_attempt_count_valid')
 
     const tableNames = await testDb.execute<{ table_name: string }>(sql`
       select table_name

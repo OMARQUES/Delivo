@@ -1,7 +1,10 @@
 import { and, eq, lte, or } from 'drizzle-orm'
-import type { Db } from '../db/client'
+import { createDb, type Db } from '../db/client'
+import type { Env } from '../env'
 import { paymentWebhookInbox, payments } from '../db/schema'
+import { createPaymentProvider } from './mercadopago'
 import { PaymentProviderError, type PaymentProvider } from './provider'
+import { retryDisposition } from './retry'
 import { applyProviderSnapshot } from './transition.service'
 
 export async function enqueueWebhook(db: Db, input: {
@@ -67,7 +70,23 @@ export async function processWebhookInboxItem(db: Db, provider: PaymentProvider,
     await db.update(paymentWebhookInbox).set({ status: 'PROCESSED', processedAt: now, failureClass: null, leaseOwner: null, leasedUntil: null, updatedAt: now }).where(eq(paymentWebhookInbox.id, inboxId))
   } catch (error) {
     const failureClass = error instanceof PaymentProviderError ? error.kind : 'UNEXPECTED'
-    await db.update(paymentWebhookInbox).set({ status: 'PENDING', nextAttemptAt: new Date(now.getTime() + 30_000), failureClass, leaseOwner: null, leasedUntil: null, updatedAt: now }).where(eq(paymentWebhookInbox.id, inboxId))
+    const retryAfterSeconds = error instanceof PaymentProviderError ? error.retryAfterSeconds : undefined
+    const disposition = retryDisposition(now, claimed.attemptCount, 0.1, retryAfterSeconds)
+    if (disposition.kind === 'REVIEW_REQUIRED') {
+      await markReview(db, inboxId, 'RETRY_EXHAUSTED', now)
+      return
+    }
+    await db.update(paymentWebhookInbox).set({ status: 'PENDING', nextAttemptAt: disposition.nextAttemptAt, failureClass, leaseOwner: null, leasedUntil: null, updatedAt: now }).where(eq(paymentWebhookInbox.id, inboxId))
     throw error
+  }
+}
+
+export async function processWebhookInBackground(env: Env, inboxId: string, now: Date): Promise<void> {
+  const { db, client } = createDb(env)
+  try {
+    const provider = createPaymentProvider(env)
+    if (provider) await processWebhookInboxItem(db, provider, inboxId, crypto.randomUUID(), now)
+  } finally {
+    await client.end()
   }
 }
