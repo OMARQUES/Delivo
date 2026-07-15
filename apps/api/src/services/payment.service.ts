@@ -3,7 +3,7 @@ import { PIX_EXPIRATION_MINUTES } from '@delivery/shared/constants'
 import type { OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
 import { orders, payments } from '../db/schema'
-import type { PaymentProvider } from '../lib/payment-provider'
+import type { PaymentProvider } from '../payments/provider'
 import { addEvent } from './order-events'
 import { enqueuePaymentOperation } from '../payments/operation.service'
 
@@ -15,8 +15,6 @@ export class PaymentError extends Error {
     super(message)
   }
 }
-
-type OrderRow = typeof orders.$inferSelect
 
 export type PaymentDispositionReason =
   | { kind: 'ORDER_CANCELLED'; businessKey: string }
@@ -49,102 +47,6 @@ export async function getOrderPayment(db: Db, orderId: string) {
     .orderBy(sql`${payments.createdAt} desc`)
     .limit(1)
   return row ?? null
-}
-
-/** Cria pagamento PIX no gateway + linha local. Pedido deve estar AWAITING_PAYMENT. */
-export async function createPixPaymentForOrder(
-  db: Db,
-  provider: PaymentProvider,
-  order: OrderRow,
-  payerEmail: string,
-  publicApiUrl: string | null,
-) {
-  const expiresAt = new Date(Date.now() + PIX_EXPIRATION_MINUTES * 60_000)
-  const pix = await provider.createPixPayment({
-    orderId: order.id,
-    amountCents: order.totalCents,
-    description: 'Pedido Delivo',
-    payerEmail,
-    expiresAt,
-    notificationUrl: publicApiUrl ? `${publicApiUrl}/webhooks/mercadopago` : null,
-  })
-  const [row] = await db.insert(payments).values({
-    orderId: order.id,
-    providerOrderId: pix.providerPaymentId,
-    method: 'PIX',
-    expectedAmountCents: order.totalCents,
-    expectedCurrency: 'BRL',
-    expectedCountry: 'BR',
-    expectedApplicationId: 'legacy',
-    expectedAccountId: 'legacy',
-    expectedLiveMode: false,
-    createIdempotencyKey: crypto.randomUUID(),
-    qrCode: pix.qrCode,
-    qrCodeBase64: pix.qrCodeBase64,
-    ticketUrl: pix.ticketUrl,
-    expiresAt,
-  }).returning()
-  return row!
-}
-
-/** Registra tentativa de cartão (linha local) com resultado sync do gateway. */
-export async function recordCardPayment(
-  db: Db,
-  orderId: string,
-  amountCents: number,
-  providerPaymentId: string,
-  approved: boolean,
-) {
-  const [row] = await db.insert(payments).values({
-    orderId,
-    providerOrderId: providerPaymentId,
-    method: 'CARD',
-    expectedAmountCents: amountCents,
-    expectedCurrency: 'BRL',
-    expectedCountry: 'BR',
-    expectedApplicationId: 'legacy',
-    expectedAccountId: 'legacy',
-    expectedLiveMode: false,
-    createIdempotencyKey: crypto.randomUUID(),
-    status: approved ? 'APPROVED' : 'REJECTED',
-  }).returning()
-  return row!
-}
-
-/**
- * Confirmação (webhook/reconsulta): paga o pedido.
- * Retorna true se transicionou agora; false se já confirmado/inexistente.
- * Se PIX for pago após cancelamento/expiração, estorna automaticamente.
- */
-export async function confirmPaymentApproved(
-  db: Db,
-  providerPaymentId: string,
-  provider?: PaymentProvider | null,
-): Promise<boolean> {
-  const [payment] = await db.select().from(payments)
-    .where(eq(payments.providerOrderId, providerPaymentId))
-  if (!payment) return false
-  if (payment.status === 'APPROVED' || payment.status === 'REFUNDED') return false
-
-  await db.update(payments).set({ status: 'APPROVED' }).where(eq(payments.id, payment.id))
-  const rows = await db.update(orders)
-    .set({ status: 'PENDING' })
-    .where(and(eq(orders.id, payment.orderId), eq(orders.status, 'AWAITING_PAYMENT')))
-    .returning({ id: orders.id })
-  if (rows.length === 0) {
-    const [order] = await db.select({ status: orders.status }).from(orders).where(eq(orders.id, payment.orderId))
-    if (order?.status === 'CANCELLED') {
-      await enqueuePaymentOperation(db, {
-        paymentId: payment.id, type: 'REFUND_FULL', amountCents: null,
-        businessKey: `late-refund:${payment.id}`,
-        idempotencyKey: `late-refund:${payment.id}`,
-      }, new Date())
-      await addEvent(db, payment.orderId, 'CANCELLED', 'SYSTEM', null, 'pagamento tardio estornado automaticamente')
-    }
-    return false
-  }
-  await addEvent(db, payment.orderId, 'PENDING', 'SYSTEM', null, 'pagamento confirmado')
-  return true
 }
 
 /**

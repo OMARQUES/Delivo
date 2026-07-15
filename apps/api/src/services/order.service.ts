@@ -20,9 +20,8 @@ import {
 import { type PaymentProvider } from '../payments/provider'
 import { getAddress } from './address.service'
 import { getMenuProductsByIds } from './catalog.service'
-import { addEvent } from './order-events'
 import { getPendingAmendment } from './amendment.service'
-import { getOrderPayment, PaymentError } from './payment.service'
+import { getOrderPayment } from './payment.service'
 import { createOnlinePayment, createPaymentAttempt, CheckoutError } from '../payments/checkout.service'
 
 export class OrderError extends Error {

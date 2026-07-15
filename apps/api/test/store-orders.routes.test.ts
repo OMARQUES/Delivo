@@ -9,15 +9,14 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
-import { ledgerEntries, orders, paymentOperations, users } from '../src/db/schema'
-import type { PaymentProvider } from '../src/lib/payment-provider'
-import * as mp from '../src/lib/mercadopago'
+import { ledgerEntries, orders, paymentOperations, payments, users } from '../src/db/schema'
+import * as mp from '../src/payments/mercadopago'
+import { fakePaymentProvider, providerSnapshot } from './helpers/payment-provider'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { customerRequestCancel, requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
-import { confirmPaymentApproved, createPixPaymentForOrder, getOrderPayment } from '../src/services/payment.service'
 import { updateStore } from '../src/services/store.service'
 
 const env = {
@@ -47,25 +46,6 @@ let addressId: string
 let productId: string
 let driverUserId: string
 let groupIds: { varId: string; varG: string; adId: string; adBorda: string }
-
-function fakeProvider(overrides: Partial<PaymentProvider> = {}): PaymentProvider {
-  return {
-    createPixPayment: vi.fn(async (i) => ({
-      providerPaymentId: 'mp-1',
-      status: 'PENDING' as const,
-      qrCode: 'copia',
-      qrCodeBase64: 'b64',
-      ticketUrl: null,
-      expiresAt: i.expiresAt,
-    })),
-    createCardPayment: vi.fn(async () => ({ providerPaymentId: 'mp-c', status: 'APPROVED' as const, statusDetail: 'accredited' })),
-    getPayment: vi.fn(async (id) => ({ providerPaymentId: id, status: 'APPROVED' as const })),
-    refundPayment: vi.fn(async () => {}),
-    refundPartial: vi.fn(async () => {}),
-    cancelPayment: vi.fn(async () => {}),
-    ...overrides,
-  }
-}
 
 beforeAll(migrateTestDb)
 beforeEach(async () => {
@@ -332,11 +312,19 @@ describe('cancel-request resolution', () => {
   it('cancelling a paid order triggers full refund', async () => {
     const { order: o } = await createOrder(testDb, customerId, checkout())
     await testDb.execute(sql`update orders set payment_method='PIX_ONLINE' where id = ${o.id}`)
-    const refundSpy = vi.fn(async () => {})
-    const provider = fakeProvider({ refundPayment: refundSpy })
+    const refundSpy = vi.fn(async () => providerSnapshot({ refundedAmountCents: 6400 }))
+    const provider = fakePaymentProvider({ refundOrder: refundSpy })
     const [freshOrder] = await testDb.select().from(orders).where(eq(orders.id, o.id))
-    await createPixPaymentForOrder(testDb, provider, freshOrder!, 'c@x.com', null)
-    await confirmPaymentApproved(testDb, 'mp-1')
+    await testDb.insert(payments).values({
+      orderId: freshOrder!.id,
+      providerOrderId: 'mp-1',
+      providerTransactionId: 'tx-1',
+      method: 'PIX',
+      expectedAmountCents: freshOrder!.totalCents,
+      expectedCurrency: 'BRL', expectedCountry: 'BR',
+      expectedApplicationId: 'app-test', expectedAccountId: 'account-test', expectedLiveMode: false,
+      createIdempotencyKey: crypto.randomUUID(), status: 'APPROVED',
+    })
     vi.spyOn(mp, 'createPaymentProvider').mockReturnValue(provider)
 
     const res = await req(`/store/me/orders/${o.id}/status`, {

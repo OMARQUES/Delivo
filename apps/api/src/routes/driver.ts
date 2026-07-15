@@ -34,8 +34,8 @@ import {
   confirmLink, confirmLinkTermsChange, listDriverLinks, rejectLinkTermsChange, StoreDriverError,
 } from '../services/store-driver.service'
 import { endShift, getActiveShift, listDriverRecentShifts, reactivateShift, ShiftError, startShift } from '../services/shift.service'
-import { createPaymentProvider } from '../lib/mercadopago'
-import { PaymentProviderError } from '../lib/payment-provider'
+import { createPaymentProvider } from '../payments/mercadopago'
+import { PaymentProviderError } from '../payments/provider'
 import { PaymentError } from '../services/payment.service'
 import {
   appendReturnPhotoKey,

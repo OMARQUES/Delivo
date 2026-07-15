@@ -6,12 +6,10 @@ import { CancelRequestSchema, CheckoutSchema } from '@delivery/shared/schemas'
 import { createRouter } from '../app-factory'
 import type { AppContext } from '../env'
 import { users } from '../db/schema'
-import { createPaymentProvider } from '../lib/mercadopago'
 import { CheckoutError } from '../payments/checkout.service'
 import { createPaymentProvider as createOrdersPaymentProvider } from '../payments/mercadopago'
 import { PaymentProviderError as OrdersProviderError } from '../payments/provider'
 import { resolvePayerEmail } from '../lib/payer-email'
-import { PaymentProviderError } from '../lib/payment-provider'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import {
   OrderError,
@@ -35,10 +33,6 @@ orderRoutes.use('/orders', authMiddleware, requireRole('CUSTOMER'))
 function rethrow(e: unknown): never {
   if (e instanceof AmendmentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof OrderError || e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
-  if (e instanceof PaymentProviderError)
-    throw new HTTPException(e.status === 402 ? 402 : 503, {
-      message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega',
-      })
   if (e instanceof CheckoutError) throw new HTTPException(e.status, { message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega' })
   if (e instanceof OrdersProviderError)
     throw new HTTPException(503, { message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega' })
@@ -127,7 +121,7 @@ orderRoutes.openapi(
   }),
   async (c) =>
     c.json(
-      await approveAmendment(c.get('db'), createPaymentProvider(c.env), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
+      await approveAmendment(c.get('db'), createOrdersPaymentProvider(c.env), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
       200,
     ),
 )
@@ -141,7 +135,7 @@ orderRoutes.openapi(
   }),
   async (c) =>
     c.json(
-      await rejectAmendment(c.get('db'), createPaymentProvider(c.env), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
+      await rejectAmendment(c.get('db'), createOrdersPaymentProvider(c.env), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
       200,
     ),
 )
@@ -159,7 +153,7 @@ orderRoutes.openapi(
         c.get('db'),
         c.get('auth')!.sub,
         c.req.valid('param').id,
-        createPaymentProvider(c.env),
+        createOrdersPaymentProvider(c.env),
       ).catch(rethrow),
       200,
     ),

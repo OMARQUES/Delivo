@@ -9,7 +9,6 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { paymentWebhookInbox } from '../src/db/schema'
-import * as mp from '../src/payments/mercadopago'
 import { enqueueWebhook, processWebhookInboxItem } from '../src/payments/webhook-inbox.service'
 import { verifyMercadoPagoSignature } from '../src/payments/webhook-signature'
 import type { PaymentProvider, ProviderOrderSnapshot } from '../src/payments/provider'

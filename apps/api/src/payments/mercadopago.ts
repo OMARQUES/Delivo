@@ -17,7 +17,7 @@ function asObject(value: unknown): Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Json : {}
 }
 
-function requiredString(value: unknown, field: string): string {
+function requiredString(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
   return value
 }
@@ -26,7 +26,7 @@ function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
 
-function amount(value: unknown, field: string): number {
+function amount(value: unknown): number {
   if (typeof value !== 'string') throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
   try { return parseProviderAmount(value) } catch { throw new PaymentProviderError(`PROVIDER_RESPONSE_INVALID`) }
 }
@@ -92,29 +92,29 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     if (!Array.isArray(transactions) || transactions.length !== 1) throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
     const transaction = asObject(transactions[0])
     const paymentMethod = asObject(transaction.payment_method)
-    const methodId = requiredString(paymentMethod.id ?? transaction.payment_method_id, 'payment_method_id')
+    const methodId = requiredString(paymentMethod.id ?? transaction.payment_method_id)
     const method: ProviderOrderSnapshot['method'] = methodId.toLowerCase() === 'pix' || paymentMethod.type === 'bank_transfer' ? 'PIX' : paymentMethod.type === 'credit_card' ? 'CARD' : 'UNKNOWN'
-    const orderId = requiredString(order.id, 'id')
-    const transactionId = requiredString(transaction.id, 'transaction.id')
-    const totalAmountCents = amount(order.total_amount, 'total_amount')
+    const orderId = requiredString(order.id)
+    const transactionId = requiredString(transaction.id)
+    const totalAmountCents = amount(order.total_amount)
     const refundedRaw = transaction.refunded_amount ?? order.refunded_amount ?? '0.00'
     const pixData = asObject(asObject(transaction.point_of_interaction).transaction_data)
     const pix = method === 'PIX'
-      ? { qrCode: requiredString(pixData.qr_code, 'qr_code'), qrCodeBase64: requiredString(pixData.qr_code_base64, 'qr_code_base64'), ticketUrl: optionalString(pixData.ticket_url), expiresAt: dateOrNull(pixData.expiration_time ?? order.expiration_time) }
+      ? { qrCode: requiredString(pixData.qr_code), qrCodeBase64: requiredString(pixData.qr_code_base64), ticketUrl: optionalString(pixData.ticket_url), expiresAt: dateOrNull(pixData.expiration_time ?? order.expiration_time) }
       : null
     return {
       providerOrderId: orderId,
       providerTransactionId: transactionId,
-      orderStatus: requiredString(order.status, 'status'),
-      orderStatusDetail: requiredString(order.status_detail, 'status_detail'),
+      orderStatus: requiredString(order.status),
+      orderStatusDetail: requiredString(order.status_detail),
       transactionStatus: optionalString(transaction.status),
       transactionStatusDetail: optionalString(transaction.status_detail),
-      externalReference: requiredString(order.external_reference, 'external_reference'),
+      externalReference: requiredString(order.external_reference),
       totalAmountCents,
-      refundedAmountCents: amount(refundedRaw, 'refunded_amount'),
-      countryCode: requiredString(order.country_code, 'country_code'),
+      refundedAmountCents: amount(refundedRaw),
+      countryCode: requiredString(order.country_code),
       currency: optionalString(order.currency),
-      processingMode: requiredString(order.processing_mode, 'processing_mode'),
+      processingMode: requiredString(order.processing_mode),
       method,
       paymentMethodId: methodId,
       applicationId: optionalString(order.application_id),

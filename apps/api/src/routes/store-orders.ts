@@ -7,7 +7,7 @@ import { createRouter } from '../app-factory'
 import { stores } from '../db/schema'
 import type { AppContext } from '../env'
 import { sendPushToTokens } from '../lib/fcm'
-import { createPaymentProvider } from '../lib/mercadopago'
+import { createPaymentProvider } from '../payments/mercadopago'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.service'
 import {

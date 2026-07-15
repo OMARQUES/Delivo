@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import type { PaymentProvider } from '../src/lib/payment-provider'
+import type { PaymentProvider } from '../src/payments/provider'
+import { fakePaymentProvider } from './helpers/payment-provider'
 import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
@@ -81,10 +82,7 @@ async function assignAndCollect(fixed = false, paymentMethod: 'CASH' | 'PIX_ONLI
 }
 
 function provider(): PaymentProvider {
-  return {
-    createPixPayment: vi.fn(), createCardPayment: vi.fn(), getPayment: vi.fn(),
-    refundPayment: vi.fn(async () => {}), refundPartial: vi.fn(), cancelPayment: vi.fn(),
-  } as unknown as PaymentProvider
+  return fakePaymentProvider()
 }
 
 describe('devolução após falha', () => {
@@ -97,7 +95,7 @@ describe('devolução após falha', () => {
     const failed = await failDelivery(testDb, driverId, order.id, { reason: 'NO_ANSWER' }, gateway)
     expect(failed).toMatchObject({ status: 'DELIVERY_FAILED', returnDriverPayCents: 501, returnedAt: null })
     expect(failed.returnPendingAt).toBeInstanceOf(Date)
-    expect(gateway.refundPayment).not.toHaveBeenCalled()
+    expect(gateway.refundOrder).not.toHaveBeenCalled()
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.type, 'REFUND_FULL'))).length).toBe(1)
     expect((await testDb.select().from(payments).where(eq(payments.orderId, order.id)))[0]!.status).toBe('APPROVED')
     expect(await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, order.id))).toEqual([])

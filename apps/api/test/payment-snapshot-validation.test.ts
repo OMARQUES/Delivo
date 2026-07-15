@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { providerSnapshot } from './helpers/payment-provider'
-import { validateSnapshot, type SnapshotDecision } from '../src/payments/snapshot-validation'
+import { validateSnapshot } from '../src/payments/snapshot-validation'
 import type { ExpectedPayment, ProviderOrderSnapshot } from '../src/payments/provider'
 
 const expected: ExpectedPayment = {

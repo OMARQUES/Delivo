@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
@@ -8,7 +8,7 @@ import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { updateStore } from '../src/services/store.service'
 import { paymentOperations, payments } from '../src/db/schema'
-import type { PaymentProvider } from '../src/lib/payment-provider'
+import { fakePaymentProvider } from './helpers/payment-provider'
 import {
   AmendmentError,
   approveAmendment,
@@ -37,25 +37,6 @@ let customerId: string
 let addressId: string
 let pizzaId: string
 let cocaId: string
-
-function fakeProvider(overrides: Partial<PaymentProvider> = {}): PaymentProvider {
-  return {
-    createPixPayment: vi.fn(async (i) => ({
-      providerPaymentId: 'mp-1',
-      status: 'PENDING' as const,
-      qrCode: 'copia',
-      qrCodeBase64: 'b64',
-      ticketUrl: null,
-      expiresAt: i.expiresAt,
-    })),
-    createCardPayment: vi.fn(async () => ({ providerPaymentId: 'mp-c', status: 'APPROVED' as const, statusDetail: 'accredited' })),
-    getPayment: vi.fn(async (id) => ({ providerPaymentId: id, status: 'APPROVED' as const })),
-    refundPayment: vi.fn(async () => {}),
-    refundPartial: vi.fn(async () => {}),
-    cancelPayment: vi.fn(async () => {}),
-    ...overrides,
-  }
-}
 
 beforeAll(migrateTestDb)
 beforeEach(async () => {
@@ -163,7 +144,7 @@ describe('approveAmendment', () => {
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, {
       items: [{ orderItemId: pizzaItemId, newQuantity: 1 }, { orderItemId: cocaItemId, newQuantity: 0 }],
     })
-    const provider = fakeProvider()
+    const provider = fakePaymentProvider()
     const r = await approveAmendment(testDb, provider, customerId, orderId)
     expect(r.status).toBe('APPROVED')
     const detail = await getCustomerOrder(testDb, customerId, orderId)
@@ -179,7 +160,7 @@ describe('approveAmendment', () => {
   it('cash order: no gateway call, totals still applied', async () => {
     const { orderId, cocaItemId } = await makeAcceptedOrder()
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
-    const provider = fakeProvider()
+    const provider = fakePaymentProvider()
     await approveAmendment(testDb, provider, customerId, orderId)
     expect(provider.refundPartial).not.toHaveBeenCalled()
     expect((await getCustomerOrder(testDb, customerId, orderId))!.subtotalCents).toBe(6000)
@@ -187,11 +168,11 @@ describe('approveAmendment', () => {
 
   it('guards: wrong customer 404, no pending 409, double approve 409', async () => {
     const { orderId, cocaItemId } = await makeAcceptedOrder()
-    await expect(approveAmendment(testDb, fakeProvider(), customerId, orderId)).rejects.toMatchObject({ status: 409 })
+    await expect(approveAmendment(testDb, fakePaymentProvider(), customerId, orderId)).rejects.toMatchObject({ status: 409 })
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
-    await expect(approveAmendment(testDb, fakeProvider(), crypto.randomUUID(), orderId)).rejects.toMatchObject({ status: 404 })
-    await approveAmendment(testDb, fakeProvider(), customerId, orderId)
-    await expect(approveAmendment(testDb, fakeProvider(), customerId, orderId)).rejects.toMatchObject({ status: 409 })
+    await expect(approveAmendment(testDb, fakePaymentProvider(), crypto.randomUUID(), orderId)).rejects.toMatchObject({ status: 404 })
+    await approveAmendment(testDb, fakePaymentProvider(), customerId, orderId)
+    await expect(approveAmendment(testDb, fakePaymentProvider(), customerId, orderId)).rejects.toMatchObject({ status: 409 })
   })
 })
 
@@ -199,7 +180,7 @@ describe('rejectAmendment', () => {
   it('cancels order with full refund when paid', async () => {
     const { orderId, cocaItemId } = await makeAcceptedPaidOrder()
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
-    const provider = fakeProvider()
+    const provider = fakePaymentProvider()
     await rejectAmendment(testDb, provider, customerId, orderId)
     const detail = await getCustomerOrder(testDb, customerId, orderId)
     expect(detail!.status).toBe('CANCELLED')
@@ -213,7 +194,7 @@ describe('withdraw + status gate', () => {
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
 
     const results = await Promise.allSettled([
-      approveAmendment(testDb, fakeProvider(), customerId, orderId),
+      approveAmendment(testDb, fakePaymentProvider(), customerId, orderId),
       withdrawAmendment(testDb, storeId, orderId),
     ])
 

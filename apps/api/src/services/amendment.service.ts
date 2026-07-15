@@ -3,7 +3,7 @@ import { formatBRL } from '@delivery/shared/constants'
 import type { AmendmentProposalInput } from '@delivery/shared/schemas'
 import type { Db } from '../db/client'
 import { orderAmendmentItems, orderAmendments, orderItems, orders, payments } from '../db/schema'
-import type { PaymentProvider } from '../lib/payment-provider'
+import type { PaymentProvider } from '../payments/provider'
 import { addEvent } from './order-events'
 import { enqueuePaymentOperation } from '../payments/operation.service'
 

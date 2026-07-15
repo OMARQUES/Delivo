@@ -49,7 +49,7 @@ const env = {
   TURNSTILE_SECRET_KEY: 'sec03a-turnstile-provider-secret',
   TURNSTILE_EXPECTED_HOSTNAMES: 'localhost',
   AUTH_CODE_SECRET: 'sec03a-auth-code-secret-with-32-bytes',
-  RESEND_API_KEY: 're_sec03a_raw_provider_api_key',
+  RESEND_API_KEY: 'test-resend-provider-key',
   EMAIL_FROM: 'Security Test <security@example.test>',
   PUBLIC_WEB_URL: 'http://localhost:5173/verificar-email',
   ALLOWED_ORIGINS: 'http://localhost:5173',
