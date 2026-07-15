@@ -5,7 +5,7 @@ import type { Db } from '../db/client'
 import { orders, payments } from '../db/schema'
 import type { PaymentProvider } from '../payments/provider'
 import { addEvent } from './order-events'
-import { enqueuePaymentOperation } from '../payments/operation.service'
+import { enqueuePaymentOperation } from '../payments/operation-queue.service'
 
 export class PaymentError extends Error {
   constructor(

@@ -85,9 +85,57 @@ describe('applyProviderSnapshot', () => {
     const result = await applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents), new Date())
     expect(result).toMatchObject({ changed: true, decision: 'APPROVED', operationEnqueued: true })
     expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('CANCELLED')
-    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `late-refund:${payment.id}`))).length).toBe(1)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `refund-full:${payment.id}:LATE_APPROVAL`))).length).toBe(1)
     const again = await applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents), new Date())
     expect(again.operationEnqueued).toBe(false)
+  })
+
+  it('advances APPROVED to REFUNDED and never regresses afterward', async () => {
+    const { order, payment } = await makePayment()
+    await testDb.update(payments).set({ status: 'APPROVED' }).where(eq(payments.id, payment.id))
+    const refunded = snapshot(order.id, order.totalCents, {
+      orderStatus: 'refunded',
+      orderStatusDetail: 'refunded',
+      transactionStatus: 'refunded',
+      transactionStatusDetail: 'refunded',
+      refundedAmountCents: order.totalCents,
+    })
+
+    await applyProviderSnapshot(testDb, payment.id, refunded, new Date())
+    expect(await testDb.select({ status: payments.status, refundedAmountCents: payments.refundedAmountCents }).from(payments).where(eq(payments.id, payment.id))).toEqual([
+      { status: 'REFUNDED', refundedAmountCents: order.totalCents },
+    ])
+
+    await applyProviderSnapshot(testDb, payment.id, {
+      ...refunded,
+      orderStatus: 'pending',
+      orderStatusDetail: 'pending',
+      transactionStatus: 'pending',
+      transactionStatusDetail: 'pending',
+      refundedAmountCents: 0,
+    }, new Date())
+    expect((await testDb.select({ status: payments.status, refundedAmountCents: payments.refundedAmountCents }).from(payments).where(eq(payments.id, payment.id)))[0]).toEqual({
+      status: 'REFUNDED',
+      refundedAmountCents: order.totalCents,
+    })
+  })
+
+  it('keeps APPROVED while applying exact cumulative partial refund', async () => {
+    const { order, payment } = await makePayment()
+    await testDb.update(payments).set({ status: 'APPROVED' }).where(eq(payments.id, payment.id))
+    const partial = snapshot(order.id, order.totalCents, {
+      orderStatus: 'processed',
+      orderStatusDetail: 'partially_refunded',
+      transactionStatus: 'partially_refunded',
+      transactionStatusDetail: 'partially_refunded',
+      refundedAmountCents: 1000,
+    })
+
+    await applyProviderSnapshot(testDb, payment.id, partial, new Date())
+    expect((await testDb.select({ status: payments.status, refundedAmountCents: payments.refundedAmountCents }).from(payments).where(eq(payments.id, payment.id)))[0]).toEqual({
+      status: 'APPROVED',
+      refundedAmountCents: 1000,
+    })
   })
 })
 

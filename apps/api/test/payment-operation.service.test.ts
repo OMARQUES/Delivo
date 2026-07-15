@@ -5,7 +5,8 @@ import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { payments, paymentOperations, orders } from '../src/db/schema'
 import { updateStore } from '../src/services/store.service'
-import { claimDueOperations, enqueuePaymentOperation, processPaymentOperation } from '../src/payments/operation.service'
+import { claimDueOperations, enqueuePaymentOperation, propagateReviewedDependencies } from '../src/payments/operation-queue.service'
+import { processPaymentOperation } from '../src/payments/operation.service'
 import type { PaymentProvider, ProviderOrderSnapshot } from '../src/payments/provider'
 import { PaymentProviderError } from '../src/payments/provider'
 
@@ -58,17 +59,86 @@ describe('durable payment operations', () => {
     const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
     const refund = vi.fn(async (_id: string, key: string) => { expect(key).toBe(`idem:${row.id}`); return snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId }) })
     await processPaymentOperation(testDb, provider({ refundOrder: refund }), operationId!, 'worker-a', now)
-    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, operationId!)))[0]!.status).toBe('SUCCEEDED')
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, operationId!)))[0]).toMatchObject({ status: 'SUCCEEDED', resultCode: 'REFUNDED', expectedRefundedAmountCents: row.expectedAmountCents })
   })
 
-  it('uncertain provider response retries after GET; credentials move review', async () => {
+  it('does not complete full refund when provider remains APPROVED', async () => {
+    const row = await payment()
+    const now = new Date()
+    await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund:${row.id}`, idempotencyKey: `idem:${row.id}` }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    await processPaymentOperation(testDb, provider({ refundOrder: vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'processed', orderStatusDetail: 'accredited', transactionStatus: 'processed', transactionStatusDetail: 'accredited' })) }), operationId!, 'worker-a', now)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, operationId!)))[0]!.status).toBe('PENDING')
+  })
+
+  it('uncertain provider response retries when GET remains APPROVED', async () => {
+    const row = await payment()
+    const now = new Date()
+    await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund:${row.id}`, idempotencyKey: `idem:${row.id}` }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const getOrder = vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'processed', orderStatusDetail: 'accredited', transactionStatus: 'processed', transactionStatusDetail: 'accredited' }))
+    await processPaymentOperation(testDb, provider({ refundOrder: vi.fn(async () => { throw new PaymentProviderError('TRANSIENT_UNCERTAIN') }), getOrder }), operationId!, 'worker-a', now)
+    expect(getOrder).toHaveBeenCalledOnce()
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, operationId!)))[0]!.status).toBe('PENDING')
+  })
+
+  it('serializes dependent operations and releases only after predecessor success', async () => {
+    const row = await payment()
+    const now = new Date()
+    const first = await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund:first:${row.id}`, idempotencyKey: `idem:first:${row.id}` }, now)
+    const second = await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund:second:${row.id}`, idempotencyKey: `idem:second:${row.id}` }, now)
+    const secondRow = (await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, second.id)))[0]!
+    expect(secondRow.dependsOnOperationId).toBe(first.id)
+    const [claimsA, claimsB] = await Promise.all([
+      claimDueOperations(testDb, now, 10, 'worker-a'),
+      claimDueOperations(testDb, now, 10, 'worker-b'),
+    ])
+    expect([claimsA, claimsB].flat()).toEqual([first.id])
+    await testDb.update(paymentOperations).set({ status: 'SUCCEEDED', resultCode: 'REFUNDED' }).where(eq(paymentOperations.id, first.id))
+    expect(await claimDueOperations(testDb, now, 10, 'worker-b')).toEqual([second.id])
+  })
+
+  it('propagates predecessor review to dependent operations', async () => {
+    const row = await payment()
+    const now = new Date()
+    const first = await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund:first:${row.id}`, idempotencyKey: `idem:first:${row.id}` }, now)
+    const second = await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund:second:${row.id}`, idempotencyKey: `idem:second:${row.id}` }, now)
+    await testDb.update(paymentOperations).set({ status: 'REVIEW_REQUIRED' }).where(eq(paymentOperations.id, first.id))
+    expect(await propagateReviewedDependencies(testDb, now, 10)).toBe(1)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, second.id)))[0]).toMatchObject({ status: 'REVIEW_REQUIRED', failureClass: 'DEPENDENCY_REVIEW_REQUIRED' })
+  })
+
+  it('completes partial refund only at exact persisted cumulative target', async () => {
+    const row = await payment()
+    const now = new Date()
+    await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'REFUND_PARTIAL', amountCents: 1000, businessKey: `partial:${row.id}`, idempotencyKey: `idem:${row.id}` }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    await processPaymentOperation(testDb, provider({ refundPartial: vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'processed', orderStatusDetail: 'partially_refunded', transactionStatus: 'partially_refunded', transactionStatusDetail: 'partially_refunded', refundedAmountCents: 1000 })) }), operationId!, 'worker-a', now)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, operationId!)))[0]).toMatchObject({ status: 'SUCCEEDED', resultCode: 'PARTIALLY_REFUNDED', expectedRefundedAmountCents: 1000 })
+  })
+
+  it('retries partial refund below target and reviews above target', async () => {
+    const below = await payment()
+    const now = new Date()
+    await enqueuePaymentOperation(testDb, { paymentId: below.id, type: 'REFUND_PARTIAL', amountCents: 1000, businessKey: `partial:${below.id}`, idempotencyKey: `idem:${below.id}` }, now)
+    const [belowId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    await processPaymentOperation(testDb, provider({ refundPartial: vi.fn(async () => snapshot(below.providerOrderId!, below.expectedAmountCents, { providerTransactionId: below.providerTransactionId!, externalReference: below.orderId, orderStatus: 'processed', orderStatusDetail: 'partially_refunded', transactionStatus: 'partially_refunded', transactionStatusDetail: 'partially_refunded', refundedAmountCents: 500 })) }), belowId!, 'worker-a', now)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, belowId!)))[0]!.status).toBe('PENDING')
+
+    const above = await payment()
+    await enqueuePaymentOperation(testDb, { paymentId: above.id, type: 'REFUND_PARTIAL', amountCents: 1000, businessKey: `partial:${above.id}`, idempotencyKey: `idem:${above.id}` }, now)
+    const [aboveId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    await processPaymentOperation(testDb, provider({ refundPartial: vi.fn(async () => snapshot(above.providerOrderId!, above.expectedAmountCents, { providerTransactionId: above.providerTransactionId!, externalReference: above.orderId, orderStatus: 'processed', orderStatusDetail: 'partially_refunded', transactionStatus: 'partially_refunded', transactionStatusDetail: 'partially_refunded', refundedAmountCents: 1500 })) }), aboveId!, 'worker-a', now)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, aboveId!)))[0]).toMatchObject({ status: 'REVIEW_REQUIRED', failureClass: 'MISMATCH_REFUNDED_TARGET' })
+  })
+
+  it('escalates approved cancel to one dependent full refund', async () => {
     const row = await payment()
     const now = new Date()
     await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'CANCEL', amountCents: null, businessKey: `cancel:${row.id}`, idempotencyKey: `idem:${row.id}` }, now)
-    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
-    const getOrder = vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'canceled', orderStatusDetail: 'canceled', transactionStatus: 'canceled', transactionStatusDetail: 'canceled', refundedAmountCents: 0 }))
-    await processPaymentOperation(testDb, provider({ cancelOrder: vi.fn(async () => { throw new PaymentProviderError('TRANSIENT_UNCERTAIN') }), getOrder }), operationId!, 'worker-a', now)
-    expect(getOrder).toHaveBeenCalledOnce()
-    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, operationId!)))[0]!.status).toBe('SUCCEEDED')
+    const [cancelId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    await processPaymentOperation(testDb, provider({ cancelOrder: vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'processed', orderStatusDetail: 'accredited', transactionStatus: 'processed', transactionStatusDetail: 'accredited' })) }), cancelId!, 'worker-a', now)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, cancelId!)))[0]).toMatchObject({ status: 'SUCCEEDED', resultCode: 'ESCALATED_TO_REFUND' })
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.paymentId, row.id))).filter((operation) => operation.type === 'REFUND_FULL')).toHaveLength(1)
   })
 })

@@ -197,6 +197,13 @@
       "when": 1784125758775,
       "tag": "0027_payment_expected_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1784132474065,
+      "tag": "0028_payment_operation_serialization",
+      "breakpoints": true
     }
   ]
 }

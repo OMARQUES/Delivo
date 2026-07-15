@@ -1,4 +1,4 @@
-import { boolean, check, index, integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { type AnyPgColumn, boolean, check, index, integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import { PAYMENT_STATUSES } from '@delivery/shared/constants'
 import { orders } from './orders'
@@ -9,6 +9,12 @@ export const paymentReconciliationState = pgEnum('payment_reconciliation_state',
 export const paymentWebhookStatus = pgEnum('payment_webhook_status', ['PENDING', 'PROCESSING', 'PROCESSED', 'REVIEW_REQUIRED'])
 export const paymentOperationStatus = pgEnum('payment_operation_status', ['PENDING', 'PROCESSING', 'SUCCEEDED', 'REVIEW_REQUIRED'])
 export const paymentOperationType = pgEnum('payment_operation_type', ['CANCEL', 'REFUND_FULL', 'REFUND_PARTIAL'])
+export const paymentOperationResultCode = pgEnum('payment_operation_result_code', [
+  'CANCELLED',
+  'REFUNDED',
+  'PARTIALLY_REFUNDED',
+  'ESCALATED_TO_REFUND',
+])
 
 export const payments = pgTable('payments', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -75,9 +81,12 @@ export const paymentOperations = pgTable('payment_operations', {
   paymentId: uuid('payment_id').notNull().references(() => payments.id, { onDelete: 'restrict' }),
   type: paymentOperationType('type').notNull(),
   amountCents: integer('amount_cents'),
+  expectedRefundedAmountCents: integer('expected_refunded_amount_cents'),
+  dependsOnOperationId: uuid('depends_on_operation_id').references((): AnyPgColumn => paymentOperations.id, { onDelete: 'restrict' }),
   businessKey: text('business_key').notNull(),
   idempotencyKey: text('idempotency_key').notNull(),
   status: paymentOperationStatus('status').notNull().default('PENDING'),
+  resultCode: paymentOperationResultCode('result_code'),
   attemptCount: integer('attempt_count').notNull().default(0),
   nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
   leaseOwner: text('lease_owner'),
@@ -91,6 +100,8 @@ export const paymentOperations = pgTable('payment_operations', {
   uniqueIndex('payment_operations_business_key_unique').on(t.businessKey),
   uniqueIndex('payment_operations_idempotency_key_unique').on(t.idempotencyKey),
   index('payment_operations_status_next_attempt_idx').on(t.status, t.nextAttemptAt),
+  index('payment_operations_dependency_idx').on(t.dependsOnOperationId, t.status),
   check('payment_operations_attempt_count_valid', sql`${t.attemptCount} >= 0`),
   check('payment_operations_amount_valid', sql`(${t.type} = 'REFUND_PARTIAL' and ${t.amountCents} > 0) or (${t.type} <> 'REFUND_PARTIAL' and ${t.amountCents} is null)`),
+  check('payment_operations_expected_refund_valid', sql`(${t.type} = 'CANCEL' and ${t.expectedRefundedAmountCents} is null) or (${t.type} in ('REFUND_FULL', 'REFUND_PARTIAL') and ${t.expectedRefundedAmountCents} > 0)`),
 ])

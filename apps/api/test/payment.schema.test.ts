@@ -83,6 +83,47 @@ describe('payment schema migrations', () => {
       'payments_provider_transaction_unique',
     ])
 
+    const operationColumns = await testDb.execute<{ column_name: string }>(sql`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'payment_operations'
+    `)
+    expect(operationColumns.map((row) => row.column_name)).toEqual(expect.arrayContaining([
+      'expected_refunded_amount_cents',
+      'depends_on_operation_id',
+      'result_code',
+    ]))
+
+    const operationResultEnum = await testDb.execute<{ enumlabel: string }>(sql`
+      select enumlabel
+      from pg_enum
+      join pg_type on pg_type.oid = pg_enum.enumtypid
+      where pg_type.typname = 'payment_operation_result_code'
+      order by enumsortorder
+    `)
+    expect(operationResultEnum.map((row) => row.enumlabel)).toEqual([
+      'CANCELLED',
+      'REFUNDED',
+      'PARTIALLY_REFUNDED',
+      'ESCALATED_TO_REFUND',
+    ])
+
+    const dependencyIndexes = await testDb.execute<{ indexname: string }>(sql`
+      select indexname
+      from pg_indexes
+      where schemaname = 'public' and indexname = 'payment_operations_dependency_idx'
+    `)
+    expect(dependencyIndexes.map((row) => row.indexname)).toContain('payment_operations_dependency_idx')
+
+    const foreignKeys = await testDb.execute<{ constraint_name: string }>(sql`
+      select constraint_name
+      from information_schema.table_constraints
+      where table_schema = 'public'
+        and table_name = 'payment_operations'
+        and constraint_type = 'FOREIGN KEY'
+    `)
+    expect(foreignKeys.map((row) => row.constraint_name).some((name) => name.startsWith('payment_operations_depends_on_operation_id_payment_operations_i'))).toBe(true)
+
     const pixKeyColumns = await testDb.execute<{ table_name: string }>(sql`
       select table_name
       from information_schema.columns
