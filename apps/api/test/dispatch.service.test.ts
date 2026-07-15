@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 import { updateStore } from '../src/services/store.service'
 import { createCategory, createProduct } from '../src/services/catalog.service'
@@ -6,6 +7,7 @@ import { createVerifiedTestAccount } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { requestDriver, storeUpdateOrderStatus } from '../src/services/order-status.service'
+import { orders, paymentOperations, payments } from '../src/db/schema'
 import {
   DispatchError,
   ensureDriverProfile,
@@ -200,6 +202,31 @@ describe('release / collect / deliver / fail', () => {
     const failed = await getCustomerOrder(testDb, customerId, order.id)
     expect(failed!.status).toBe('DELIVERY_FAILED')
     expect(failed!.failReason).toBe('NO_ANSWER')
+  })
+
+  async function makeOutForDeliveryOnlineOrder() {
+    const order = await makeRequestedOrder()
+    await acceptDelivery(testDb, driver1, order.id)
+    await storeUpdateOrderStatus(testDb, storeId, order.id, 'PREPARING', customerId)
+    await storeUpdateOrderStatus(testDb, storeId, order.id, 'READY', customerId)
+    await collectDelivery(testDb, driver1, order.id)
+    await testDb.update(orders).set({ paymentMethod: 'CARD_ONLINE' }).where(eq(orders.id, order.id))
+    const [payment] = await testDb.insert(payments).values({
+      orderId: order.id, providerOrderId: `provider-order-${order.id}`, providerTransactionId: `provider-tx-${order.id}`,
+      status: 'APPROVED', method: 'CARD', expectedAmountCents: order.totalCents,
+      expectedCurrency: 'BRL', expectedCountry: 'BR', expectedApplicationId: 'app-test', expectedAccountId: 'account-test',
+      expectedLiveMode: false, createIdempotencyKey: `create-${order.id}`,
+    }).returning()
+    return { orderId: order.id, driverId: driver1, paymentId: payment!.id }
+  }
+
+  it('repairs a missing financial intent on idempotent delivery failure retry', async () => {
+    const { orderId, driverId, paymentId } = await makeOutForDeliveryOnlineOrder()
+    await failDelivery(testDb, driverId, orderId, { reason: 'NO_ANSWER' })
+    const key = `refund-full:${paymentId}:DELIVERY_FAILED`
+    await testDb.delete(paymentOperations).where(eq(paymentOperations.businessKey, key))
+    await failDelivery(testDb, driverId, orderId, { reason: 'NO_ANSWER' })
+    expect(await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, key))).toHaveLength(1)
   })
 
   it('listDriverDeliveries: active groups by store, done shows history', async () => {

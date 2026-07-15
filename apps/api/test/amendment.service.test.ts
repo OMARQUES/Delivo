@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { createActiveStoreTestFixture, type StoreFixtureInput, migrateTestDb, truncateAll, testDb, closeTestDb } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
@@ -7,7 +7,7 @@ import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { updateStore } from '../src/services/store.service'
-import { paymentOperations, payments } from '../src/db/schema'
+import { orderAmendments, orders, paymentOperations, payments } from '../src/db/schema'
 import {
   AmendmentError,
   approveAmendment,
@@ -180,6 +180,24 @@ describe('rejectAmendment', () => {
     const detail = await getCustomerOrder(testDb, customerId, orderId)
     expect(detail!.status).toBe('CANCELLED')
     expect((await testDb.select().from(paymentOperations)).some((op) => op.type === 'REFUND_FULL')).toBe(true)
+  })
+
+  it('rolls back rejection and financial intent when the order is no longer eligible', async () => {
+    const { orderId, cocaItemId } = await makeAcceptedPaidOrder()
+    const amendment = await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
+    await testDb.update(orders).set({ status: 'OUT_FOR_DELIVERY' }).where(eq(orders.id, orderId))
+    await expect(rejectAmendment(testDb, customerId, orderId)).rejects.toMatchObject({ status: 409 })
+    expect((await testDb.select().from(orderAmendments).where(eq(orderAmendments.id, amendment.id)))[0]!.status).toBe('PROPOSED')
+    expect(await testDb.select().from(paymentOperations)).toHaveLength(0)
+  })
+
+  it('allows only one concurrent amendment decision and persists one financial intent', async () => {
+    const { orderId, cocaItemId } = await makeAcceptedPaidOrder()
+    await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
+    const results = await Promise.allSettled([approveAmendment(testDb, customerId, orderId), rejectAmendment(testDb, customerId, orderId)])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((await testDb.select().from(paymentOperations)).length).toBeLessThanOrEqual(1)
+    expect((await testDb.select().from(orderAmendments))[0]!.status).not.toBe('PROPOSED')
   })
 })
 

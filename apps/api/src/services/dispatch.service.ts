@@ -338,38 +338,35 @@ export async function failDelivery(
   orderId: string,
   input: DeliveryFailInput,
 ) {
-  const [existing] = await db.select().from(orders).where(and(
-    eq(orders.id, orderId), eq(orders.driverId, driverUserId),
-  )).limit(1)
-  let failed = existing
-  if (existing?.status !== 'DELIVERY_FAILED' || existing.returnPendingAt == null) {
-    failed = await db.transaction(async (tx) => {
-      const [candidate] = await tx.select().from(orders).where(and(
-        eq(orders.id, orderId), eq(orders.driverId, driverUserId), eq(orders.status, 'OUT_FOR_DELIVERY'),
-      )).limit(1)
-      if (!candidate) throw new DispatchError('Pedido não está em rota', 409)
-      let returnDriverPayCents = candidate.deliveryFeeCents ?? 0
-      if (candidate.shiftId) {
-        const [shift] = await tx.select().from(driverShifts).where(eq(driverShifts.id, candidate.shiftId)).for('update')
-        if (shift && shift.storeId === candidate.storeId && shift.driverUserId === driverUserId) {
-          returnDriverPayCents = shift.perDeliveryCents
-        }
-      }
-      const now = new Date()
-      const [updated] = await tx.update(orders).set({
-        status: 'DELIVERY_FAILED', failReason: input.reason,
-        returnPendingAt: now, returnDriverPayCents,
-      }).where(and(
-        eq(orders.id, orderId), eq(orders.driverId, driverUserId), eq(orders.status, 'OUT_FOR_DELIVERY'),
-      )).returning()
-      if (!updated) throw new DispatchError('Pedido não está em rota', 409)
-      await addEvent(tx, orderId, 'DELIVERY_FAILED', 'DRIVER', driverUserId, input.note ?? input.reason)
+  return db.transaction(async (tx) => {
+    const [candidate] = await tx.select().from(orders).where(and(
+      eq(orders.id, orderId), eq(orders.driverId, driverUserId),
+    )).for('update')
+    if (!candidate) throw new DispatchError('Pedido não está em rota', 409)
+    const now = new Date()
+    if (candidate.status === 'DELIVERY_FAILED' && candidate.returnPendingAt !== null) {
       await enqueueOrderPaymentDisposition(tx, orderId, 'DELIVERY_FAILED', now)
-      return updated
-    })
-  }
-  if (!failed) throw new DispatchError('Pedido não está em rota', 409)
-  return failed
+      return candidate
+    }
+    if (candidate.status !== 'OUT_FOR_DELIVERY') throw new DispatchError('Pedido não está em rota', 409)
+    let returnDriverPayCents = candidate.deliveryFeeCents ?? 0
+    if (candidate.shiftId) {
+      const [shift] = await tx.select().from(driverShifts).where(eq(driverShifts.id, candidate.shiftId)).for('update')
+      if (shift && shift.storeId === candidate.storeId && shift.driverUserId === driverUserId) {
+        returnDriverPayCents = shift.perDeliveryCents
+      }
+    }
+    const [updated] = await tx.update(orders).set({
+      status: 'DELIVERY_FAILED', failReason: input.reason,
+      returnPendingAt: now, returnDriverPayCents,
+    }).where(and(
+      eq(orders.id, orderId), eq(orders.driverId, driverUserId), eq(orders.status, 'OUT_FOR_DELIVERY'),
+    )).returning()
+    if (!updated) throw new DispatchError('Pedido não está em rota', 409)
+    await addEvent(tx, orderId, 'DELIVERY_FAILED', 'DRIVER', driverUserId, input.note ?? input.reason)
+    await enqueueOrderPaymentDisposition(tx, orderId, 'DELIVERY_FAILED', now)
+    return updated
+  })
 }
 
 const DRIVER_ACTIVE: OrderStatus[] = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'AWAITING_DRIVER', 'OUT_FOR_DELIVERY']

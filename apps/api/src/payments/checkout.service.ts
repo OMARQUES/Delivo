@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import type { Db, DbTransaction } from '../db/client'
 import { orderEvents, orders, payments, users } from '../db/schema'
 import { PaymentProviderError, type PaymentProvider } from './provider'
-import { applyProviderSnapshot } from './transition.service'
+import { applyProviderSnapshotInTransaction } from './transition.service'
 
 export type CheckoutErrorCode = 'PAYMENT_REJECTED' | 'PAYMENT_REVIEW_REQUIRED' | 'PAYMENT_UNCERTAIN'
 
@@ -53,7 +53,16 @@ export async function createOnlinePayment(db: Db, provider: PaymentProvider, inp
     const snapshot = await provider.createOrder(payment.method === 'PIX'
       ? { method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: input.payerEmail, idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(Date.now() + 15 * 60_000) }
       : { method: 'CARD', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: input.payerEmail, idempotencyKey: payment.createIdempotencyKey, cardToken: input.card?.token ?? '', cardPaymentMethodId: input.card?.methodId ?? '', installments: 1 })
-    const result = await applyProviderSnapshot(db, payment.id, snapshot, new Date())
+    const persisted = await whileStillUncertain(db, payment.id, (tx) => applyProviderSnapshotInTransaction(tx, payment.id, snapshot, new Date()))
+    if (!persisted.applied) {
+      const [current] = await db.select().from(payments).where(eq(payments.id, payment.id)).limit(1)
+      if (!current || current.reconciliationState === 'REVIEW_REQUIRED') throw new CheckoutError('PAYMENT_REVIEW_REQUIRED', 503)
+      if (current.status === 'REJECTED' || current.status === 'CANCELLED' || current.status === 'EXPIRED') throw new CheckoutError('PAYMENT_REJECTED', 402)
+      return current.method === 'PIX' && current.qrCode && current.qrCodeBase64
+        ? { kind: 'PIX', qrCode: current.qrCode, qrCodeBase64: current.qrCodeBase64, expiresAt: (current.expiresAt ?? new Date()).toISOString() }
+        : { kind: current.status === 'APPROVED' ? 'APPROVED' : 'PENDING' }
+    }
+    const result = persisted.value
     if (result.decision === 'REVIEW_REQUIRED') throw new CheckoutError('PAYMENT_REVIEW_REQUIRED', 503)
     if (result.decision === 'REJECTED') throw new CheckoutError('PAYMENT_REJECTED', 402)
     if (payment.method === 'PIX' && snapshot.pix) return { kind: 'PIX', qrCode: snapshot.pix.qrCode, qrCodeBase64: snapshot.pix.qrCodeBase64, expiresAt: (snapshot.pix.expiresAt ?? payment.expiresAt ?? new Date()).toISOString() }
@@ -66,10 +75,26 @@ export async function createOnlinePayment(db: Db, provider: PaymentProvider, inp
 
 export type PayerEmailResolver = (userEmail: string | null, userId: string) => string
 
+type StillUncertainMutation<T> = (tx: DbTransaction, payment: typeof payments.$inferSelect) => Promise<T>
+
+async function whileStillUncertain<T>(db: Db, paymentId: string, mutation: StillUncertainMutation<T>) {
+  return db.transaction(async (tx) => {
+    const [current] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for('update')
+    if (!current || current.status !== 'PENDING' || current.providerOrderId !== null) return { applied: false as const }
+    return { applied: true as const, value: await mutation(tx, current) }
+  })
+}
+
+async function currentRecoveryOutcome(db: Db, paymentId: string, fallback: 'RETRY_PIX' | 'FRESH_CARD_REQUIRED' | 'REVIEW_REQUIRED'): Promise<'RECOVERED' | 'RETRY_PIX' | 'FRESH_CARD_REQUIRED' | 'REVIEW_REQUIRED'> {
+  const [current] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1)
+  if (!current) return 'REVIEW_REQUIRED'
+  if (current.providerOrderId !== null || current.status !== 'PENDING') return 'RECOVERED'
+  if (current.reconciliationState === 'REVIEW_REQUIRED') return 'REVIEW_REQUIRED'
+  return fallback
+}
+
 async function persistRecoveryReview(db: Db, paymentId: string, now: Date, failure: string) {
-  await db.transaction(async (tx) => {
-    const [payment] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for('update')
-    if (!payment) return
+  return whileStillUncertain(db, paymentId, async (tx, payment) => {
     const [order] = await tx.select({ status: orders.status }).from(orders).where(eq(orders.id, payment.orderId)).limit(1)
     const changed = payment.reconciliationState !== 'REVIEW_REQUIRED' || payment.reconciliationFailure !== failure
     await tx.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: failure, nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, payment.id))
@@ -78,9 +103,7 @@ async function persistRecoveryReview(db: Db, paymentId: string, now: Date, failu
 }
 
 async function expireUncertainPix(db: Db, paymentId: string, now: Date) {
-  await db.transaction(async (tx) => {
-    const [payment] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for('update')
-    if (!payment || payment.status !== 'PENDING') return
+  return whileStillUncertain(db, paymentId, async (tx, payment) => {
     const [order] = await tx.select().from(orders).where(eq(orders.id, payment.orderId)).for('update')
     if (!order) return
     await tx.update(payments).set({ status: 'EXPIRED', reconciliationState: 'HEALTHY', reconciliationFailure: null, nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, payment.id))
@@ -108,45 +131,51 @@ export async function recoverUncertainCreate(
     matches = await provider.searchOrders(payment.orderId)
   } catch (error) {
     if (payment.method === 'PIX' && error instanceof PaymentProviderError && ['TRANSIENT_UNCERTAIN', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE'].includes(error.kind)) {
-      await db.update(payments).set({ reconciliationState: 'PENDING', reconciliationFailure: error.kind, nextReconcileAt: new Date(now.getTime() + 60_000), lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, payment.id))
-      return 'RETRY_PIX'
+      const persisted = await whileStillUncertain(db, payment.id, async (tx, current) => {
+        await tx.update(payments).set({ reconciliationState: 'PENDING', reconciliationFailure: error.kind, nextReconcileAt: new Date(now.getTime() + 60_000), lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+      })
+      return persisted.applied ? 'RETRY_PIX' : currentRecoveryOutcome(db, payment.id, 'RETRY_PIX')
     }
-    await persistRecoveryReview(db, payment.id, now, error instanceof PaymentProviderError ? error.kind : 'SEARCH_FAILED')
-    return 'REVIEW_REQUIRED'
+    const persisted = await persistRecoveryReview(db, payment.id, now, error instanceof PaymentProviderError ? error.kind : 'SEARCH_FAILED')
+    return persisted.applied ? 'REVIEW_REQUIRED' : currentRecoveryOutcome(db, payment.id, 'REVIEW_REQUIRED')
   }
   if (matches.length > 1) {
-    await persistRecoveryReview(db, payment.id, now, 'AMBIGUOUS_PROVIDER_CREATE')
-    return 'REVIEW_REQUIRED'
+    const persisted = await persistRecoveryReview(db, payment.id, now, 'AMBIGUOUS_PROVIDER_CREATE')
+    return persisted.applied ? 'REVIEW_REQUIRED' : currentRecoveryOutcome(db, payment.id, 'REVIEW_REQUIRED')
   }
   if (matches.length === 0 && payment.method === 'CARD') {
-    await persistRecoveryReview(db, payment.id, now, 'FRESH_CARD_REQUIRED')
-    return 'FRESH_CARD_REQUIRED'
+    const persisted = await persistRecoveryReview(db, payment.id, now, 'FRESH_CARD_REQUIRED')
+    return persisted.applied ? 'FRESH_CARD_REQUIRED' : currentRecoveryOutcome(db, payment.id, 'FRESH_CARD_REQUIRED')
   }
   if (matches.length === 0 && payment.method === 'PIX') {
     if (payment.expiresAt && payment.expiresAt <= now) {
-      await expireUncertainPix(db, payment.id, now)
-      return 'RECOVERED'
+      const expired = await expireUncertainPix(db, payment.id, now)
+      return expired.applied ? 'RECOVERED' : currentRecoveryOutcome(db, payment.id, 'RETRY_PIX')
     }
     const [identity] = await db.select({ email: users.email, userId: users.id }).from(orders).innerJoin(users, eq(users.id, orders.customerId)).where(eq(orders.id, payment.orderId)).limit(1)
     if (!identity) {
-      await persistRecoveryReview(db, payment.id, now, 'PAYER_NOT_FOUND')
-      return 'REVIEW_REQUIRED'
+      const persisted = await persistRecoveryReview(db, payment.id, now, 'PAYER_NOT_FOUND')
+      return persisted.applied ? 'REVIEW_REQUIRED' : currentRecoveryOutcome(db, payment.id, 'REVIEW_REQUIRED')
     }
     try {
       const accountId = await provider.getAccountId()
       if (accountId !== payment.expectedAccountId) throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
       const snapshot = await provider.createOrder({ method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: resolvePayerEmail(identity.email, identity.userId), idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(now.getTime() + 15 * 60_000) })
-      const result = await applyProviderSnapshot(db, payment.id, snapshot, now)
-      return result.decision === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : 'RECOVERED'
+      const persisted = await whileStillUncertain(db, payment.id, (tx) => applyProviderSnapshotInTransaction(tx, payment.id, snapshot, now))
+      if (!persisted.applied) return currentRecoveryOutcome(db, payment.id, 'RETRY_PIX')
+      return persisted.value.decision === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : 'RECOVERED'
     } catch (error) {
       if (error instanceof PaymentProviderError && ['TRANSIENT_UNCERTAIN', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE'].includes(error.kind)) {
-        await db.update(payments).set({ reconciliationState: 'PENDING', reconciliationFailure: error.kind, nextReconcileAt: new Date(now.getTime() + 60_000), lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, payment.id))
-        return 'RETRY_PIX'
+        const persisted = await whileStillUncertain(db, payment.id, async (tx, current) => {
+          await tx.update(payments).set({ reconciliationState: 'PENDING', reconciliationFailure: error.kind, nextReconcileAt: new Date(now.getTime() + 60_000), lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+        })
+        return persisted.applied ? 'RETRY_PIX' : currentRecoveryOutcome(db, payment.id, 'RETRY_PIX')
       }
-      await persistRecoveryReview(db, payment.id, now, error instanceof PaymentProviderError ? error.kind : 'CREATE_FAILED')
-      return 'REVIEW_REQUIRED'
+      const persisted = await persistRecoveryReview(db, payment.id, now, error instanceof PaymentProviderError ? error.kind : 'CREATE_FAILED')
+      return persisted.applied ? 'REVIEW_REQUIRED' : currentRecoveryOutcome(db, payment.id, 'REVIEW_REQUIRED')
     }
   }
-  const result = await applyProviderSnapshot(db, payment.id, matches[0]!, now)
-  return result.decision === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : 'RECOVERED'
+  const persisted = await whileStillUncertain(db, payment.id, (tx) => applyProviderSnapshotInTransaction(tx, payment.id, matches[0]!, now))
+  if (!persisted.applied) return currentRecoveryOutcome(db, payment.id, 'REVIEW_REQUIRED')
+  return persisted.value.decision === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : 'RECOVERED'
 }

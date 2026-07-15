@@ -537,7 +537,7 @@ export async function cancelStalePendingOrders(
 - `failDelivery` becomes repair-idempotent: an already failed delivery verifies or recreates its deterministic financial intent.
 - Removes `expireStaleAwaitingPayment`; there is no compatibility wrapper.
 
-- [ ] **Step 1: Add RED uncertain-create race tests**
+- [x] **Step 1: Add RED uncertain-create race tests**
 
 Add this helper near the top of `payment.service.test.ts`:
 
@@ -616,7 +616,7 @@ pnpm --filter @delivery/api exec vitest run test/payment.service.test.ts --no-fi
 
 Expected: FAIL because stale recovery writes currently use only payment ID.
 
-- [ ] **Step 2: Add RED amendment atomicity tests**
+- [x] **Step 2: Add RED amendment atomicity tests**
 
 Extend `amendment.service.test.ts`:
 
@@ -658,7 +658,7 @@ pnpm --filter @delivery/api exec vitest run test/amendment.service.test.ts --no-
 
 Expected: the ineligible rejection test FAILS because the amendment is currently resolved even when order cancellation updates zero rows.
 
-- [ ] **Step 3: Add RED failed-delivery repair and bounded stale-order tests**
+- [x] **Step 3: Add RED failed-delivery repair and bounded stale-order tests**
 
 Extend `dispatch.service.test.ts` with an online approved-payment fixture for an order already moved to `OUT_FOR_DELIVERY`, then add:
 
@@ -725,7 +725,7 @@ pnpm --filter @delivery/api exec vitest run test/dispatch.service.test.ts test/c
 
 Expected: FAIL because idempotent delivery failure does not inspect its operation and stale selection has no limit.
 
-- [ ] **Step 4: Implement locked still-uncertain persistence**
+- [x] **Step 4: Implement locked still-uncertain persistence**
 
 In `checkout.service.ts`, add a single transaction helper:
 
@@ -757,7 +757,7 @@ If it returns `{ applied: false }`, reload the payment. Return `RECOVERED` when 
 
 For a returned snapshot, use one transaction that first confirms still-uncertain and then calls `applyProviderSnapshotInTransaction` with the same transaction.
 
-- [ ] **Step 5: Lock and revalidate amendments inside their decision transaction**
+- [x] **Step 5: Lock and revalidate amendments inside their decision transaction**
 
 In both amendment decision functions:
 
@@ -777,7 +777,7 @@ if (cancelled.length !== 1) {
 
 Do not enqueue disposition or resolve the amendment after a failed order compare-and-set.
 
-- [ ] **Step 6: Repair failed-delivery intent and bound stale cancellations**
+- [x] **Step 6: Repair failed-delivery intent and bound stale cancellations**
 
 In `failDelivery`, wrap both the first transition and already-failed idempotent path in a transaction. Lock the order and call:
 
@@ -803,7 +803,7 @@ Delete `expireStaleAwaitingPayment` and remove now-unused `PIX_EXPIRATION_MINUTE
 ! rg -n "expireStaleAwaitingPayment" apps/api/src apps/api/test
 ```
 
-- [ ] **Step 7: Run Task 17 focused and package gates**
+- [x] **Step 7: Run Task 17 focused and package gates**
 
 ```bash
 pnpm --filter @delivery/api exec vitest run test/payment.service.test.ts test/amendment.service.test.ts test/dispatch.service.test.ts test/cron.test.ts --no-file-parallelism --maxWorkers=1

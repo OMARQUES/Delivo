@@ -1,7 +1,6 @@
-import { and, eq, lt, sql } from 'drizzle-orm'
-import { PIX_EXPIRATION_MINUTES } from '@delivery/shared/constants'
+import { eq, sql } from 'drizzle-orm'
 import type { Db, DbTransaction } from '../db/client'
-import { orders, payments } from '../db/schema'
+import { payments } from '../db/schema'
 import { enqueuePaymentOperation } from '../payments/operation-queue.service'
 
 export class PaymentError extends Error {
@@ -44,27 +43,4 @@ export async function getOrderPayment(db: Db | DbTransaction, orderId: string, l
   if (lock) query = query.for('update') as typeof query
   const [row] = await query
   return row ?? null
-}
-
-/** Cron: AWAITING_PAYMENT velhos -> CANCELLED + payment EXPIRED. */
-export async function expireStaleAwaitingPayment(
-  db: Db,
-  olderThanMinutes = PIX_EXPIRATION_MINUTES,
-) {
-  const cutoff = new Date(Date.now() - olderThanMinutes * 60_000)
-  const candidates = await db.select({ id: orders.id }).from(orders)
-    .where(and(eq(orders.status, 'AWAITING_PAYMENT'), lt(orders.createdAt, cutoff)))
-  const stale: { id: string }[] = []
-  const { addEvent } = await import('./order-events')
-  const { expirePendingAmendment } = await import('./amendment.service')
-  for (const candidate of candidates) await db.transaction(async (tx) => {
-    const [order] = await tx.update(orders).set({ status: 'CANCELLED', batchId: null, cancelReason: 'Pagamento não realizado a tempo' })
-      .where(and(eq(orders.id, candidate.id), eq(orders.status, 'AWAITING_PAYMENT'))).returning({ id: orders.id })
-    if (!order) return
-    await addEvent(tx, order.id, 'CANCELLED', 'SYSTEM', null, 'pagamento expirado')
-    await expirePendingAmendment(tx, order.id)
-    await enqueueOrderPaymentDisposition(tx, order.id, 'PIX_EXPIRED', new Date())
-    stale.push(order)
-  })
-  return stale.length
 }

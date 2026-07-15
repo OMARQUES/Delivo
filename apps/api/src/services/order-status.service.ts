@@ -44,20 +44,27 @@ export async function customerRequestCancel(db: Db, customerId: string, orderId:
 }
 
 /** Cron: PENDING velho -> CANCELLED. Retorna quantos. */
-export async function cancelStalePendingOrders(db: Db, olderThanMinutes = 30) {
+export async function cancelStalePendingOrders(db: Db, olderThanMinutes = 30, limit = 100) {
   const cutoff = new Date(Date.now() - olderThanMinutes * 60_000)
-  const candidates = await db.select({ id: orders.id }).from(orders).where(and(eq(orders.status, 'PENDING'), lt(orders.createdAt, cutoff)))
-  let count = 0
-  for (const candidate of candidates) await db.transaction(async (tx) => {
-    const [row] = await tx.update(orders).set({ status: 'CANCELLED', batchId: null, cancelReason: 'Loja não confirmou a tempo' })
-      .where(and(eq(orders.id, candidate.id), eq(orders.status, 'PENDING'))).returning({ id: orders.id })
-    if (!row) return
-    await addEvent(tx, row.id, 'CANCELLED', 'SYSTEM', null, 'timeout 30min')
-    await expirePendingAmendment(tx, row.id)
-    await enqueueOrderPaymentDisposition(tx, row.id, 'STALE_PENDING', new Date())
-    count++
+  const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)))
+  return db.transaction(async (tx) => {
+    const candidates = await tx.select({ id: orders.id }).from(orders)
+      .where(and(eq(orders.status, 'PENDING'), lt(orders.createdAt, cutoff)))
+      .orderBy(orders.createdAt)
+      .limit(boundedLimit)
+      .for('update', { skipLocked: true })
+    let count = 0
+    for (const candidate of candidates) {
+      const [row] = await tx.update(orders).set({ status: 'CANCELLED', batchId: null, cancelReason: 'Loja não confirmou a tempo' })
+        .where(and(eq(orders.id, candidate.id), eq(orders.status, 'PENDING'))).returning({ id: orders.id })
+      if (!row) continue
+      await addEvent(tx, row.id, 'CANCELLED', 'SYSTEM', null, 'timeout 30min')
+      await expirePendingAmendment(tx, row.id)
+      await enqueueOrderPaymentDisposition(tx, row.id, 'STALE_PENDING', new Date())
+      count++
+    }
+    return count
   })
-  return count
 }
 
 const STORE_ALLOWED: OrderStatus[] = ['ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']

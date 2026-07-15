@@ -39,6 +39,12 @@ async function makePayment(status: 'AWAITING_PAYMENT' | 'CANCELLED' = 'AWAITING_
   return { order, payment: payment! }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 function snapshot(orderId: string, amountCents: number, patch: Partial<ReturnType<typeof providerSnapshot>> = {}) {
   return providerSnapshot({ providerOrderId: `mp-order-${orderId}`, providerTransactionId: `mp-tx-${orderId}`, externalReference: orderId, totalAmountCents: amountCents, ...patch })
 }
@@ -216,8 +222,52 @@ describe('applyProviderSnapshot', () => {
 })
 
 describe('Orders checkout orchestration', () => {
+  it('does not overwrite a webhook result while uncertain search is in flight', async () => {
+    const { order, payment } = await makePayment()
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, payment.id))
+    const searchStarted = deferred<void>()
+    const releaseSearch = deferred<Array<ReturnType<typeof providerSnapshot>>>()
+    const recoveryProvider = fakePaymentProvider({
+      searchOrders: vi.fn(async () => {
+        searchStarted.resolve()
+        return releaseSearch.promise
+      }),
+    })
+    const recovery = recoverUncertainCreate(testDb, recoveryProvider, payment.id, new Date(), (email) => email ?? 'masked@test.local')
+    await searchStarted.promise
+    await applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents), new Date())
+    releaseSearch.resolve([])
+    await recovery
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      status: 'APPROVED',
+      providerOrderId: `mp-order-${order.id}`,
+      reconciliationState: 'HEALTHY',
+      reconciliationFailure: null,
+    })
+  })
+
+  it('does not expire an uncertain PIX that became identified during search', async () => {
+    const { order, payment } = await makePayment()
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null, expiresAt: new Date('2026-07-15T11:00:00.000Z') }).where(eq(payments.id, payment.id))
+    const searchStarted = deferred<void>()
+    const releaseSearch = deferred<Array<ReturnType<typeof providerSnapshot>>>()
+    const recoveryProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => {
+      searchStarted.resolve()
+      return releaseSearch.promise
+    }) })
+    const recovery = recoverUncertainCreate(testDb, recoveryProvider, payment.id, new Date('2026-07-15T12:00:00.000Z'), (email) => email ?? 'masked@test.local')
+    await searchStarted.promise
+    await applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents, {
+      orderStatus: 'pending', orderStatusDetail: 'pending', transactionStatus: 'pending', transactionStatusDetail: 'pending',
+    }), new Date())
+    releaseSearch.resolve([])
+    await recovery
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({ status: 'PENDING', providerOrderId: `mp-order-${order.id}` })
+  })
+
   it('persists attempt before provider call and returns PIX QR', async () => {
     const { order, payment } = await makePayment()
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, payment.id))
     const createOrderMock = vi.fn(async () => snapshot(order.id, order.totalCents))
     const provider = fakePaymentProvider({ getAccountId: vi.fn(async () => 'account-test'), createOrder: createOrderMock })
     const result = await createOnlinePayment(testDb, provider, { paymentId: payment.id, payerEmail: 'payer@test.local' })
@@ -231,6 +281,7 @@ describe('Orders checkout orchestration', () => {
     const oneProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(one.order.id, one.order.totalCents)]) })
     await expect(recoverUncertainCreate(testDb, oneProvider, one.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('RECOVERED')
     const many = await makePayment()
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, many.payment.id))
     const manyProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(many.order.id, many.order.totalCents), snapshot(many.order.id, many.order.totalCents)]) })
     await expect(recoverUncertainCreate(testDb, manyProvider, many.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('REVIEW_REQUIRED')
     const zero = await makePayment()

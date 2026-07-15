@@ -151,6 +151,18 @@ describe('cancelStalePendingOrders', () => {
     expect(n).toBe(0)
     expect((await getCustomerOrder(testDb, customerId, awaiting.id))!.status).toBe('AWAITING_PAYMENT')
   })
+
+  it('claims stale pending orders in bounded batches without duplicate dispositions', async () => {
+    const stale = await Promise.all(Array.from({ length: 3 }, async () => {
+      const { order } = await createOrder(testDb, customerId, checkout())
+      await testDb.execute(sql`update orders set created_at = now() - interval '31 minutes' where id = ${order.id}`)
+      return order
+    }))
+    expect(await cancelStalePendingOrders(testDb, 30, 2)).toBe(2)
+    expect(await cancelStalePendingOrders(testDb, 30, 2)).toBe(1)
+    expect((await Promise.all(stale.map((order) => getCustomerOrder(testDb, customerId, order.id))))
+      .filter((order) => order?.status === 'CANCELLED')).toHaveLength(3)
+  })
 })
 
 describe('deleteExpiredRateLimitBuckets', () => {

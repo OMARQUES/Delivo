@@ -109,13 +109,13 @@ export async function expirePendingAmendment(db: Db | DbTransaction, orderId: st
 }
 
 export async function approveAmendment(db: Db, customerId: string, orderId: string) {
-  const [order] = await db.select().from(orders)
-    .where(and(eq(orders.id, orderId), eq(orders.customerId, customerId)))
-  if (!order) throw new AmendmentError('Pedido não encontrado', 404)
-  const pending = await getPendingAmendment(db, orderId)
-  if (!pending) throw new AmendmentError('Sem alteração pendente', 409)
-
-  await db.transaction(async (tx) => {
+  const pending = await db.transaction(async (tx) => {
+    const [order] = await tx.select().from(orders)
+      .where(and(eq(orders.id, orderId), eq(orders.customerId, customerId))).for('update')
+    if (!order) throw new AmendmentError('Pedido não encontrado', 404)
+    if (!PROPOSABLE.includes(order.status as typeof PROPOSABLE[number])) throw new AmendmentError('Alteração só antes do pedido ficar pronto (aceito/em preparo)', 409)
+    const pending = await getPendingAmendment(tx, orderId)
+    if (!pending) throw new AmendmentError('Sem alteração pendente', 409)
     const claimed = await tx.update(orderAmendments)
       .set({ status: 'APPROVED', resolvedAt: new Date() })
       .where(and(eq(orderAmendments.id, pending.id), eq(orderAmendments.status, 'PROPOSED')))
@@ -142,19 +142,19 @@ export async function approveAmendment(db: Db, customerId: string, orderId: stri
       }
     }
     await addEvent(tx, orderId, order.status, 'CUSTOMER', customerId, `pedido ajustado (-${formatBRL(pending.refundCents)})`)
+    return pending
   })
   return { ...pending, status: 'APPROVED' as const }
 }
 
 export async function rejectAmendment(db: Db, customerId: string, orderId: string) {
-  const [order] = await db.select().from(orders)
-    .where(and(eq(orders.id, orderId), eq(orders.customerId, customerId)))
-  if (!order) throw new AmendmentError('Pedido não encontrado', 404)
-  const pending = await getPendingAmendment(db, orderId)
-  if (!pending) throw new AmendmentError('Sem alteração pendente', 409)
-
-  // mesma atomicidade do approve: claim + cancelamento na mesma tx
-  await db.transaction(async (tx) => {
+  const pending = await db.transaction(async (tx) => {
+    const [order] = await tx.select().from(orders)
+      .where(and(eq(orders.id, orderId), eq(orders.customerId, customerId))).for('update')
+    if (!order) throw new AmendmentError('Pedido não encontrado', 404)
+    if (!PROPOSABLE.includes(order.status as typeof PROPOSABLE[number])) throw new AmendmentError('Alteração só antes do pedido ficar pronto (aceito/em preparo)', 409)
+    const pending = await getPendingAmendment(tx, orderId)
+    if (!pending) throw new AmendmentError('Sem alteração pendente', 409)
     const claimed = await tx.update(orderAmendments)
       .set({ status: 'REJECTED', resolvedAt: new Date() })
       .where(and(eq(orderAmendments.id, pending.id), eq(orderAmendments.status, 'PROPOSED')))
@@ -165,9 +165,10 @@ export async function rejectAmendment(db: Db, customerId: string, orderId: strin
       .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cliente recusou a alteração proposta' })
       .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
       .returning()
+    if (cancelled.length !== 1) throw new AmendmentError('Pedido mudou — recarregue', 409)
     await enqueueOrderPaymentDisposition(tx, orderId, 'AMENDMENT_REJECTED', new Date())
-    if (cancelled.length > 0) await addEvent(tx, orderId, 'CANCELLED', 'CUSTOMER', customerId, 'recusou alteração')
-    return cancelled
+    await addEvent(tx, orderId, 'CANCELLED', 'CUSTOMER', customerId, 'recusou alteração')
+    return pending
   })
   return { ...pending, status: 'REJECTED' as const }
 }
