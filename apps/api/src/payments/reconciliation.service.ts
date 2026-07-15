@@ -136,7 +136,10 @@ export async function runPaymentReconciliation(
   if (stages.has('inbox')) await runStage(summary, async () => {
     const due = await db.select({ id: paymentWebhookInbox.id }).from(paymentWebhookInbox).where(and(eq(paymentWebhookInbox.status, 'PENDING'), or(isNull(paymentWebhookInbox.nextAttemptAt), lte(paymentWebhookInbox.nextAttemptAt, now)))).orderBy(asc(paymentWebhookInbox.nextAttemptAt), asc(paymentWebhookInbox.createdAt)).limit(capBy('inbox'))
     for (const row of due) {
-      try { await processWebhookInboxItem(db, provider, row.id, crypto.randomUUID(), now); summary.inboxProcessed++ } catch { summary.stageFailures++ }
+      try {
+        const result = await processWebhookInboxItem(db, provider, row.id, crypto.randomUUID(), now)
+        if (result === 'CLAIMED') summary.inboxProcessed++
+      } catch { summary.stageFailures++ }
     }
   })
   if (stages.has('operations')) await runStage(summary, async () => {

@@ -38,7 +38,9 @@ async function markReview(db: Db, inboxId: string, failureClass: string, now: Da
   await db.update(paymentWebhookInbox).set({ status: 'REVIEW_REQUIRED', failureClass, updatedAt: now, processedAt: now, leaseOwner: null, leasedUntil: null }).where(eq(paymentWebhookInbox.id, inboxId))
 }
 
-export async function processWebhookInboxItem(db: Db, provider: PaymentProvider, inboxId: string, leaseOwner: string, now: Date): Promise<void> {
+export type WebhookInboxProcessResult = 'CLAIMED' | 'NOT_CLAIMED'
+
+export async function processWebhookInboxItem(db: Db, provider: PaymentProvider, inboxId: string, leaseOwner: string, now: Date): Promise<WebhookInboxProcessResult> {
   const [claimed] = await db.transaction(async (tx) => {
     const [row] = await tx.select().from(paymentWebhookInbox).where(and(
       eq(paymentWebhookInbox.id, inboxId),
@@ -49,14 +51,14 @@ export async function processWebhookInboxItem(db: Db, provider: PaymentProvider,
     const [updated] = await tx.update(paymentWebhookInbox).set({ status: 'PROCESSING', attemptCount: row.attemptCount + 1, leaseOwner, leasedUntil: new Date(now.getTime() + 5 * 60_000), updatedAt: now }).where(eq(paymentWebhookInbox.id, row.id)).returning()
     return updated ? [updated] : []
   })
-  if (!claimed) return
+  if (!claimed) return 'NOT_CLAIMED'
 
   try {
     const providerAccount = await provider.getAccountId()
     const snapshot = await provider.getOrder(claimed.resourceId)
     if (snapshot.accountId !== providerAccount) {
       await markReview(db, inboxId, 'MISMATCH_ACCOUNT', now)
-      return
+      return 'CLAIMED'
     }
     const byProviderId = await db.select({ id: payments.id }).from(payments).where(eq(payments.providerOrderId, snapshot.providerOrderId)).limit(2)
     const candidates = byProviderId.length > 0 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(snapshot.externalReference)
@@ -64,17 +66,18 @@ export async function processWebhookInboxItem(db: Db, provider: PaymentProvider,
       : await db.select({ id: payments.id }).from(payments).where(eq(payments.orderId, snapshot.externalReference)).limit(2)
     if (candidates.length !== 1) {
       await markReview(db, inboxId, candidates.length === 0 ? 'UNKNOWN_ORDER' : 'AMBIGUOUS_ORDER', now)
-      return
+      return 'CLAIMED'
     }
     await applyProviderSnapshot(db, candidates[0]!.id, snapshot, now)
     await db.update(paymentWebhookInbox).set({ status: 'PROCESSED', processedAt: now, failureClass: null, leaseOwner: null, leasedUntil: null, updatedAt: now }).where(eq(paymentWebhookInbox.id, inboxId))
+    return 'CLAIMED'
   } catch (error) {
     const failureClass = error instanceof PaymentProviderError ? error.kind : 'UNEXPECTED'
     const retryAfterSeconds = error instanceof PaymentProviderError ? error.retryAfterSeconds : undefined
     const disposition = retryDisposition(now, claimed.attemptCount, 0.1, retryAfterSeconds)
     if (disposition.kind === 'REVIEW_REQUIRED') {
       await markReview(db, inboxId, 'RETRY_EXHAUSTED', now)
-      return
+      return 'CLAIMED'
     }
     await db.update(paymentWebhookInbox).set({ status: 'PENDING', nextAttemptAt: disposition.nextAttemptAt, failureClass, leaseOwner: null, leasedUntil: null, updatedAt: now }).where(eq(paymentWebhookInbox.id, inboxId))
     throw error

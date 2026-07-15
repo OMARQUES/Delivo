@@ -4,10 +4,11 @@ import { createActiveStoreTestFixture, createVerifiedTestAccount, migrateTestDb,
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { updateStore } from '../src/services/store.service'
-import { paymentOperations, payments } from '../src/db/schema'
+import { paymentOperations, paymentWebhookInbox, payments } from '../src/db/schema'
 import { enqueueWebhook } from '../src/payments/webhook-inbox.service'
 import { runPaymentReconciliation, type ReconciliationOptions, type ReconciliationStage } from '../src/payments/reconciliation.service'
 import { PaymentProviderError, type PaymentProvider, type ProviderOrderSnapshot } from '../src/payments/provider'
+import { enqueuePaymentOperation } from '../src/payments/operation-queue.service'
 
 const storeInput: StoreFixtureInput = { name: 'Pizzaria', slug: 'pizzaria', category: 'PIZZARIA', phone: '4433334444', city: 'C', addressText: 'Rua A, 1', lat: -23.55, lng: -51.9, owner: { name: 'João', email: 'recon-store@test.local', password: 'senha123' } }
 let customerId: string
@@ -93,6 +94,50 @@ describe('payment reconciliation', () => {
     ])
     expect(first.snapshotsRefreshed + second.snapshotsRefreshed).toBe(1)
     expect((await testDb.select().from(payments).where(eq(payments.id, pending.id)))[0]!.reconciliationAttemptCount).toBe(0)
+  })
+
+  it('counts each overlapping inbox, operation, and snapshot claim once', async () => {
+    const operationPayment = await pendingPayment()
+    const snapshotPayment = await pendingPayment()
+    const now = new Date()
+    await testDb.update(payments).set({ status: 'APPROVED' }).where(eq(payments.id, operationPayment.id))
+    const cancelKey = `cancel:${operationPayment.id}:overlap`
+    const queuedOperation = await enqueuePaymentOperation(testDb, {
+      paymentId: operationPayment.id,
+      type: 'CANCEL',
+      amountCents: null,
+      businessKey: cancelKey,
+      idempotencyKey: cancelKey,
+    }, now)
+    const queuedInbox = await enqueueWebhook(testDb, {
+      topic: 'order',
+      resourceId: 'inbox-overlap-resource',
+      requestId: 'inbox-overlap-request',
+      signatureTimestamp: '1',
+    }, now)
+    const operationSnapshot = snapshot(operationPayment, { orderStatus: 'canceled', orderStatusDetail: 'canceled' })
+    const inboxSnapshot = snapshot(snapshotPayment, {
+      providerOrderId: 'inbox-only-order',
+      providerTransactionId: 'inbox-only-transaction',
+      externalReference: 'missing-order',
+    })
+    const sharedProvider = provider({
+      getOrder: vi.fn(async (providerOrderId: string) => providerOrderId === 'inbox-overlap-resource' ? inboxSnapshot : snapshot(snapshotPayment)),
+      cancelOrder: vi.fn(async () => operationSnapshot),
+    }, snapshotPayment)
+
+    const [first, second] = await Promise.all([
+      runPaymentReconciliation(testDb, sharedProvider, now, context, only('inbox', 'operations', 'snapshots')),
+      runPaymentReconciliation(testDb, sharedProvider, now, context, only('inbox', 'operations', 'snapshots')),
+    ])
+
+    expect(first.inboxProcessed + second.inboxProcessed).toBe(1)
+    expect(first.operationsReleased + second.operationsReleased).toBe(1)
+    expect(first.operationsProcessed + second.operationsProcessed).toBe(1)
+    expect(first.snapshotsRefreshed + second.snapshotsRefreshed).toBe(1)
+    expect((await testDb.select().from(paymentWebhookInbox).where(eq(paymentWebhookInbox.id, queuedInbox.id)))[0]?.attemptCount).toBe(1)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queuedOperation.id)))[0]?.attemptCount).toBe(1)
+    expect(sharedProvider.cancelOrder).toHaveBeenCalledTimes(1)
   })
 
   it('failure in one stage does not prevent later stages', async () => {

@@ -125,7 +125,7 @@ describe('webhook inbox processor', () => {
     const queued = await enqueueWebhook(testDb, { topic: 'order', resourceId: 'order-1', requestId: 'attempt-eight', signatureTimestamp: '1' }, now)
     await testDb.update(paymentWebhookInbox).set({ attemptCount: 7 }).where(eq(paymentWebhookInbox.id, queued.id))
     const failing = provider({ getOrder: vi.fn(async () => { throw new PaymentProviderError('PROVIDER_UNAVAILABLE') }) })
-    await expect(processWebhookInboxItem(testDb, failing, queued.id, 'worker-a', now)).resolves.toBeUndefined()
+    await expect(processWebhookInboxItem(testDb, failing, queued.id, 'worker-a', now)).resolves.toBe('CLAIMED')
     expect((await testDb.select().from(paymentWebhookInbox).where(eq(paymentWebhookInbox.id, queued.id)))[0]).toMatchObject({
       status: 'REVIEW_REQUIRED',
       attemptCount: 8,

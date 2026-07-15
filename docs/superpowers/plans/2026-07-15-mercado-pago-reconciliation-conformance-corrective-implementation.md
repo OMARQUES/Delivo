@@ -162,13 +162,14 @@ After Task 21, use `superpowers:requesting-code-review` and `superpowers:finishi
 - Modify: `apps/api/src/payments/webhook-inbox.service.ts`
 - Modify: `apps/api/src/payments/reconciliation.service.ts`
 - Modify: `apps/api/test/payment-reconciliation.test.ts`
+- Modify: `apps/api/test/webhooks.routes.test.ts`
 
 **Interfaces:**
 - Consumes: existing `processWebhookInboxItem(db, provider, inboxId, leaseOwner, now)` locking flow.
 - Produces: `WebhookInboxProcessResult = 'CLAIMED' | 'NOT_CLAIMED'`.
 - Produces: `runPaymentReconciliation` increments `inboxProcessed` only for `CLAIMED`.
 
-- [ ] **Step 1: Add failing overlap test**
+- [x] **Step 1: Add failing overlap test**
 
 Extend test imports:
 
@@ -191,13 +192,13 @@ expect(provider.cancelOrder).toHaveBeenCalledTimes(1)
 
 Provider fixture must return `CANCELLED` for `cancelOrder`, an unknown-order snapshot for the inbox resource, and the normal pending snapshot for the payment snapshot stage.
 
-- [ ] **Step 2: Run focused test and verify RED**
+- [x] **Step 2: Run focused test and verify RED**
 
 Run `pnpm --filter @delivery/api exec vitest run test/payment-reconciliation.test.ts --no-file-parallelism --maxWorkers=1`.
 
 Expected: new test fails because concurrent inbox runs can both increment `inboxProcessed` after one loses claim.
 
-- [ ] **Step 3: Add explicit result type and return values**
+- [x] **Step 3: Add explicit result type and return values**
 
 In `webhook-inbox.service.ts`, add:
 
@@ -214,13 +215,13 @@ const result = await processWebhookInboxItem(db, provider, row.id, crypto.random
 if (result === 'CLAIMED') summary.inboxProcessed++
 ```
 
-- [ ] **Step 4: Run focused and API tests**
+- [x] **Step 4: Run focused and API tests**
 
 Run `pnpm --filter @delivery/api exec vitest run test/payment-reconciliation.test.ts test/webhooks.routes.test.ts --no-file-parallelism --maxWorkers=1` and `pnpm --filter @delivery/api test`.
 
 Expected: focused tests and full API suite pass; direct webhook callers continue working while ignoring returned result.
 
-- [ ] **Step 5: Review and commit Task 19**
+- [x] **Step 5: Review and commit Task 19**
 
 Run `git diff --check`, inspect changed files, then execute:
 
