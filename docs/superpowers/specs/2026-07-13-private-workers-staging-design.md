@@ -1,6 +1,6 @@
 # Private Workers Staging Design
 
-**Status:** approved design
+**Status:** implemented and validated in private staging; production remains blocked
 
 **Date:** 2026-07-13
 

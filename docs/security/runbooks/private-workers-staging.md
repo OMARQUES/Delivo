@@ -95,12 +95,44 @@ logs_sanitized: PASS
 notes_without_pii_or_secrets: CUSTOMER/recovery private smoke passed; STORE and production remain blocked.
 ```
 
+### ADMIN bootstrap evidence
+
+Depois de confirmação destrutiva explícita, o banco descartável foi recriado e
+as migrations `0000`–`0025` foram reaplicadas. O runtime role foi criado por SQL,
+recebeu novamente somente os grants mínimos e voltou a operar pelo Hyperdrive.
+O bootstrap ADMIN foi então validado isoladamente, sem reaproveitar os dados do
+smoke CUSTOMER.
+
+Uma rotação preventiva de credenciais e um segundo reset confirmado ocorreram
+antes da evidência final. Nenhum valor anterior permanece ativo.
+
+```text
+worker_versions: api=ec8fcaee-d8af-4860-aacb-fd053c2292a9; web=206e4a7d-8f2a-4f48-8234-c5dd9eebd845; driver=938d0d57-882e-4bad-8d19-739296f9a6e3
+pre_validation_credential_rotation: PASS
+staging_database_reset: PASS
+migrations_0000_0025: PASS
+runtime_role_sql_creation: PASS
+runtime_role_least_privilege: PASS
+hyperdrive_authorized_db_probe: PASS
+admin_pending_without_session: PASS
+admin_resend_cooldown: PASS
+admin_activation: PASS
+admin_activation_without_session: PASS
+admin_login_after_activation: PASS
+admin_bootstrap_idempotent: PASS
+notes_without_pii_or_secrets: ADMIN bootstrap passed independently; no session existed before explicit login; STORE and production remain blocked.
+```
+
 ## R2/Hyperdrive evidence
 
 - O Worker recuperou pelo binding `BUCKET` o mesmo payload aleatório enviado ao bucket remoto; status e SHA-256 coincidiram.
 - O objeto remoto e o arquivo temporário foram removidos após a comparação.
 - Hyperdrive usa `delivery-db-staging`, runtime role `delivo_app_staging`, TLS `require`, limite cinco e cache desabilitado.
 - A verificação SQL do runtime role confirmou DML necessário sem ownership, DDL, administração ou herança de `neon_superuser`.
+- Criar `delivo_app_staging` somente por SQL, com `LOGIN NOINHERIT` e atributos
+  não privilegiados. Roles criados pelo control plane Neon não atendem esta
+  fronteira. Após recriar o banco, reaplicar grants e executar
+  `verify-staging-runtime.sql` antes de atualizar a senha no Hyperdrive.
 
 ## Rollback
 
@@ -119,4 +151,5 @@ notes_without_pii_or_secrets: CUSTOMER/recovery private smoke passed; STORE and 
 - Mercado Pago webhook bypass/signature smoke, Firebase e Google OAuth estão fora deste rollout.
 - Bounce, complaint, suppression e webhook Resend continuam adiados.
 - `/docs`, `/openapi.json` e `/health/db` permanecem 404 fora de local.
-- A validação ADMIN exige reset destrutivo separado e confirmação explícita.
+- ADMIN foi validado isoladamente em staging; isso não autoriza bootstrap de produção.
+- STORE activation permanece deferida até existir domínio de envio verificado.

@@ -1,5 +1,12 @@
 # Go-to-Production — sair do local e rodar em ambiente real
 
+> **Status em 2026-07-13:** este documento foi substituído para staging pela
+> [spec de staging privado](../specs/2026-07-13-private-workers-staging-design.md)
+> e pelo runbook `docs/security/runbooks/private-workers-staging.md`.
+> O histórico abaixo preserva decisões antigas e não deve ser executado literalmente.
+> O schema atual aplica migrations `0000`–`0025`; SEC-01, SEC-02 e SEC-03A já estão
+> remediados em código. Produção continua bloqueada.
+
 > **Para o executor (Codex):** este documento mistura **passos manuais de console** (marcados 🖐 — só o Otávio pode fazer, exigem contas/credenciais) e **tarefas de código/CLI** (marcadas 🤖 — executáveis no repo). Execute na ordem das fases; cada fase termina com um smoke test. Não invente valores de secret — quando faltar credencial, pare e liste o que falta.
 
 **Meta:** API (Cloudflare Worker) + web loja/cliente + app driver servidos publicamente, banco Neon, pagamentos MP reais de teste, push FCM, mídia em R2 — suficientes para testes reais com usuários, ainda sem hardening completo de produção final.
