@@ -107,7 +107,7 @@ expect(foreignKeys).toContain('payment_operations_depends_on_operation_id_paymen
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- payment.schema.test.ts
+pnpm --filter @delivery/api exec vitest run test/payment.schema.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: FAIL because migration `0028` and columns do not exist.
@@ -154,7 +154,7 @@ Add a partial-refund case asserting `APPROVED` remains, `refundedAmountCents` ad
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- payment.service.test.ts
+pnpm --filter @delivery/api exec vitest run test/payment.service.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: FAIL because the current terminal guard blocks `APPROVED → REFUNDED`.
@@ -193,7 +193,7 @@ expect(await operationState(refundId)).toMatchObject({
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- payment-operation.service.test.ts
+pnpm --filter @delivery/api exec vitest run test/payment-operation.service.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: FAIL because current operations have no target/dependency/result fields and accept every non-review snapshot as success.
@@ -232,7 +232,7 @@ check('payment_operations_expected_refund_valid', sql`
 Generate:
 
 ```bash
-pnpm --filter @delivery/api db:generate -- --name payment_operation_serialization
+pnpm --filter @delivery/api exec drizzle-kit generate --name payment_operation_serialization
 ```
 
 Expected: `0028_payment_operation_serialization.sql`, snapshot, and journal entry generated. Review SQL: additive only; no payment/order table drop and no destructive data rewrite.
@@ -335,7 +335,7 @@ Move direct children of a `REVIEW_REQUIRED` predecessor to `REVIEW_REQUIRED` wit
 - [ ] **Step 9: Run focused and API tests**
 
 ```bash
-pnpm --filter @delivery/api test -- payment.schema.test.ts payment-operation.service.test.ts payment.service.test.ts
+pnpm --filter @delivery/api exec vitest run test/payment.schema.test.ts test/payment-operation.service.test.ts test/payment.service.test.ts --no-file-parallelism --maxWorkers=1
 pnpm --filter @delivery/api test
 pnpm --filter @delivery/api exec tsc --noEmit
 git diff --check
@@ -426,7 +426,7 @@ For customer cancel, direct store cancel, approved store cancel request, stale p
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- store-orders.routes.test.ts returns.service.test.ts dispatch.service.test.ts orders.routes.test.ts
+pnpm --filter @delivery/api exec vitest run test/store-orders.routes.test.ts test/returns.service.test.ts test/dispatch.service.test.ts test/orders.routes.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: FAIL because current order/event changes commit before operation insertion.
@@ -458,7 +458,7 @@ Assert order remains uncancelled, amendment remains `PROPOSED`, event count is u
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- amendment.service.test.ts
+pnpm --filter @delivery/api exec vitest run test/amendment.service.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: FAIL because amendment events and some disposition work occur outside the transaction.
@@ -574,7 +574,7 @@ Cover:
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- amendment.service.test.ts payment-operation.service.test.ts payment.service.test.ts
+pnpm --filter @delivery/api exec vitest run test/amendment.service.test.ts test/payment-operation.service.test.ts test/payment.service.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: PASS only when conflict checks and dependency construction are transactional.
@@ -582,7 +582,7 @@ Expected: PASS only when conflict checks and dependency construction are transac
 - [ ] **Step 9: Run affected and full API gates**
 
 ```bash
-pnpm --filter @delivery/api test -- amendment.service.test.ts payment.service.test.ts payment-operation.service.test.ts store-orders.routes.test.ts returns.service.test.ts dispatch.service.test.ts orders.routes.test.ts
+pnpm --filter @delivery/api exec vitest run test/amendment.service.test.ts test/payment.service.test.ts test/payment-operation.service.test.ts test/store-orders.routes.test.ts test/returns.service.test.ts test/dispatch.service.test.ts test/orders.routes.test.ts --no-file-parallelism --maxWorkers=1
 pnpm --filter @delivery/api test
 pnpm --filter @delivery/api exec tsc --noEmit
 pnpm lint
@@ -649,7 +649,7 @@ Extend `payment.service.test.ts` and `payment-reconciliation.test.ts`:
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- payment.service.test.ts payment-reconciliation.test.ts
+pnpm --filter @delivery/api exec vitest run test/payment.service.test.ts test/payment-reconciliation.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: FAIL because current reconciler ignores `RETRY_PIX`, `FRESH_CARD_REQUIRED`, and multi-match persistence.
@@ -681,7 +681,7 @@ Terminal or manual-review states must have `nextReconcileAt=null` unless explici
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- payment-reconciliation.test.ts
+pnpm --filter @delivery/api exec vitest run test/payment-reconciliation.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: FAIL because current outer `try` aborts later categories and timestamps are not maintained.
@@ -774,14 +774,14 @@ Update SEC-08 status only after final gates pass. Keep external webhook, credent
 ```bash
 docker compose exec -T postgres psql -U postgres -c 'DROP DATABASE IF EXISTS delivery_test WITH (FORCE)'
 docker compose exec -T postgres psql -U postgres -c 'CREATE DATABASE delivery_test'
-pnpm --filter @delivery/api test -- payment.schema.test.ts
+pnpm --filter @delivery/api exec vitest run test/payment.schema.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 If running inside Flatpak and `docker` is absent there, use the host command explicitly:
 
 ```bash
 flatpak-spawn --host sh -lc "cd '$PWD' && docker compose exec -T postgres psql -U postgres -c 'DROP DATABASE IF EXISTS delivery_test WITH (FORCE)' && docker compose exec -T postgres psql -U postgres -c 'CREATE DATABASE delivery_test'"
-pnpm --filter @delivery/api test -- payment.schema.test.ts
+pnpm --filter @delivery/api exec vitest run test/payment.schema.test.ts --no-file-parallelism --maxWorkers=1
 ```
 
 Expected: migrations `0000` through `0028` apply to a fresh DB and schema suite passes.
