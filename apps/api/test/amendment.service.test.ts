@@ -7,7 +7,7 @@ import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { updateStore } from '../src/services/store.service'
-import { payments } from '../src/db/schema'
+import { paymentOperations, payments } from '../src/db/schema'
 import type { PaymentProvider } from '../src/lib/payment-provider'
 import {
   AmendmentError,
@@ -172,7 +172,7 @@ describe('approveAmendment', () => {
     expect(detail!.items[0]).toMatchObject({ quantity: 1, totalCents: 3000 })
     expect(detail!.subtotalCents).toBe(3000)
     expect(detail!.totalCents).toBe(3500)
-    expect(provider.refundPartial).toHaveBeenCalledWith('mp-9', 4000)
+    expect((await testDb.select().from(paymentOperations)).some((op) => op.type === 'REFUND_PARTIAL' && op.amountCents === 4000)).toBe(true)
     expect(detail!.events.some((e) => (e.note ?? '').includes('ajustado'))).toBe(true)
   })
 
@@ -203,7 +203,7 @@ describe('rejectAmendment', () => {
     await rejectAmendment(testDb, provider, customerId, orderId)
     const detail = await getCustomerOrder(testDb, customerId, orderId)
     expect(detail!.status).toBe('CANCELLED')
-    expect(provider.refundPayment).toHaveBeenCalledWith('mp-9')
+    expect((await testDb.select().from(paymentOperations)).some((op) => op.type === 'REFUND_FULL')).toBe(true)
   })
 })
 

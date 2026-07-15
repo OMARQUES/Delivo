@@ -18,7 +18,7 @@ import { updateStore } from '../src/services/store.service'
 import { confirmLink, inviteDriver } from '../src/services/store-driver.service'
 import { startShift } from '../src/services/shift.service'
 import { decideActiveShiftTerms, proposeActiveShiftTerms } from '../src/services/shift-proposal.service'
-import { ledgerEntries, orders, payments, users } from '../src/db/schema'
+import { ledgerEntries, orders, paymentOperations, payments, users } from '../src/db/schema'
 
 const storeInput: StoreFixtureInput = {
   name: 'Loja Retorno', slug: 'loja-retorno', category: 'MERCADO', phone: '4433334444', city: 'C',
@@ -97,8 +97,9 @@ describe('devolução após falha', () => {
     const failed = await failDelivery(testDb, driverId, order.id, { reason: 'NO_ANSWER' }, gateway)
     expect(failed).toMatchObject({ status: 'DELIVERY_FAILED', returnDriverPayCents: 501, returnedAt: null })
     expect(failed.returnPendingAt).toBeInstanceOf(Date)
-    expect(gateway.refundPayment).toHaveBeenCalledWith('mp-return')
-    expect((await testDb.select().from(payments).where(eq(payments.orderId, order.id)))[0]!.status).toBe('REFUNDED')
+    expect(gateway.refundPayment).not.toHaveBeenCalled()
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.type, 'REFUND_FULL'))).length).toBe(1)
+    expect((await testDb.select().from(payments).where(eq(payments.orderId, order.id)))[0]!.status).toBe('APPROVED')
     expect(await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, order.id))).toEqual([])
     expect(await listPendingReturns(testDb)).toMatchObject([{ id: order.id, storeName: 'Loja Retorno', driverName: 'Driver' }])
 

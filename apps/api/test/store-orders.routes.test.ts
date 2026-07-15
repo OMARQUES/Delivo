@@ -9,7 +9,7 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { createTestSession } from './helpers/test-db'
-import { ledgerEntries, orders, users } from '../src/db/schema'
+import { ledgerEntries, orders, paymentOperations, users } from '../src/db/schema'
 import type { PaymentProvider } from '../src/lib/payment-provider'
 import * as mp from '../src/lib/mercadopago'
 import { createAddress } from '../src/services/address.service'
@@ -344,8 +344,8 @@ describe('cancel-request resolution', () => {
       body: JSON.stringify({ to: 'CANCELLED', reason: 'sem estoque' }),
     }, ownerToken)
     expect(res.status).toBe(200)
-    expect(refundSpy).toHaveBeenCalledWith('mp-1')
-    expect((await getOrderPayment(testDb, o.id))!.status).toBe('REFUNDED')
+    expect(refundSpy).not.toHaveBeenCalled()
+    expect((await testDb.select().from(paymentOperations)).some((op) => op.type === 'REFUND_FULL')).toBe(true)
     vi.restoreAllMocks()
   })
 })

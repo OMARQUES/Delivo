@@ -5,6 +5,7 @@ import type { Db } from '../db/client'
 import { orders, payments } from '../db/schema'
 import type { PaymentProvider } from '../lib/payment-provider'
 import { addEvent } from './order-events'
+import { enqueuePaymentOperation } from '../payments/operation.service'
 
 export class PaymentError extends Error {
   constructor(
@@ -16,6 +17,31 @@ export class PaymentError extends Error {
 }
 
 type OrderRow = typeof orders.$inferSelect
+
+export type PaymentDispositionReason =
+  | { kind: 'ORDER_CANCELLED'; businessKey: string }
+  | { kind: 'PIX_EXPIRED'; businessKey: string }
+  | { kind: 'AMENDMENT_REFUND'; businessKey: string; amendmentId: string; amountCents: number }
+
+export async function enqueueOrderPaymentDisposition(db: Db, orderId: string, reason: PaymentDispositionReason, now: Date): Promise<boolean> {
+  const payment = await getOrderPayment(db, orderId)
+  if (!payment) return false
+  const approved = payment.status === 'APPROVED'
+  const partial = reason.kind === 'AMENDMENT_REFUND'
+  if (partial) {
+    if (!approved || reason.amountCents <= 0) return false
+    await enqueuePaymentOperation(db, { paymentId: payment.id, type: 'REFUND_PARTIAL', amountCents: reason.amountCents, businessKey: reason.businessKey, idempotencyKey: reason.businessKey }, now)
+    return true
+  }
+  await enqueuePaymentOperation(db, {
+    paymentId: payment.id,
+    type: approved ? 'REFUND_FULL' : 'CANCEL',
+    amountCents: null,
+    businessKey: reason.businessKey,
+    idempotencyKey: reason.businessKey,
+  }, now)
+  return approved
+}
 
 export async function getOrderPayment(db: Db, orderId: string) {
   const [row] = await db.select().from(payments)
@@ -108,8 +134,11 @@ export async function confirmPaymentApproved(
   if (rows.length === 0) {
     const [order] = await db.select({ status: orders.status }).from(orders).where(eq(orders.id, payment.orderId))
     if (order?.status === 'CANCELLED') {
-      if (provider) await provider.refundPayment(providerPaymentId)
-    await db.update(payments).set({ status: 'REFUNDED', refundedAmountCents: payment.expectedAmountCents }).where(eq(payments.id, payment.id))
+      await enqueuePaymentOperation(db, {
+        paymentId: payment.id, type: 'REFUND_FULL', amountCents: null,
+        businessKey: `late-refund:${payment.id}`,
+        idempotencyKey: `late-refund:${payment.id}`,
+      }, new Date())
       await addEvent(db, payment.orderId, 'CANCELLED', 'SYSTEM', null, 'pagamento tardio estornado automaticamente')
     }
     return false
@@ -128,23 +157,10 @@ export async function refundOrderPaymentIfAny(
   orderId: string,
   event: { status?: OrderStatus; note?: string } = {},
 ): Promise<boolean> {
-  const payment = await getOrderPayment(db, orderId)
-  if (!payment) return false
-  if (payment.status === 'APPROVED') {
-    if (!provider) throw new PaymentError('Gateway indisponível para estorno', 503)
-    await provider.refundPayment(payment.providerOrderId!)
-    await db.update(payments)
-      .set({ status: 'REFUNDED', refundedAmountCents: payment.expectedAmountCents })
-      .where(eq(payments.id, payment.id))
-    await addEvent(db, orderId, event.status ?? 'CANCELLED', 'SYSTEM', null, event.note ?? 'pagamento estornado')
-    return true
-  }
-  if (payment.status === 'PENDING') {
-    if (!provider) throw new PaymentError('Gateway indisponível para cancelamento', 503)
-      await provider.cancelPayment(payment.providerOrderId!)
-      await db.update(payments).set({ status: 'CANCELLED' }).where(eq(payments.id, payment.id))
-  }
-  return false
+  return enqueueOrderPaymentDisposition(db, orderId, {
+    kind: 'ORDER_CANCELLED',
+    businessKey: `order-cancel:${orderId}:${event.status ?? 'CANCELLED'}`,
+  }, new Date())
 }
 
 /** Cron: AWAITING_PAYMENT velhos -> CANCELLED + payment EXPIRED. */
@@ -164,8 +180,11 @@ export async function expireStaleAwaitingPayment(
     await expirePendingAmendment(db, o.id)
     const payment = await getOrderPayment(db, o.id)
     if (payment && payment.status === 'PENDING') {
-      if (provider) await provider.cancelPayment(payment.providerOrderId!)
-      await db.update(payments).set({ status: 'EXPIRED' }).where(eq(payments.id, payment.id))
+      await enqueuePaymentOperation(db, {
+        paymentId: payment.id, type: 'CANCEL', amountCents: null,
+        businessKey: `cancel:${payment.id}:PIX_EXPIRED`,
+        idempotencyKey: `cancel:${payment.id}:PIX_EXPIRED`,
+      }, new Date())
     }
   }
   return stale.length

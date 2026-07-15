@@ -5,6 +5,8 @@ import { PaymentProviderError, type PaymentProvider } from './provider'
 import { applyProviderSnapshot } from './transition.service'
 import { MAX_PAYMENT_OPERATION_ATTEMPTS, nextAttemptAt } from './retry'
 
+type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0]
+
 export type PaymentOperationInput = {
   paymentId: string
   type: 'CANCEL' | 'REFUND_FULL' | 'REFUND_PARTIAL'
@@ -13,7 +15,7 @@ export type PaymentOperationInput = {
   idempotencyKey: string
 }
 
-export async function enqueuePaymentOperation(tx: Db, input: PaymentOperationInput, now: Date): Promise<void> {
+export async function enqueuePaymentOperation(tx: Db | DbTransaction, input: PaymentOperationInput, now: Date): Promise<void> {
   if (input.type === 'REFUND_PARTIAL' && (!Number.isSafeInteger(input.amountCents) || input.amountCents! <= 0)) throw new Error('partial refund amount invalid')
   if (input.type !== 'REFUND_PARTIAL' && input.amountCents !== null) throw new Error('non-partial refund amount invalid')
   await tx.insert(paymentOperations).values({ ...input, status: 'PENDING', nextAttemptAt: now, createdAt: now, updatedAt: now }).onConflictDoNothing({ target: paymentOperations.businessKey })

@@ -2,10 +2,10 @@ import { and, eq } from 'drizzle-orm'
 import { formatBRL } from '@delivery/shared/constants'
 import type { AmendmentProposalInput } from '@delivery/shared/schemas'
 import type { Db } from '../db/client'
-import { orderAmendmentItems, orderAmendments, orderItems, orders } from '../db/schema'
+import { orderAmendmentItems, orderAmendments, orderItems, orders, payments } from '../db/schema'
 import type { PaymentProvider } from '../lib/payment-provider'
 import { addEvent } from './order-events'
-import { getOrderPayment, refundOrderPaymentIfAny } from './payment.service'
+import { enqueuePaymentOperation } from '../payments/operation.service'
 
 export class AmendmentError extends Error {
   constructor(
@@ -133,15 +133,16 @@ export async function approveAmendment(db: Db, provider: PaymentProvider | null,
     await tx.update(orders)
       .set({ subtotalCents: pending.newSubtotalCents, totalCents: pending.newTotalCents })
       .where(eq(orders.id, orderId))
+    if (pending.refundCents > 0) {
+      const [payment] = await tx.select().from(payments).where(eq(payments.orderId, orderId)).limit(1)
+      if (payment?.status === 'APPROVED') {
+        await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_PARTIAL', amountCents: pending.refundCents, businessKey: `refund-partial:${payment.id}:amendment:${pending.id}`, idempotencyKey: `refund-partial:${payment.id}:amendment:${pending.id}` }, new Date())
+        await addEvent(tx, orderId, order.status, 'SYSTEM', null, `estorno parcial de ${formatBRL(pending.refundCents)}`)
+      }
+    }
   })
 
   await addEvent(db, orderId, order.status, 'CUSTOMER', customerId, `pedido ajustado (-${formatBRL(pending.refundCents)})`)
-
-  const payment = await getOrderPayment(db, orderId)
-  if (payment?.status === 'APPROVED' && pending.refundCents > 0) {
-    if (provider) await provider.refundPartial(payment.providerOrderId!, pending.refundCents)
-    await addEvent(db, orderId, order.status, 'SYSTEM', null, `estorno parcial de ${formatBRL(pending.refundCents)}`)
-  }
   return { ...pending, status: 'APPROVED' as const }
 }
 
@@ -160,14 +161,18 @@ export async function rejectAmendment(db: Db, provider: PaymentProvider | null, 
       .returning()
     if (claimed.length === 0) throw new AmendmentError('Alteração não está mais pendente', 409)
 
-    return tx.update(orders)
+    const cancelled = await tx.update(orders)
       .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cliente recusou a alteração proposta' })
       .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
       .returning()
+    const [payment] = await tx.select().from(payments).where(eq(payments.orderId, orderId)).limit(1)
+    if (payment) {
+      await enqueuePaymentOperation(tx, { paymentId: payment.id, type: payment.status === 'APPROVED' ? 'REFUND_FULL' : 'CANCEL', amountCents: null, businessKey: `cancel:${payment.id}:AMENDMENT_REJECTED`, idempotencyKey: `cancel:${payment.id}:AMENDMENT_REJECTED` }, new Date())
+    }
+    return cancelled
   })
   if (rows.length > 0) {
     await addEvent(db, orderId, 'CANCELLED', 'CUSTOMER', customerId, 'recusou alteração')
-    await refundOrderPaymentIfAny(db, provider, orderId)
   }
   return { ...pending, status: 'REJECTED' as const }
 }
