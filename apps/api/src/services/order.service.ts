@@ -17,12 +17,13 @@ import {
   stores,
   users,
 } from '../db/schema'
-import { type PaymentProvider, PaymentProviderError } from '../lib/payment-provider'
+import { type PaymentProvider } from '../payments/provider'
 import { getAddress } from './address.service'
 import { getMenuProductsByIds } from './catalog.service'
 import { addEvent } from './order-events'
 import { getPendingAmendment } from './amendment.service'
-import { createPixPaymentForOrder, getOrderPayment, PaymentError, recordCardPayment } from './payment.service'
+import { getOrderPayment, PaymentError } from './payment.service'
+import { createOnlinePayment, createPaymentAttempt, CheckoutError } from '../payments/checkout.service'
 
 export class OrderError extends Error {
   constructor(
@@ -177,7 +178,7 @@ export async function createOrder(
   db: Db,
   customerId: string,
   input: CheckoutInput,
-  paymentCtx?: { provider: PaymentProvider | null; payerEmail: string; publicApiUrl: string | null },
+  paymentCtx?: { provider: PaymentProvider | null; payerEmail: string; applicationId: string; accountId: string; liveMode: boolean },
 ): Promise<CreateOrderResult> {
   const isOnline = input.paymentMethod === 'PIX_ONLINE' || input.paymentMethod === 'CARD_ONLINE'
   if (isOnline && !paymentCtx?.provider) {
@@ -192,6 +193,7 @@ export async function createOrder(
   if (quote.items.length === 0) throw new OrderError('Nenhum item válido', 400)
 
   let order: typeof orders.$inferSelect
+  let paymentAttempt: Awaited<ReturnType<typeof createPaymentAttempt>> | null = null
   try {
     order = await db.transaction(async (tx) => {
       const initialStatus = isOnline ? 'AWAITING_PAYMENT' : 'PENDING'
@@ -247,6 +249,16 @@ export async function createOrder(
         actorRole: 'CUSTOMER',
         actorId: customerId,
       })
+      if (isOnline) paymentAttempt = await createPaymentAttempt(tx, {
+        orderId: order.id,
+        method: input.paymentMethod === 'PIX_ONLINE' ? 'PIX' : 'CARD',
+        amountCents: order.totalCents,
+        applicationId: paymentCtx!.applicationId,
+        accountId: paymentCtx!.accountId,
+        liveMode: paymentCtx!.liveMode,
+        expiresAt: input.paymentMethod === 'PIX_ONLINE' ? new Date(Date.now() + 15 * 60_000) : undefined,
+        now: new Date(),
+      })
       return order
     })
   } catch (e) {
@@ -257,45 +269,18 @@ export async function createOrder(
     throw e
   }
 
-  try {
-    if (input.paymentMethod === 'PIX_ONLINE') {
-      const payment = await createPixPaymentForOrder(db, paymentCtx!.provider!, order, paymentCtx!.payerEmail, paymentCtx!.publicApiUrl)
-      return {
-        order,
-        payment: { qrCode: payment.qrCode!, qrCodeBase64: payment.qrCodeBase64!, expiresAt: payment.expiresAt!.toISOString() },
-      }
-    }
+  if (!isOnline) return { order, payment: null }
 
-    if (input.paymentMethod === 'CARD_ONLINE') {
-      const result = await paymentCtx!.provider!.createCardPayment({
-        orderId: order.id,
-        amountCents: order.totalCents,
-        description: 'Pedido Delivo',
-        payerEmail: paymentCtx!.payerEmail,
-        cardToken: input.cardToken!,
-        cardPaymentMethodId: input.cardPaymentMethodId!,
-        installments: input.installments ?? 1,
-      })
-      await recordCardPayment(db, order.id, order.totalCents, result.providerPaymentId, result.status === 'APPROVED')
-      if (result.status === 'APPROVED') {
-        await db.update(orders).set({ status: 'PENDING' }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
-        await addEvent(db, order.id, 'PENDING', 'SYSTEM', null, 'pagamento confirmado (cartão)')
-        const [paid] = await db.select().from(orders).where(eq(orders.id, order.id))
-        return { order: paid!, payment: null }
-      }
-      await db.update(orders).set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cartão recusado' }).where(eq(orders.id, order.id))
-      await addEvent(db, order.id, 'CANCELLED', 'SYSTEM', null, `cartão recusado: ${result.statusDetail}`)
-      throw new PaymentError('Cartão recusado — verifique os dados ou tente outro método', 402)
-    }
+  try {
+    const paymentResult = await createOnlinePayment(db, paymentCtx!.provider!, {
+      paymentId: paymentAttempt!.id,
+      payerEmail: paymentCtx!.payerEmail,
+      card: input.paymentMethod === 'CARD_ONLINE' ? { token: input.cardToken!, methodId: input.cardPaymentMethodId! } : undefined,
+    })
+    const [updatedOrder] = await db.select().from(orders).where(eq(orders.id, order.id))
+    return { order: updatedOrder!, payment: paymentResult.kind === 'PIX' ? paymentResult : null }
   } catch (e) {
-    if (e instanceof PaymentProviderError) {
-      // gateway falhou APÓS insert do pedido → cancela pra não deixar órfão AWAITING_PAYMENT
-      await db
-        .update(orders)
-        .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Falha no gateway de pagamento' })
-        .where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
-      await addEvent(db, order.id, 'CANCELLED', 'SYSTEM', null, 'Falha no gateway de pagamento')
-    }
+    if (e instanceof CheckoutError) throw e
     throw e
   }
 

@@ -91,7 +91,7 @@ describe('devolução após falha', () => {
   it('estorna online, não paga na falha e libera frete freelance só na devolução', async () => {
     const order = await assignAndCollect(false, 'PIX_ONLINE')
     await testDb.insert(payments).values({
-      orderId: order.id, providerPaymentId: 'mp-return', method: 'PIX', amountCents: 5_501, status: 'APPROVED',
+      orderId: order.id, providerOrderId: 'mp-return', method: 'PIX', expectedAmountCents: 5_501, expectedCurrency: 'BRL', expectedCountry: 'BR', expectedApplicationId: 'legacy', expectedAccountId: 'legacy', expectedLiveMode: false, createIdempotencyKey: crypto.randomUUID(), status: 'APPROVED',
     })
     const gateway = provider()
     const failed = await failDelivery(testDb, driverId, order.id, { reason: 'NO_ANSWER' }, gateway)

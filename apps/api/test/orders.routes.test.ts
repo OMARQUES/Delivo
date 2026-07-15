@@ -9,8 +9,8 @@ vi.mock('../src/db/client', async () => {
 
 import { app } from '../src/app'
 import { orders, users } from '../src/db/schema'
-import { type CardPaymentResult, PaymentProviderError } from '../src/lib/payment-provider'
-import * as mp from '../src/lib/mercadopago'
+import * as mp from '../src/payments/mercadopago'
+import { PaymentProviderError as OrdersProviderError, type ProviderOrderSnapshot } from '../src/payments/provider'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
 import { createCategory, createProduct, replaceProductOptions } from '../src/services/catalog.service'
@@ -30,6 +30,9 @@ const env = {
   ALLOWED_ORIGINS: 'http://localhost:5173',
   HYPERDRIVE: { connectionString: 'unused' } as Hyperdrive,
   BUCKET: {} as R2Bucket,
+  MP_APPLICATION_ID: 'app-test',
+  MP_ACCOUNT_ID: 'account-test',
+  MP_LIVE_MODE: 'false' as const,
 }
 
 const storeInput: StoreFixtureInput = {
@@ -145,6 +148,32 @@ async function createOtherCustomer(phone: string) {
   return { token: other.accessToken!, addressId: addr.id }
 }
 
+function providerSnapshot(overrides: Partial<ProviderOrderSnapshot> = {}): ProviderOrderSnapshot {
+  return {
+    providerOrderId: 'mp-order-test',
+    providerTransactionId: 'mp-tx-test',
+    orderStatus: 'created',
+    orderStatusDetail: 'pending',
+    transactionStatus: 'pending',
+    transactionStatusDetail: 'pending',
+    externalReference: '',
+    totalAmountCents: 12000,
+    refundedAmountCents: 0,
+    countryCode: 'BR',
+    currency: 'BRL',
+    processingMode: 'aggregator',
+    method: 'PIX',
+    paymentMethodId: 'pix',
+    applicationId: 'app-test',
+    accountId: 'account-test',
+    liveMode: false,
+    transactionCount: 1,
+    pix: { qrCode: 'copia', qrCodeBase64: 'b64', ticketUrl: null, expiresAt: new Date(Date.now() + 900000) },
+    updatedAt: new Date(),
+    ...overrides,
+  }
+}
+
 describe('POST /orders/quote + POST /orders', () => {
   it('quote returns totals; create returns 201 order; replay same key returns same id', async () => {
     const body = checkout()
@@ -161,19 +190,9 @@ describe('POST /orders/quote + POST /orders', () => {
 
   it('PIX_ONLINE: order born AWAITING_PAYMENT, response has QR; replay returns same QR', async () => {
     vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
-      createPixPayment: async (i) => ({
-        providerPaymentId: 'mp-pix-1',
-        status: 'PENDING',
-        qrCode: 'copia',
-        qrCodeBase64: 'b64',
-        ticketUrl: null,
-        expiresAt: i.expiresAt,
-      }),
-      createCardPayment: async () => { throw new Error('not used') },
-      getPayment: async () => ({ providerPaymentId: 'x', status: 'PENDING' }),
-      refundPayment: async () => {},
-      refundPartial: async () => {},
-      cancelPayment: async () => {},
+      getAccountId: async () => 'account-test',
+      createOrder: async (i) => providerSnapshot({ providerOrderId: `mp-${i.orderId}`, providerTransactionId: `tx-${i.orderId}`, externalReference: i.orderId, method: 'PIX', pix: { qrCode: 'copia', qrCodeBase64: 'b64', ticketUrl: null, expiresAt: i.method === 'PIX' ? i.expiresAt : null } }),
+      getOrder: async () => providerSnapshot(), searchOrders: async () => [], cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
     })
     const body = checkout({ paymentMethod: 'PIX_ONLINE' })
     const res = await req('/orders', { method: 'POST', body: JSON.stringify(body) }, customerToken)
@@ -189,18 +208,14 @@ describe('POST /orders/quote + POST /orders', () => {
   })
 
   it('CARD_ONLINE approved -> order PENDING direct; rejected -> 402 + order CANCELLED', async () => {
-    const approve = vi.fn(async (): Promise<CardPaymentResult> => ({
-      providerPaymentId: 'mp-c1',
-      status: 'APPROVED',
-      statusDetail: 'accredited',
-    }))
+    let rejectNext = false
+    const approve = vi.fn(async (i: Parameters<NonNullable<ReturnType<typeof mp.createPaymentProvider>>['createOrder']>[0]) => rejectNext
+      ? providerSnapshot({ providerOrderId: `mp-${i.orderId}`, providerTransactionId: `tx-${i.orderId}`, externalReference: i.orderId, method: 'CARD', paymentMethodId: 'master', orderStatus: 'rejected', orderStatusDetail: 'cc_rejected', transactionStatus: 'rejected', transactionStatusDetail: 'cc_rejected', pix: null })
+      : providerSnapshot({ providerOrderId: `mp-${i.orderId}`, providerTransactionId: `tx-${i.orderId}`, externalReference: i.orderId, method: 'CARD', paymentMethodId: 'master', orderStatus: 'processed', orderStatusDetail: 'accredited', transactionStatus: 'processed', transactionStatusDetail: 'accredited', pix: null }))
     vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
-      createPixPayment: async () => { throw new Error('not used') },
-      createCardPayment: approve,
-      getPayment: async () => ({ providerPaymentId: 'x', status: 'APPROVED' }),
-      refundPayment: async () => {},
-      refundPartial: async () => {},
-      cancelPayment: async () => {},
+      getAccountId: async () => 'account-test',
+      createOrder: approve,
+      getOrder: async () => providerSnapshot(), searchOrders: async () => [], cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
     })
     const ok = await req('/orders', {
       method: 'POST',
@@ -214,7 +229,7 @@ describe('POST /orders/quote + POST /orders', () => {
     expect(ok.status).toBe(201)
     expect(((await ok.json()) as { order: { status: string } }).order.status).toBe('PENDING')
 
-    approve.mockResolvedValueOnce({ providerPaymentId: 'mp-c2', status: 'REJECTED', statusDetail: 'cc_rejected' })
+    rejectNext = true
     const bad = await req('/orders', {
       method: 'POST',
       body: JSON.stringify(checkout({
@@ -228,25 +243,22 @@ describe('POST /orders/quote + POST /orders', () => {
     vi.restoreAllMocks()
   })
 
-  it('PIX_ONLINE gateway down -> 503 + order CANCELLED (no orphan)', async () => {
+  it('PIX_ONLINE gateway uncertain -> 503 + order remains awaiting payment', async () => {
     vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
-      createPixPayment: async () => { throw new PaymentProviderError('down', 502) },
-      createCardPayment: async () => { throw new Error('not used') },
-      getPayment: async () => ({ providerPaymentId: 'x', status: 'PENDING' }),
-      refundPayment: async () => {},
-      refundPartial: async () => {},
-      cancelPayment: async () => {},
+      getAccountId: async () => 'account-test',
+      createOrder: async () => { throw new OrdersProviderError('TRANSIENT_UNCERTAIN', 503) },
+      getOrder: async () => providerSnapshot(), searchOrders: async () => [], cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
     })
     const res = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({ paymentMethod: 'PIX_ONLINE' })) }, customerToken)
     expect(res.status).toBe(503)
     const list = await listCustomerOrders(testDb, customerId)
     expect(list.length).toBe(1)
-    expect(list[0]!.status).toBe('CANCELLED')
-    expect(list[0]!.cancelReason).toBe('Falha no gateway de pagamento')
+    expect(list[0]!.status).toBe('AWAITING_PAYMENT')
     vi.restoreAllMocks()
   })
 
   it('online payment without provider configured -> 503', async () => {
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue(null)
     const res = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({ paymentMethod: 'PIX_ONLINE' })) }, customerToken)
     expect(res.status).toBe(503)
   })
@@ -293,6 +305,7 @@ describe('POST /orders/quote + POST /orders', () => {
 
     await exhaust(POLICIES.orderCreateUserHour, customerId)
     const providerSpy = vi.spyOn(mp, 'createPaymentProvider')
+    providerSpy.mockClear()
 
     const limited = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({
       paymentMethod: 'PIX_ONLINE',

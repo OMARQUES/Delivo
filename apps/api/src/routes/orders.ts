@@ -7,6 +7,9 @@ import { createRouter } from '../app-factory'
 import type { AppContext } from '../env'
 import { users } from '../db/schema'
 import { createPaymentProvider } from '../lib/mercadopago'
+import { CheckoutError } from '../payments/checkout.service'
+import { createPaymentProvider as createOrdersPaymentProvider } from '../payments/mercadopago'
+import { PaymentProviderError as OrdersProviderError } from '../payments/provider'
 import { resolvePayerEmail } from '../lib/payer-email'
 import { PaymentProviderError } from '../lib/payment-provider'
 import { authMiddleware, requireRole } from '../middleware/auth'
@@ -35,7 +38,10 @@ function rethrow(e: unknown): never {
   if (e instanceof PaymentProviderError)
     throw new HTTPException(e.status === 402 ? 402 : 503, {
       message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega',
-    })
+      })
+  if (e instanceof CheckoutError) throw new HTTPException(e.status, { message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega' })
+  if (e instanceof OrdersProviderError)
+    throw new HTTPException(503, { message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega' })
   throw e
 }
 
@@ -79,9 +85,11 @@ orderRoutes.openapi(
     const sub = c.get('auth')!.sub
     const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, sub))
     const result = await createOrder(db, sub, c.req.valid('json'), {
-      provider: createPaymentProvider(c.env),
+      provider: createOrdersPaymentProvider(c.env),
       payerEmail: resolvePayerEmail(c.env, user?.email, sub),
-      publicApiUrl: c.env.PUBLIC_API_URL || null,
+      applicationId: c.env.MP_APPLICATION_ID ?? '',
+      accountId: c.env.MP_ACCOUNT_ID ?? '',
+      liveMode: c.env.MP_LIVE_MODE === 'true',
     }).catch(rethrow)
     return c.json(result, 201)
   },

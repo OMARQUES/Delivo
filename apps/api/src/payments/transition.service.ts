@@ -52,6 +52,10 @@ export async function applyProviderSnapshot(db: Db, paymentId: string, snapshot:
       providerStatus: snapshot.orderStatus,
       providerStatusDetail: snapshot.orderStatusDetail,
       refundedAmountCents: snapshot.refundedAmountCents,
+      qrCode: snapshot.pix?.qrCode ?? null,
+      qrCodeBase64: snapshot.pix?.qrCodeBase64 ?? null,
+      ticketUrl: snapshot.pix?.ticketUrl ?? null,
+      expiresAt: snapshot.pix?.expiresAt ?? payment.expiresAt,
       updatedAt: now,
     }
 

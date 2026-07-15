@@ -44,9 +44,15 @@ export async function createPixPaymentForOrder(
   })
   const [row] = await db.insert(payments).values({
     orderId: order.id,
-    providerPaymentId: pix.providerPaymentId,
+    providerOrderId: pix.providerPaymentId,
     method: 'PIX',
-    amountCents: order.totalCents,
+    expectedAmountCents: order.totalCents,
+    expectedCurrency: 'BRL',
+    expectedCountry: 'BR',
+    expectedApplicationId: 'legacy',
+    expectedAccountId: 'legacy',
+    expectedLiveMode: false,
+    createIdempotencyKey: crypto.randomUUID(),
     qrCode: pix.qrCode,
     qrCodeBase64: pix.qrCodeBase64,
     ticketUrl: pix.ticketUrl,
@@ -65,9 +71,15 @@ export async function recordCardPayment(
 ) {
   const [row] = await db.insert(payments).values({
     orderId,
-    providerPaymentId,
+    providerOrderId: providerPaymentId,
     method: 'CARD',
-    amountCents,
+    expectedAmountCents: amountCents,
+    expectedCurrency: 'BRL',
+    expectedCountry: 'BR',
+    expectedApplicationId: 'legacy',
+    expectedAccountId: 'legacy',
+    expectedLiveMode: false,
+    createIdempotencyKey: crypto.randomUUID(),
     status: approved ? 'APPROVED' : 'REJECTED',
   }).returning()
   return row!
@@ -84,7 +96,7 @@ export async function confirmPaymentApproved(
   provider?: PaymentProvider | null,
 ): Promise<boolean> {
   const [payment] = await db.select().from(payments)
-    .where(eq(payments.providerPaymentId, providerPaymentId))
+    .where(eq(payments.providerOrderId, providerPaymentId))
   if (!payment) return false
   if (payment.status === 'APPROVED' || payment.status === 'REFUNDED') return false
 
@@ -97,7 +109,7 @@ export async function confirmPaymentApproved(
     const [order] = await db.select({ status: orders.status }).from(orders).where(eq(orders.id, payment.orderId))
     if (order?.status === 'CANCELLED') {
       if (provider) await provider.refundPayment(providerPaymentId)
-      await db.update(payments).set({ status: 'REFUNDED', refundedAt: new Date() }).where(eq(payments.id, payment.id))
+    await db.update(payments).set({ status: 'REFUNDED', refundedAmountCents: payment.expectedAmountCents }).where(eq(payments.id, payment.id))
       await addEvent(db, payment.orderId, 'CANCELLED', 'SYSTEM', null, 'pagamento tardio estornado automaticamente')
     }
     return false
@@ -120,17 +132,17 @@ export async function refundOrderPaymentIfAny(
   if (!payment) return false
   if (payment.status === 'APPROVED') {
     if (!provider) throw new PaymentError('Gateway indisponível para estorno', 503)
-    await provider.refundPayment(payment.providerPaymentId)
+    await provider.refundPayment(payment.providerOrderId!)
     await db.update(payments)
-      .set({ status: 'REFUNDED', refundedAt: new Date() })
+      .set({ status: 'REFUNDED', refundedAmountCents: payment.expectedAmountCents })
       .where(eq(payments.id, payment.id))
     await addEvent(db, orderId, event.status ?? 'CANCELLED', 'SYSTEM', null, event.note ?? 'pagamento estornado')
     return true
   }
   if (payment.status === 'PENDING') {
     if (!provider) throw new PaymentError('Gateway indisponível para cancelamento', 503)
-    await provider.cancelPayment(payment.providerPaymentId)
-    await db.update(payments).set({ status: 'CANCELLED' }).where(eq(payments.id, payment.id))
+      await provider.cancelPayment(payment.providerOrderId!)
+      await db.update(payments).set({ status: 'CANCELLED' }).where(eq(payments.id, payment.id))
   }
   return false
 }
@@ -152,7 +164,7 @@ export async function expireStaleAwaitingPayment(
     await expirePendingAmendment(db, o.id)
     const payment = await getOrderPayment(db, o.id)
     if (payment && payment.status === 'PENDING') {
-      if (provider) await provider.cancelPayment(payment.providerPaymentId)
+      if (provider) await provider.cancelPayment(payment.providerOrderId!)
       await db.update(payments).set({ status: 'EXPIRED' }).where(eq(payments.id, payment.id))
     }
   }

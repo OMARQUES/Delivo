@@ -33,14 +33,14 @@ export function validateSnapshot(snapshot: ProviderOrderSnapshot, expected: Expe
     return snapshot.refundedAmountCents > 0 ? { kind: 'PARTIALLY_REFUNDED', refundedAmountCents: snapshot.refundedAmountCents } : review('MISMATCH_REFUNDED_AMOUNT')
   }
 
-  const supported = new Set(['created', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_transfer', 'processed', 'accredited', 'failed', 'canceled', 'cancelled', 'expired', 'refunded'])
+  const supported = new Set(['created', 'pending', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_transfer', 'processed', 'accredited', 'failed', 'rejected', 'canceled', 'cancelled', 'expired', 'refunded'])
   if (statuses.some((status) => !supported.has(status) && !status.startsWith('cc_rejected'))) return review('UNSUPPORTED_PROVIDER_STATE')
   const rejectionDetail = [snapshot.orderStatusDetail, snapshot.transactionStatusDetail, transactionStatus].filter((value): value is string => value !== null).map((value) => value.toLowerCase())
-  if (orderStatus === 'failed' || rejectionDetail.some((value) => value.startsWith('cc_rejected') || value === 'rejected')) return rejectionDetail.some((value) => value.startsWith('cc_rejected') || value === 'rejected') ? { kind: 'REJECTED' } : review('UNSUPPORTED_REJECTION')
+  if (orderStatus === 'failed' || orderStatus === 'rejected' || rejectionDetail.some((value) => value.startsWith('cc_rejected') || value === 'rejected')) return rejectionDetail.some((value) => value.startsWith('cc_rejected') || value === 'rejected') ? { kind: 'REJECTED' } : review('UNSUPPORTED_REJECTION')
   if (orderStatus === 'canceled' || orderStatus === 'cancelled') return { kind: 'CANCELLED' }
   if (orderStatus === 'expired') return { kind: 'EXPIRED' }
   if (orderStatus === 'refunded') return { kind: 'REFUNDED' }
   if (orderStatus === 'processed' && (snapshot.orderStatusDetail.toLowerCase() === 'accredited' || transactionStatus === 'accredited' || transactionStatus === 'processed')) return { kind: 'APPROVED' }
-  if (['created', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_transfer'].includes(orderStatus)) return { kind: 'PENDING', qrAvailable: snapshot.pix !== null }
+  if (['created', 'pending', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_transfer'].includes(orderStatus)) return { kind: 'PENDING', qrAvailable: snapshot.pix !== null }
   return review('UNSUPPORTED_PROVIDER_STATE')
 }

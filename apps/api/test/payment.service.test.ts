@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { and, eq, sql } from 'drizzle-orm'
 import { createActiveStoreTestFixture, createVerifiedTestAccount, migrateTestDb, truncateAll, testDb, closeTestDb, type StoreFixtureInput } from './helpers/test-db'
 import { createProduct, createCategory } from '../src/services/catalog.service'
@@ -7,6 +7,8 @@ import { updateStore } from '../src/services/store.service'
 import { orderEvents, orders, paymentOperations, payments } from '../src/db/schema'
 import { applyProviderSnapshot } from '../src/payments/transition.service'
 import { providerSnapshot } from './helpers/payment-provider'
+import { createOnlinePayment, recoverUncertainCreate } from '../src/payments/checkout.service'
+import { fakePaymentProvider } from './helpers/payment-provider'
 
 const storeInput: StoreFixtureInput = { name: 'Pizzaria', slug: 'pizzaria', category: 'PIZZARIA', phone: '4433334444', city: 'C', addressText: 'Rua A, 1', lat: -23.55, lng: -51.9, owner: { name: 'João', email: 'joao@email.com', password: 'senha123' } }
 const customerInput = { name: 'Ana', phone: '44999998888', password: 'senha123', role: 'CUSTOMER' as const, acceptedTerms: true as const }
@@ -29,7 +31,7 @@ async function makePayment(status: 'AWAITING_PAYMENT' | 'CANCELLED' = 'AWAITING_
   const { order } = await createOrder(testDb, customerId, { storeSlug: 'pizzaria', fulfillment: 'PICKUP', paymentMethod: 'CASH', items: [{ productId, quantity: 1, selections: [] }], idempotencyKey: crypto.randomUUID() })
   await testDb.update(orders).set({ status, paymentMethod: 'PIX_ONLINE' }).where(eq(orders.id, order.id))
   const [payment] = await testDb.insert(payments).values({
-    orderId: order.id, providerOrderId: 'mp-order', providerTransactionId: 'mp-tx', method: 'PIX', expectedAmountCents: order.totalCents,
+    orderId: order.id, providerOrderId: `mp-order-${order.id}`, providerTransactionId: `mp-tx-${order.id}`, method: 'PIX', expectedAmountCents: order.totalCents,
     expectedCurrency: 'BRL', expectedCountry: 'BR', expectedApplicationId: 'app-test', expectedAccountId: 'account-test', expectedLiveMode: false,
     createIdempotencyKey: crypto.randomUUID(), qrCode: 'qr', qrCodeBase64: 'b64',
   }).returning()
@@ -37,7 +39,7 @@ async function makePayment(status: 'AWAITING_PAYMENT' | 'CANCELLED' = 'AWAITING_
 }
 
 function snapshot(orderId: string, amountCents: number, patch: Partial<ReturnType<typeof providerSnapshot>> = {}) {
-  return providerSnapshot({ providerOrderId: 'mp-order', providerTransactionId: 'mp-tx', externalReference: orderId, totalAmountCents: amountCents, ...patch })
+  return providerSnapshot({ providerOrderId: `mp-order-${orderId}`, providerTransactionId: `mp-tx-${orderId}`, externalReference: orderId, totalAmountCents: amountCents, ...patch })
 }
 
 describe('applyProviderSnapshot', () => {
@@ -86,5 +88,29 @@ describe('applyProviderSnapshot', () => {
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `late-refund:${payment.id}`))).length).toBe(1)
     const again = await applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents), new Date())
     expect(again.operationEnqueued).toBe(false)
+  })
+})
+
+describe('Orders checkout orchestration', () => {
+  it('persists attempt before provider call and returns PIX QR', async () => {
+    const { order, payment } = await makePayment()
+    const createOrderMock = vi.fn(async () => snapshot(order.id, order.totalCents))
+    const provider = fakePaymentProvider({ getAccountId: vi.fn(async () => 'account-test'), createOrder: createOrderMock })
+    const result = await createOnlinePayment(testDb, provider, { paymentId: payment.id, payerEmail: 'payer@test.local' })
+    expect(result.kind).toBe('PIX')
+    expect(createOrderMock).toHaveBeenCalledWith(expect.objectContaining({ orderId: order.id, idempotencyKey: expect.any(String) }))
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]!.reconciliationState).toBe('HEALTHY')
+  })
+
+  it('recovers one uncertain create, rejects multiple, requests retry for zero', async () => {
+    const one = await makePayment()
+    const oneProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(one.order.id, one.order.totalCents)]) })
+    await expect(recoverUncertainCreate(testDb, oneProvider, one.payment.id, new Date())).resolves.toBe('RECOVERED')
+    const many = await makePayment()
+    const manyProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(many.order.id, many.order.totalCents), snapshot(many.order.id, many.order.totalCents)]) })
+    await expect(recoverUncertainCreate(testDb, manyProvider, many.payment.id, new Date())).resolves.toBe('REVIEW_REQUIRED')
+    const zero = await makePayment()
+    const zeroProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => []) })
+    await expect(recoverUncertainCreate(testDb, zeroProvider, zero.payment.id, new Date())).resolves.toBe('RETRY_PIX')
   })
 })

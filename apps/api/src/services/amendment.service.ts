@@ -139,7 +139,7 @@ export async function approveAmendment(db: Db, provider: PaymentProvider | null,
 
   const payment = await getOrderPayment(db, orderId)
   if (payment?.status === 'APPROVED' && pending.refundCents > 0) {
-    if (provider) await provider.refundPartial(payment.providerPaymentId, pending.refundCents)
+    if (provider) await provider.refundPartial(payment.providerOrderId!, pending.refundCents)
     await addEvent(db, orderId, order.status, 'SYSTEM', null, `estorno parcial de ${formatBRL(pending.refundCents)}`)
   }
   return { ...pending, status: 'APPROVED' as const }

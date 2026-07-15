@@ -113,9 +113,11 @@ async function makeAcceptedPaidOrder() {
   await testDb.execute(sql`update orders set payment_method='PIX_ONLINE' where id=${o.orderId}`)
   await testDb.insert(payments).values({
     orderId: o.orderId,
-    providerPaymentId: 'mp-9',
+    providerOrderId: 'mp-9',
     method: 'PIX',
-    amountCents: 7500,
+    expectedAmountCents: 7500,
+    expectedCurrency: 'BRL', expectedCountry: 'BR', expectedApplicationId: 'legacy', expectedAccountId: 'legacy', expectedLiveMode: false,
+    createIdempotencyKey: crypto.randomUUID(),
     status: 'APPROVED',
   })
   return o
