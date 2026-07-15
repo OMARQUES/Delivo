@@ -20,6 +20,9 @@ export type Env = PlatformBindings & {
   MP_ACCESS_TOKEN?: string
   MP_PUBLIC_KEY?: string
   MP_WEBHOOK_SECRET?: string
+  MP_APPLICATION_ID?: string
+  MP_ACCOUNT_ID?: string
+  MP_LIVE_MODE?: 'true' | 'false'
   /** Sandbox: força o email do comprador de TESTE (MP recusa emails reais com credencial de teste). Vazio em produção. */
   MP_TEST_PAYER_EMAIL?: string
   /** URL pública da API (webhook). Vazio em dev sem tunnel. */

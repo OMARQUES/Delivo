@@ -1,122 +1,121 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MercadoPagoProvider } from '../src/lib/mercadopago'
+import { MercadoPagoOrdersProvider, createPaymentProvider } from '../src/payments/mercadopago'
+import { PaymentProviderError } from '../src/payments/provider'
+import type { Env } from '../src/env'
 
-const provider = new MercadoPagoProvider('TEST-token-abc')
+const token = 'TEST-token-abc'
+const provider = new MercadoPagoOrdersProvider(token, {
+  applicationId: 'app-test', accountId: 'account-test', liveMode: false,
+})
 
-function mockFetch(status: number, body: unknown) {
-  const fn = vi.fn(async () => new Response(JSON.stringify(body), { status }))
-  vi.stubGlobal('fetch', fn)
-  return fn
+function response(body: unknown, status = 200, headers?: HeadersInit) {
+  return new Response(body === undefined ? null : JSON.stringify(body), { status, headers })
+}
+
+function snapshot(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'order-1', status: 'processed', status_detail: 'accredited',
+    external_reference: 'order-1', total_amount: '64.00',
+    processing_mode: 'automatic', country_code: 'BR', currency: 'BRL',
+    application_id: 'app-test', user_id: 'account-test', live_mode: false,
+    transactions: { payments: [{
+      id: 'transaction-1', status: 'processed', status_detail: 'accredited',
+      amount: '64.00', payment_method: { id: 'pix', type: 'bank_transfer' },
+      point_of_interaction: { transaction_data: {
+        qr_code: 'copy-paste', qr_code_base64: 'base64', ticket_url: 'https://mp/t',
+      } },
+    }] },
+    ...overrides,
+  }
 }
 
 afterEach(() => vi.unstubAllGlobals())
 
-describe('createPixPayment', () => {
-  it('POSTs /v1/payments with pix method, idempotency key, amount in reais; maps QR fields', async () => {
-    const fn = mockFetch(201, {
-      id: 123456,
-      status: 'pending',
-      point_of_interaction: {
-        transaction_data: { qr_code: 'copia-e-cola', qr_code_base64: 'b64==', ticket_url: 'https://mp/t' },
-      },
-    })
-    const expiresAt = new Date('2026-07-10T12:15:00Z')
-    const r = await provider.createPixPayment({
-      orderId: 'order-1',
-      amountCents: 6400,
-      description: 'Pedido Pizzaria',
-      payerEmail: 'a@b.com',
-      expiresAt,
-      notificationUrl: 'https://api/webhooks/mercadopago',
-    })
-    expect(r).toMatchObject({
-      providerPaymentId: '123456',
-      status: 'PENDING',
-      qrCode: 'copia-e-cola',
-      qrCodeBase64: 'b64==',
-    })
-    const [url, init] = fn.mock.calls[0]! as unknown as [string, RequestInit]
-    expect(url).toBe('https://api.mercadopago.com/v1/payments')
-    const headers = init.headers as Record<string, string>
-    expect(headers.Authorization).toBe('Bearer TEST-token-abc')
-    expect(headers['X-Idempotency-Key']).toBe('order-1-pix')
+describe('MercadoPagoOrdersProvider', () => {
+  it('creates automatic PIX Order with canonical amount and no notification URL', async () => {
+    const fetchMock = vi.fn(async () => response(snapshot(), 201))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await provider.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local', idempotencyKey: 'create-key', method: 'PIX', expiresAt: new Date('2026-07-15T12:15:00Z') })
+
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit]
+    expect(url).toBe('https://api.mercadopago.com/v1/orders')
+    expect((init.headers as Record<string, string>)['X-Idempotency-Key']).toBe('create-key')
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
-    expect(body.transaction_amount).toBe(64)
-    expect(body.payment_method_id).toBe('pix')
-    expect(body.external_reference).toBe('order-1')
-    expect(body.notification_url).toBe('https://api/webhooks/mercadopago')
-    expect(String(body.date_of_expiration)).toContain('2026-07-10')
+    expect(body).toMatchObject({ type: 'online', processing_mode: 'automatic', external_reference: 'order-1', total_amount: '64.00', transactions: { payments: [{ amount: '64.00' }] } })
+    expect(JSON.stringify(body)).not.toContain('notification_url')
   })
 
-  it('throws PaymentProviderError 502 on gateway failure', async () => {
-    mockFetch(500, { message: 'boom' })
-    await expect(provider.createPixPayment({
-      orderId: 'o',
-      amountCents: 100,
-      description: 'x',
-      payerEmail: 'a@b.com',
-      expiresAt: new Date(),
-      notificationUrl: null,
-    })).rejects.toMatchObject({ status: 502 })
-  })
-})
+  it('maps PIX QR data and card token request without leaking token', async () => {
+    const fetchMock = vi.fn(async () => response(snapshot(), 201))
+    vi.stubGlobal('fetch', fetchMock)
+    const pix = await provider.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local', idempotencyKey: 'pix-key', method: 'PIX', expiresAt: new Date('2026-07-15T12:15:00Z') })
+    expect(pix.pix).toMatchObject({ qrCode: 'copy-paste', qrCodeBase64: 'base64' })
 
-describe('createCardPayment', () => {
-  it('maps approved and rejected sync results', async () => {
-    mockFetch(201, { id: 777, status: 'approved', status_detail: 'accredited' })
-    const ok = await provider.createCardPayment({
-      orderId: 'o1',
-      amountCents: 5000,
-      description: 'Pedido',
-      payerEmail: 'a@b.com',
-      cardToken: 'tok',
-      cardPaymentMethodId: 'master',
-      installments: 1,
+    fetchMock.mockResolvedValueOnce(response(snapshot({ transactions: { payments: [{ id: 'tx-card', status: 'processed', status_detail: 'accredited', amount: '64.00', payment_method: { id: 'visa', type: 'credit_card' } }] } }), 201))
+    const card = await provider.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local', idempotencyKey: 'card-key', method: 'CARD', cardToken: 'card-token-secret', cardPaymentMethodId: 'visa', installments: 1 })
+    expect(card.method).toBe('CARD')
+    expect(JSON.stringify(card)).not.toContain('card-token-secret')
+    const [, cardInit] = fetchMock.mock.calls[1]! as unknown as [string, RequestInit]
+    expect(JSON.stringify(cardInit.body)).toContain('card-token-secret')
+  })
+
+  it('gets, searches exact external reference, cancels and refunds through Orders paths', async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      if (url.includes('/search')) return response({ results: [snapshot()] })
+      return response(snapshot(), 200)
     })
-    expect(ok).toMatchObject({ providerPaymentId: '777', status: 'APPROVED' })
-
-    mockFetch(201, { id: 778, status: 'rejected', status_detail: 'cc_rejected_insufficient_amount' })
-    const bad = await provider.createCardPayment({
-      orderId: 'o2',
-      amountCents: 5000,
-      description: 'Pedido',
-      payerEmail: 'a@b.com',
-      cardToken: 'tok2',
-      cardPaymentMethodId: 'visa',
-      installments: 1,
-    })
-    expect(bad).toMatchObject({ status: 'REJECTED', statusDetail: 'cc_rejected_insufficient_amount' })
-  })
-})
-
-describe('getPayment / refund / cancel', () => {
-  it('maps MP statuses to internal', async () => {
-    mockFetch(200, { id: 123, status: 'approved' })
-    expect((await provider.getPayment('123')).status).toBe('APPROVED')
-    mockFetch(200, { id: 123, status: 'cancelled' })
-    expect((await provider.getPayment('123')).status).toBe('CANCELLED')
-    mockFetch(200, { id: 123, status: 'refunded' })
-    expect((await provider.getPayment('123')).status).toBe('REFUNDED')
+    vi.stubGlobal('fetch', fetchMock)
+    await provider.getOrder('order-1')
+    expect(await provider.searchOrders('order with spaces')).toHaveLength(1)
+    await provider.cancelOrder('order-1', 'cancel-key')
+    await provider.refundOrder('order-1', 'refund-key')
+    await provider.refundPartial('order-1', 'transaction-1', 1200, 'partial-key')
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>
+    expect(calls[1]![0]).toContain('external_reference=order%20with%20spaces')
+    expect(calls[2]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/cancel')
+    expect(calls[3]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')
+    expect(calls[4]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')
+    expect(JSON.parse(String(calls[3]![1].body))).toEqual({})
+    expect(JSON.parse(String(calls[4]![1].body))).toEqual({ transactions: [{ id: 'transaction-1', amount: '12.00' }] })
   })
 
-  it('refund POSTs to /refunds with idempotency; cancel PUTs status cancelled', async () => {
-    const fn = mockFetch(201, { id: 1 })
-    await provider.refundPayment('999')
-    const [refundUrl] = fn.mock.calls[0]! as unknown as [string, RequestInit]
-    expect(refundUrl).toBe('https://api.mercadopago.com/v1/payments/999/refunds')
-    const fn2 = mockFetch(200, { id: 999, status: 'cancelled' })
-    await provider.cancelPayment('999')
-    const [url, init] = fn2.mock.calls[0]! as unknown as [string, RequestInit]
-    expect(url).toBe('https://api.mercadopago.com/v1/payments/999')
-    expect(init.method).toBe('PUT')
+  it('gets credential-scoped account identity', async () => {
+    const fetchMock = vi.fn(async () => response({ id: 'account-test' }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(provider.getAccountId()).resolves.toBe('account-test')
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>
+    expect(calls[0]![0]).toBe('https://api.mercadolibre.com/users/me')
   })
 
-  it('refundPartial POSTs amount in reais with idempotency key', async () => {
-    const fn = mockFetch(201, { id: 1 })
-    await provider.refundPartial('999', 450)
-    const [url, init] = fn.mock.calls[0]! as unknown as [string, RequestInit]
-    expect(url).toBe('https://api.mercadopago.com/v1/payments/999/refunds')
-    expect(JSON.parse(String(init.body)).amount).toBe(4.5)
-    expect((init.headers as Record<string, string>)['X-Idempotency-Key']).toBe('refund-999-450')
+  it.each([
+    [401, 'CREDENTIAL_OR_CONFIG'], [403, 'CREDENTIAL_OR_CONFIG'], [404, 'ORDER_NOT_FOUND'],
+    [429, 'RATE_LIMITED'], [500, 'PROVIDER_UNAVAILABLE'],
+  ] as const)('classifies HTTP %s as %s', async (status, kind) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ secret: 'must-not-leak' }, status, { 'Retry-After': '7' })))
+    await expect(provider.getOrder('order-1')).rejects.toMatchObject({ kind })
+    try { await provider.getOrder('order-1') } catch (error) {
+      expect(error).toBeInstanceOf(PaymentProviderError)
+      expect(String(error)).not.toContain('must-not-leak')
+      if (kind === 'RATE_LIMITED') expect(error).toMatchObject({ retryAfterSeconds: 7 })
+    }
+  })
+
+  it('classifies timeout as transient uncertain', async () => {
+    const timeoutProvider = new MercadoPagoOrdersProvider(token, { applicationId: 'app-test', accountId: 'account-test', liveMode: false }, 10)
+    vi.stubGlobal('fetch', vi.fn((_input: string, init?: RequestInit) => new Promise<never>((_, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+    })))
+    await expect(timeoutProvider.getOrder('order-1')).rejects.toMatchObject({ kind: 'TRANSIENT_UNCERTAIN' })
+  })
+
+  it('rejects malformed snapshots and factory rejects incomplete config', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(snapshot({ transactions: { payments: [] } }), 200)))
+    await expect(provider.getOrder('order-1')).rejects.toMatchObject({ kind: 'PROVIDER_RESPONSE_INVALID' })
+    const env = { MP_ACCESS_TOKEN: token, MP_APPLICATION_ID: 'app-test', MP_ACCOUNT_ID: 'account-test', MP_LIVE_MODE: 'false' } as unknown as Env
+    expect(createPaymentProvider(env)).toBeInstanceOf(MercadoPagoOrdersProvider)
+    expect(createPaymentProvider({ ...env, MP_ACCOUNT_ID: undefined })).toBeNull()
+    expect(createPaymentProvider({ ...env, MP_LIVE_MODE: 'wat' } as unknown as Env)).toBeNull()
   })
 })
