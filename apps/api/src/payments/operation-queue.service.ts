@@ -97,6 +97,7 @@ export async function enqueuePaymentOperation(
 }
 
 export async function claimDueOperations(db: Db, now: Date, limit: number, leaseOwner: string): Promise<string[]> {
+  if (limit <= 0) return []
   return db.transaction(async (tx) => {
     const due = await tx.select({ id: paymentOperations.id }).from(paymentOperations).where(and(
       or(
@@ -122,6 +123,7 @@ export async function claimDueOperations(db: Db, now: Date, limit: number, lease
 }
 
 export async function propagateReviewedDependencies(db: Db, now: Date, limit: number): Promise<number> {
+  if (limit <= 0) return 0
   const ids = await db.select({ id: paymentOperations.id }).from(paymentOperations).where(and(
     not(eq(paymentOperations.status, 'SUCCEEDED')),
     sql`exists (select 1 from payment_operations predecessor where predecessor.id = ${paymentOperations.dependsOnOperationId} and predecessor.status = 'REVIEW_REQUIRED')`,

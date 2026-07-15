@@ -34,7 +34,6 @@ import {
   confirmLink, confirmLinkTermsChange, listDriverLinks, rejectLinkTermsChange, StoreDriverError,
 } from '../services/store-driver.service'
 import { endShift, getActiveShift, listDriverRecentShifts, reactivateShift, ShiftError, startShift } from '../services/shift.service'
-import { PaymentProviderError } from '../payments/provider'
 import { PaymentError } from '../services/payment.service'
 import {
   appendReturnPhotoKey,
@@ -63,8 +62,6 @@ function rethrow(e: unknown): never {
   if (e instanceof ReturnError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof OfferError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof ShiftProposalError) throw new HTTPException(e.status, { message: e.message })
-  if (e instanceof PaymentProviderError)
-    throw new HTTPException(503, { message: 'Falha registrada; o estorno do cliente será reprocessado (gateway indisponível)' })
   throw e
 }
 

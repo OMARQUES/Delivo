@@ -81,8 +81,12 @@ describe('applyProviderSnapshot', () => {
 
   it('persists pending and rejection without releasing order', async () => {
     const { order, payment } = await makePayment()
+    const now = new Date('2026-07-15T12:00:00.000Z')
     const pending = snapshot(order.id, order.totalCents, { orderStatus: 'waiting_transfer', orderStatusDetail: 'waiting_transfer', transactionStatus: 'waiting_transfer', transactionStatusDetail: 'waiting_transfer' })
-    expect((await applyProviderSnapshot(testDb, payment.id, pending, new Date())).decision).toBe('PENDING')
+    expect((await applyProviderSnapshot(testDb, payment.id, pending, now)).decision).toBe('PENDING')
+    const persisted = (await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]!
+    expect(persisted.lastReconciledAt).toEqual(now)
+    expect(persisted.nextReconcileAt).toEqual(new Date(now.getTime() + 5 * 60_000))
     const rejected = snapshot(order.id, order.totalCents, { orderStatus: 'failed', orderStatusDetail: 'cc_rejected_other', transactionStatus: 'cc_rejected_other', transactionStatusDetail: 'cc_rejected_other' })
     expect((await applyProviderSnapshot(testDb, payment.id, rejected, new Date())).decision).toBe('REJECTED')
     expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('CANCELLED')
@@ -169,12 +173,37 @@ describe('Orders checkout orchestration', () => {
   it('recovers one uncertain create, rejects multiple, requests retry for zero', async () => {
     const one = await makePayment()
     const oneProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(one.order.id, one.order.totalCents)]) })
-    await expect(recoverUncertainCreate(testDb, oneProvider, one.payment.id, new Date())).resolves.toBe('RECOVERED')
+    await expect(recoverUncertainCreate(testDb, oneProvider, one.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('RECOVERED')
     const many = await makePayment()
     const manyProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(many.order.id, many.order.totalCents), snapshot(many.order.id, many.order.totalCents)]) })
-    await expect(recoverUncertainCreate(testDb, manyProvider, many.payment.id, new Date())).resolves.toBe('REVIEW_REQUIRED')
+    await expect(recoverUncertainCreate(testDb, manyProvider, many.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('REVIEW_REQUIRED')
     const zero = await makePayment()
     const zeroProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => []) })
-    await expect(recoverUncertainCreate(testDb, zeroProvider, zero.payment.id, new Date())).resolves.toBe('RETRY_PIX')
+    const createOrder = vi.fn(async () => snapshot(zero.order.id, zero.order.totalCents))
+    zeroProvider.createOrder = createOrder
+    await expect(recoverUncertainCreate(testDb, zeroProvider, zero.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('RECOVERED')
+    expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: zero.payment.createIdempotencyKey, payerEmail: expect.any(String) }))
+  })
+
+  it('persists ambiguous and fresh-card decisions, expires uncertain PIX once', async () => {
+    const many = await makePayment()
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, many.payment.id))
+    const manyProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(many.order.id, many.order.totalCents), snapshot(many.order.id, many.order.totalCents)]) })
+    await expect(recoverUncertainCreate(testDb, manyProvider, many.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('REVIEW_REQUIRED')
+    expect((await testDb.select().from(payments).where(eq(payments.id, many.payment.id)))[0]!.reconciliationFailure).toBe('AMBIGUOUS_PROVIDER_CREATE')
+
+    const card = await makePayment()
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null, method: 'CARD', qrCode: null, qrCodeBase64: null }).where(eq(payments.id, card.payment.id))
+    const cardProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => []), createOrder: vi.fn() })
+    await expect(recoverUncertainCreate(testDb, cardProvider, card.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('FRESH_CARD_REQUIRED')
+    expect(cardProvider.createOrder).not.toHaveBeenCalled()
+
+    const expired = await makePayment()
+    const expiredAt = new Date('2026-07-15T11:00:00.000Z')
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null, expiresAt: expiredAt }).where(eq(payments.id, expired.payment.id))
+    const expiredProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => []) })
+    await expect(recoverUncertainCreate(testDb, expiredProvider, expired.payment.id, new Date('2026-07-15T12:00:00.000Z'), (email) => email ?? 'payer@test.local')).resolves.toBe('RECOVERED')
+    expect((await testDb.select().from(payments).where(eq(payments.id, expired.payment.id)))[0]!.status).toBe('EXPIRED')
+    expect((await testDb.select().from(orderEvents).where(and(eq(orderEvents.orderId, expired.order.id), eq(orderEvents.note, 'pagamento não aprovado')))).length).toBe(1)
   })
 })

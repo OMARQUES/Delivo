@@ -51,6 +51,32 @@ Script aceita apenas linha `REVIEW_REQUIRED`; preserva idempotency/business key 
 - `CREDENTIAL_OR_CONFIG`, `MISMATCH_*`, `UNSUPPORTED_*`, `CHARGEBACK`: review manual.
 - `RETRY_EXHAUSTED`: parar e investigar; não repetir cegamente.
 
+## Reconciliação e recovery de create incerto
+
+- `RECOVERED`: snapshot único aplicado; `lastReconciledAt` atualizado.
+- `AMBIGUOUS_PROVIDER_CREATE`: múltiplos Orders para mesma referência; mantém pagamento em `REVIEW_REQUIRED`, sem novo create.
+- `FRESH_CARD_REQUIRED`: nenhum resultado para CARD; exige nova tentativa com token novo, sem replay do token anterior.
+- `RETRY_PIX`: nenhum resultado para PIX ainda válido, ou falha transitória; mantém `PENDING` e agenda nova tentativa limitada.
+- PIX expirado sem `providerOrderId`: após busca exata sem resultado, expira localmente e cancela apenas pedido `AWAITING_PAYMENT`; não cria operação CANCEL.
+- PIX expirado com `providerOrderId`: somente fila durable `CANCEL` pode atuar; não expirar localmente em paralelo.
+
+Não registrar email, token, QR, provider ID, idempotency key ou corpo de erro. Summaries de cron carregam somente contagens.
+
+## Cadeia de dependências
+
+Antes de claim outbound, reconciliador propaga predecessor `REVIEW_REQUIRED` aos descendentes. Inspecionar apenas contagem e idade:
+
+```sql
+select status, failure_class, count(*) as count,
+       floor(extract(epoch from (now() - min(created_at)))/60)::int as oldest_minutes
+from payment_operations
+group by status, failure_class;
+```
+
+`SUCCEEDED`/`CANCELLED` não significam conclusão financeira até refund dependente terminar com sucesso. Refund full usa alvo exato do pagamento; partial usa soma cumulativa já observada + novo valor, nunca excedendo total.
+
+Recheck seguro usa somente `ORDER_NOT_FOUND`, `PROVIDER_UNAVAILABLE` e `TRANSIENT_UNCERTAIN`, com intervalo bounded. Mismatch, credencial, ambiente e chargeback ficam para revisão manual.
+
 ## Alertas
 
 Alertar por contagem/idade, sem conteúdo sensível:

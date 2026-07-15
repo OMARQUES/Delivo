@@ -12,6 +12,7 @@ import { cancelStalePendingOrders } from './services/order-status.service'
 import { runPaymentReconciliation } from './payments/reconciliation.service'
 import { autoApproveStaleShiftDailies } from './services/shift.service'
 import { deleteExpiredRateLimitBuckets } from './security/rate-limit-cleanup'
+import { resolvePayerEmail } from './lib/payer-email'
 
 function emailFailureClass(error: unknown): string {
   if (error instanceof EmailDeliveryError) return error.failureClass
@@ -56,7 +57,9 @@ export default {
       if (n > 0) console.log(`cron: ${n} pedidos PENDING expirados cancelados`)
       const provider = createPaymentProvider(env)
       if (provider) {
-        const reconciliation = await runPaymentReconciliation(db, provider, now)
+        const reconciliation = await runPaymentReconciliation(db, provider, now, {
+          resolvePayerEmail: (email, userId) => resolvePayerEmail(env, email, userId),
+        })
         if (Object.values(reconciliation).some((count) => count > 0)) console.log('cron: pagamentos reconciliados', reconciliation)
       }
       const dailies = await autoApproveStaleShiftDailies(db)

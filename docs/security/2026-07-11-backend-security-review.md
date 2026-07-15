@@ -20,7 +20,7 @@ Contratos negativos cross-tenant e transições de evento de segurança (logout,
 
 Desvios do plano registrados: a emissão/rotação de tokens permaneceu em `auth.service.ts` (o plano sugeria mover para `security-session.service.ts`); a organização de arquivo difere mas as propriedades de segurança — claims completos, vínculo de família, revogação viva — são idênticas e cobertas por teste.
 
-SEC-03A concluiu o gate local automatizado da Stage 4, Task 9. A validação operacional externa permanece aberta: WAF/Turnstile/Resend reais em staging dependem de configuração Cloudflare/Resend manual. SEC-08 está remediado em código; validação externa Orders/sandbox/live permanece pendente. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida nem autoriza produção.
+SEC-03A concluiu o gate local automatizado da Stage 4, Task 9. A validação operacional externa permanece aberta: WAF/Turnstile/Resend reais em staging dependem de configuração Cloudflare/Resend manual. SEC-08 está remediado em código, incluindo reconciliação isolada, recovery de create incerto e fila Orders serializada; validação externa Orders/sandbox/live permanece pendente. A mídia privada completa também permanece pendente; esta tabela não declara a auditoria inteira resolvida nem autoriza produção.
 
 ### Remediação SEC-02 — 2026-07-12
 
