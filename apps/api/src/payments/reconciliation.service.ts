@@ -85,19 +85,11 @@ async function retryPayment(db: Db, paymentId: string, attemptCount: number, now
   await db.update(payments).set({ reconciliationState: state, reconciliationFailure: failure, nextReconcileAt: disposition.nextAttemptAt, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, paymentId))
 }
 
-async function persistMismatch(db: Db, paymentId: string, now: Date) {
-  await db.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'MISMATCH_ACCOUNT', nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, paymentId))
-}
-
-async function refreshPendingSnapshot(db: Db, provider: PaymentProvider, paymentId: string, account: string, now: Date): Promise<'REFRESHED' | 'FAILED'> {
+async function refreshPendingSnapshot(db: Db, provider: PaymentProvider, paymentId: string, now: Date): Promise<'REFRESHED' | 'FAILED'> {
   const payment = await claimPayment(db, paymentId, now, 'PENDING')
   if (!payment) return 'FAILED'
   try {
     const snapshot = await provider.getOrder(payment.providerOrderId!)
-    if (snapshot.accountId !== account) {
-      await persistMismatch(db, payment.id, now)
-      return 'FAILED'
-    }
     await applyProviderSnapshot(db, payment.id, snapshot, now)
     return 'REFRESHED'
   } catch (error) {
@@ -157,10 +149,9 @@ export async function runPaymentReconciliation(
     }
   })
   if (stages.has('snapshots')) await runStage(summary, async () => {
-    const account = await provider.getAccountId()
     const pending = await db.select({ id: payments.id }).from(payments).where(and(eq(payments.status, 'PENDING'), isNotNull(payments.providerOrderId), duePayment(now))).orderBy(asc(payments.nextReconcileAt), asc(payments.createdAt)).limit(capBy('snapshots'))
     for (const row of pending) {
-      try { if (await refreshPendingSnapshot(db, provider, row.id, account, now) === 'REFRESHED') summary.snapshotsRefreshed++ } catch { summary.stageFailures++ }
+      try { if (await refreshPendingSnapshot(db, provider, row.id, now) === 'REFRESHED') summary.snapshotsRefreshed++ } catch { summary.stageFailures++ }
     }
   })
   if (stages.has('expirations')) await runStage(summary, async () => {

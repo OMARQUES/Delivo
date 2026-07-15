@@ -84,7 +84,7 @@ git commit -m "test(payments): cover reconciliation isolation"
 - Consumes: `applyProviderSnapshot` and persisted immutable payment expectations.
 - Produces: pending snapshot reconciliation with no manual account comparison or `getAccountId` dependency.
 
-- [ ] **Step 1: Strengthen account-mismatch test**
+- [x] **Step 1: Strengthen account-mismatch test**
 
 Use provider whose account lookup throws:
 
@@ -101,13 +101,13 @@ expect(accountSpy).not.toHaveBeenCalled()
 
 Keep assertions for `REVIEW_REQUIRED`, `MISMATCH_ACCOUNT`, `nextReconcileAt: null`, and preservation of established provider IDs/status fields.
 
-- [ ] **Step 2: Run focused test and verify RED**
+- [x] **Step 2: Run focused test and verify RED**
 
 Run `pnpm --filter @delivery/api exec vitest run test/payment-reconciliation.test.ts --no-file-parallelism --maxWorkers=1`.
 
 Expected: failure because snapshots currently call `provider.getAccountId()` and pass account into `refreshPendingSnapshot`.
 
-- [ ] **Step 3: Remove duplicate account validation**
+- [x] **Step 3: Remove duplicate account validation**
 
 In `reconciliation.service.ts`:
 
@@ -119,13 +119,13 @@ In `reconciliation.service.ts`:
 
 Do not change retry handling, claim predicates, limits, or summary semantics.
 
-- [ ] **Step 4: Run focused and API tests**
+- [x] **Step 4: Run focused and API tests**
 
 Run `pnpm --filter @delivery/api exec vitest run test/payment-reconciliation.test.ts test/payment-operation.service.test.ts test/webhooks.routes.test.ts --no-file-parallelism --maxWorkers=1` and `pnpm --filter @delivery/api test`.
 
 Expected: account mismatch persists through `validateSnapshot`; retry, operation, webhook, and reconciliation tests pass.
 
-- [ ] **Step 5: Run final repository gate**
+- [x] **Step 5: Run final repository gate**
 
 Run each command separately:
 
@@ -145,7 +145,7 @@ git status --short
 
 Expected: all pass; status contains only intentional plan/spec changes before final commit.
 
-- [ ] **Step 6: Review and commit Task 21**
+- [x] **Step 6: Review and commit Task 21**
 
 Run `git diff --check`, inspect production/test diff, then execute:
 

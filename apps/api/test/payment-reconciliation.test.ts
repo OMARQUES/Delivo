@@ -188,9 +188,22 @@ describe('payment reconciliation', () => {
   it('persists known account mismatch as stable review', async () => {
     const pending = await pendingPayment()
     const now = new Date()
-    const summary = await runPaymentReconciliation(testDb, provider({ getOrder: vi.fn(async () => snapshot(pending, { accountId: 'wrong-account' })) }, pending), now, context, only('snapshots'))
+    const accountSpy = vi.fn(async () => { throw new Error('account lookup must not run') })
+    const mismatchProvider = provider({
+      getAccountId: accountSpy,
+      getOrder: vi.fn(async () => snapshot(pending, { accountId: 'wrong-account' })),
+    }, pending)
+    const summary = await runPaymentReconciliation(testDb, mismatchProvider, now, context, only('snapshots'))
     expect(summary.stageFailures).toBe(0)
-    expect((await testDb.select().from(payments).where(eq(payments.id, pending.id)))[0]).toMatchObject({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'MISMATCH_ACCOUNT', nextReconcileAt: null })
+    expect(accountSpy).not.toHaveBeenCalled()
+    expect((await testDb.select().from(payments).where(eq(payments.id, pending.id)))[0]).toMatchObject({
+      providerOrderId: pending.providerOrderId,
+      providerTransactionId: pending.providerTransactionId,
+      status: pending.status,
+      reconciliationState: 'REVIEW_REQUIRED',
+      reconciliationFailure: 'MISMATCH_ACCOUNT',
+      nextReconcileAt: null,
+    })
   })
 
   it('moves attempt eight provider failure to terminal review', async () => {
@@ -269,7 +282,8 @@ describe('payment reconciliation', () => {
 
   it('failure in one stage does not prevent later stages', async () => {
     const broken = provider()
-    broken.getAccountId = vi.fn(async () => { throw new Error('provider down') })
+    await pendingPayment()
+    broken.getOrder = vi.fn(async () => { throw new Error('provider down') })
     const summary = await runPaymentReconciliation(testDb, broken, new Date(), context, only('snapshots', 'expirations'))
     expect(summary.stageFailures).toBe(1)
     expect(summary.operationsProcessed).toBe(0)
