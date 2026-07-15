@@ -1,4 +1,4 @@
-import { check, index, integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { boolean, check, index, integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import { PAYMENT_STATUSES } from '@delivery/shared/constants'
 import { orders } from './orders'
@@ -21,6 +21,9 @@ export const payments = pgTable('payments', {
   expectedAmountCents: integer('expected_amount_cents').notNull(),
   expectedCurrency: text('expected_currency').notNull().default('BRL'),
   expectedCountry: text('expected_country').notNull().default('BR'),
+  expectedApplicationId: text('expected_application_id').notNull(),
+  expectedAccountId: text('expected_account_id').notNull(),
+  expectedLiveMode: boolean('expected_live_mode').notNull(),
   createIdempotencyKey: text('create_idempotency_key').notNull(),
   providerStatus: text('provider_status'),
   providerStatusDetail: text('provider_status_detail'),
