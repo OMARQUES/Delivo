@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import type { PaymentProvider } from '../src/payments/provider'
-import { fakePaymentProvider } from './helpers/payment-provider'
 import { createActiveStoreTestFixture, type StoreFixtureInput, closeTestDb, migrateTestDb, scheduleForNow, testDb, truncateAll } from './helpers/test-db'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
@@ -81,21 +79,15 @@ async function assignAndCollect(fixed = false, paymentMethod: 'CASH' | 'PIX_ONLI
   return order
 }
 
-function provider(): PaymentProvider {
-  return fakePaymentProvider()
-}
-
 describe('devolução após falha', () => {
   it('estorna online, não paga na falha e libera frete freelance só na devolução', async () => {
     const order = await assignAndCollect(false, 'PIX_ONLINE')
     await testDb.insert(payments).values({
       orderId: order.id, providerOrderId: 'mp-return', method: 'PIX', expectedAmountCents: 5_501, expectedCurrency: 'BRL', expectedCountry: 'BR', expectedApplicationId: 'legacy', expectedAccountId: 'legacy', expectedLiveMode: false, createIdempotencyKey: crypto.randomUUID(), status: 'APPROVED',
     })
-    const gateway = provider()
-    const failed = await failDelivery(testDb, driverId, order.id, { reason: 'NO_ANSWER' }, gateway)
+    const failed = await failDelivery(testDb, driverId, order.id, { reason: 'NO_ANSWER' })
     expect(failed).toMatchObject({ status: 'DELIVERY_FAILED', returnDriverPayCents: 501, returnedAt: null })
     expect(failed.returnPendingAt).toBeInstanceOf(Date)
-    expect(gateway.refundOrder).not.toHaveBeenCalled()
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.type, 'REFUND_FULL'))).length).toBe(1)
     expect((await testDb.select().from(payments).where(eq(payments.orderId, order.id)))[0]!.status).toBe('APPROVED')
     expect(await testDb.select().from(ledgerEntries).where(eq(ledgerEntries.orderId, order.id))).toEqual([])

@@ -2,11 +2,10 @@ import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
 import type { DeliveryFailInput, DriverArrivalInput } from '@delivery/shared/schemas'
 import type { OrderStatus } from '@delivery/shared/constants'
 import type { Db } from '../db/client'
-import type { PaymentProvider } from '../payments/provider'
 import { driverShifts, drivers, orderItems, orders, stores, users } from '../db/schema'
 import { addEvent } from './order-status.service'
 import { recordHalfFee, recordOrderLedger } from './finance.service'
-import { refundOrderPaymentIfAny } from './payment.service'
+import { enqueueOrderPaymentDisposition } from './payment.service'
 import { toActiveDriverDelivery, toDriverHistoryDelivery } from './driver-delivery.dto'
 
 export class DispatchError extends Error {
@@ -338,7 +337,6 @@ export async function failDelivery(
   driverUserId: string,
   orderId: string,
   input: DeliveryFailInput,
-  provider: PaymentProvider | null = null,
 ) {
   const [existing] = await db.select().from(orders).where(and(
     eq(orders.id, orderId), eq(orders.driverId, driverUserId),
@@ -366,13 +364,11 @@ export async function failDelivery(
       )).returning()
       if (!updated) throw new DispatchError('Pedido não está em rota', 409)
       await addEvent(tx, orderId, 'DELIVERY_FAILED', 'DRIVER', driverUserId, input.note ?? input.reason)
+      await enqueueOrderPaymentDisposition(tx, orderId, 'DELIVERY_FAILED', now)
       return updated
     })
   }
   if (!failed) throw new DispatchError('Pedido não está em rota', 409)
-  await refundOrderPaymentIfAny(db, provider, orderId, {
-    status: 'DELIVERY_FAILED', note: 'pagamento estornado após falha de entrega',
-  })
   return failed
 }
 

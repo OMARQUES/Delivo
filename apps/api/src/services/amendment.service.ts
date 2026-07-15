@@ -1,11 +1,11 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { formatBRL } from '@delivery/shared/constants'
 import type { AmendmentProposalInput } from '@delivery/shared/schemas'
-import type { Db } from '../db/client'
+import type { Db, DbTransaction } from '../db/client'
 import { orderAmendmentItems, orderAmendments, orderItems, orders, payments } from '../db/schema'
-import type { PaymentProvider } from '../payments/provider'
 import { addEvent } from './order-events'
 import { enqueuePaymentOperation } from '../payments/operation-queue.service'
+import { enqueueOrderPaymentDisposition } from './payment.service'
 
 export class AmendmentError extends Error {
   constructor(
@@ -18,7 +18,7 @@ export class AmendmentError extends Error {
 
 const PROPOSABLE = ['ACCEPTED', 'PREPARING'] as const
 
-export async function getPendingAmendment(db: Db, orderId: string) {
+export async function getPendingAmendment(db: Db | DbTransaction, orderId: string) {
   const [a] = await db.select().from(orderAmendments)
     .where(and(eq(orderAmendments.orderId, orderId), eq(orderAmendments.status, 'PROPOSED')))
   if (!a) return null
@@ -102,13 +102,13 @@ export async function withdrawAmendment(db: Db, storeId: string, orderId: string
 }
 
 /** Chamado pelos fluxos de cancelamento — expira proposta pendente sem erro se não houver. */
-export async function expirePendingAmendment(db: Db, orderId: string) {
+export async function expirePendingAmendment(db: Db | DbTransaction, orderId: string) {
   await db.update(orderAmendments)
     .set({ status: 'EXPIRED', resolvedAt: new Date() })
     .where(and(eq(orderAmendments.orderId, orderId), eq(orderAmendments.status, 'PROPOSED')))
 }
 
-export async function approveAmendment(db: Db, provider: PaymentProvider | null, customerId: string, orderId: string) {
+export async function approveAmendment(db: Db, customerId: string, orderId: string) {
   const [order] = await db.select().from(orders)
     .where(and(eq(orders.id, orderId), eq(orders.customerId, customerId)))
   if (!order) throw new AmendmentError('Pedido não encontrado', 404)
@@ -134,19 +134,19 @@ export async function approveAmendment(db: Db, provider: PaymentProvider | null,
       .set({ subtotalCents: pending.newSubtotalCents, totalCents: pending.newTotalCents })
       .where(eq(orders.id, orderId))
     if (pending.refundCents > 0) {
-      const [payment] = await tx.select().from(payments).where(eq(payments.orderId, orderId)).limit(1)
+      const [payment] = await tx.select().from(payments).where(eq(payments.orderId, orderId))
+        .orderBy(sql`${payments.createdAt} desc`).limit(1).for('update')
       if (payment?.status === 'APPROVED') {
         await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_PARTIAL', amountCents: pending.refundCents, businessKey: `refund-partial:${payment.id}:amendment:${pending.id}`, idempotencyKey: `refund-partial:${payment.id}:amendment:${pending.id}` }, new Date())
         await addEvent(tx, orderId, order.status, 'SYSTEM', null, `estorno parcial de ${formatBRL(pending.refundCents)}`)
       }
     }
+    await addEvent(tx, orderId, order.status, 'CUSTOMER', customerId, `pedido ajustado (-${formatBRL(pending.refundCents)})`)
   })
-
-  await addEvent(db, orderId, order.status, 'CUSTOMER', customerId, `pedido ajustado (-${formatBRL(pending.refundCents)})`)
   return { ...pending, status: 'APPROVED' as const }
 }
 
-export async function rejectAmendment(db: Db, provider: PaymentProvider | null, customerId: string, orderId: string) {
+export async function rejectAmendment(db: Db, customerId: string, orderId: string) {
   const [order] = await db.select().from(orders)
     .where(and(eq(orders.id, orderId), eq(orders.customerId, customerId)))
   if (!order) throw new AmendmentError('Pedido não encontrado', 404)
@@ -154,7 +154,7 @@ export async function rejectAmendment(db: Db, provider: PaymentProvider | null, 
   if (!pending) throw new AmendmentError('Sem alteração pendente', 409)
 
   // mesma atomicidade do approve: claim + cancelamento na mesma tx
-  const rows = await db.transaction(async (tx) => {
+  await db.transaction(async (tx) => {
     const claimed = await tx.update(orderAmendments)
       .set({ status: 'REJECTED', resolvedAt: new Date() })
       .where(and(eq(orderAmendments.id, pending.id), eq(orderAmendments.status, 'PROPOSED')))
@@ -165,14 +165,9 @@ export async function rejectAmendment(db: Db, provider: PaymentProvider | null, 
       .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cliente recusou a alteração proposta' })
       .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
       .returning()
-    const [payment] = await tx.select().from(payments).where(eq(payments.orderId, orderId)).limit(1)
-    if (payment) {
-      await enqueuePaymentOperation(tx, { paymentId: payment.id, type: payment.status === 'APPROVED' ? 'REFUND_FULL' : 'CANCEL', amountCents: null, businessKey: `cancel:${payment.id}:AMENDMENT_REJECTED`, idempotencyKey: `cancel:${payment.id}:AMENDMENT_REJECTED` }, new Date())
-    }
+    await enqueueOrderPaymentDisposition(tx, orderId, 'AMENDMENT_REJECTED', new Date())
+    if (cancelled.length > 0) await addEvent(tx, orderId, 'CANCELLED', 'CUSTOMER', customerId, 'recusou alteração')
     return cancelled
   })
-  if (rows.length > 0) {
-    await addEvent(db, orderId, 'CANCELLED', 'CUSTOMER', customerId, 'recusou alteração')
-  }
   return { ...pending, status: 'REJECTED' as const }
 }

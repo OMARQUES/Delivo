@@ -121,7 +121,7 @@ orderRoutes.openapi(
   }),
   async (c) =>
     c.json(
-      await approveAmendment(c.get('db'), createOrdersPaymentProvider(c.env), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
+      await approveAmendment(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
       200,
     ),
 )
@@ -135,7 +135,7 @@ orderRoutes.openapi(
   }),
   async (c) =>
     c.json(
-      await rejectAmendment(c.get('db'), createOrdersPaymentProvider(c.env), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
+      await rejectAmendment(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id).catch(rethrow),
       200,
     ),
 )
@@ -153,7 +153,6 @@ orderRoutes.openapi(
         c.get('db'),
         c.get('auth')!.sub,
         c.req.valid('param').id,
-        createOrdersPaymentProvider(c.env),
       ).catch(rethrow),
       200,
     ),

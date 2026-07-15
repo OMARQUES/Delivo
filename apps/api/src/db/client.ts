@@ -13,3 +13,4 @@ export function createDb(env: Env) {
 }
 
 export type Db = ReturnType<typeof createDb>['db']
+export type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0]

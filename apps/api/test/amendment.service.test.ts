@@ -8,7 +8,6 @@ import { createOrder, getCustomerOrder } from '../src/services/order.service'
 import { storeUpdateOrderStatus } from '../src/services/order-status.service'
 import { updateStore } from '../src/services/store.service'
 import { paymentOperations, payments } from '../src/db/schema'
-import { fakePaymentProvider } from './helpers/payment-provider'
 import {
   AmendmentError,
   approveAmendment,
@@ -144,8 +143,7 @@ describe('approveAmendment', () => {
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, {
       items: [{ orderItemId: pizzaItemId, newQuantity: 1 }, { orderItemId: cocaItemId, newQuantity: 0 }],
     })
-    const provider = fakePaymentProvider()
-    const r = await approveAmendment(testDb, provider, customerId, orderId)
+    const r = await approveAmendment(testDb, customerId, orderId)
     expect(r.status).toBe('APPROVED')
     const detail = await getCustomerOrder(testDb, customerId, orderId)
     expect(detail!.status).toBe('ACCEPTED')
@@ -160,19 +158,17 @@ describe('approveAmendment', () => {
   it('cash order: no gateway call, totals still applied', async () => {
     const { orderId, cocaItemId } = await makeAcceptedOrder()
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
-    const provider = fakePaymentProvider()
-    await approveAmendment(testDb, provider, customerId, orderId)
-    expect(provider.refundPartial).not.toHaveBeenCalled()
+    await approveAmendment(testDb, customerId, orderId)
     expect((await getCustomerOrder(testDb, customerId, orderId))!.subtotalCents).toBe(6000)
   })
 
   it('guards: wrong customer 404, no pending 409, double approve 409', async () => {
     const { orderId, cocaItemId } = await makeAcceptedOrder()
-    await expect(approveAmendment(testDb, fakePaymentProvider(), customerId, orderId)).rejects.toMatchObject({ status: 409 })
+    await expect(approveAmendment(testDb, customerId, orderId)).rejects.toMatchObject({ status: 409 })
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
-    await expect(approveAmendment(testDb, fakePaymentProvider(), crypto.randomUUID(), orderId)).rejects.toMatchObject({ status: 404 })
-    await approveAmendment(testDb, fakePaymentProvider(), customerId, orderId)
-    await expect(approveAmendment(testDb, fakePaymentProvider(), customerId, orderId)).rejects.toMatchObject({ status: 409 })
+    await expect(approveAmendment(testDb, crypto.randomUUID(), orderId)).rejects.toMatchObject({ status: 404 })
+    await approveAmendment(testDb, customerId, orderId)
+    await expect(approveAmendment(testDb, customerId, orderId)).rejects.toMatchObject({ status: 409 })
   })
 })
 
@@ -180,8 +176,7 @@ describe('rejectAmendment', () => {
   it('cancels order with full refund when paid', async () => {
     const { orderId, cocaItemId } = await makeAcceptedPaidOrder()
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
-    const provider = fakePaymentProvider()
-    await rejectAmendment(testDb, provider, customerId, orderId)
+    await rejectAmendment(testDb, customerId, orderId)
     const detail = await getCustomerOrder(testDb, customerId, orderId)
     expect(detail!.status).toBe('CANCELLED')
     expect((await testDb.select().from(paymentOperations)).some((op) => op.type === 'REFUND_FULL')).toBe(true)
@@ -194,7 +189,7 @@ describe('withdraw + status gate', () => {
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, { items: [{ orderItemId: cocaItemId, newQuantity: 0 }] })
 
     const results = await Promise.allSettled([
-      approveAmendment(testDb, fakePaymentProvider(), customerId, orderId),
+      approveAmendment(testDb, customerId, orderId),
       withdrawAmendment(testDb, storeId, orderId),
     ])
 

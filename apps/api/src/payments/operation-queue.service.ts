@@ -1,8 +1,6 @@
 import { and, desc, eq, inArray, isNull, lte, not, or, sql } from 'drizzle-orm'
-import type { Db } from '../db/client'
+import type { Db, DbTransaction } from '../db/client'
 import { paymentOperations, payments } from '../db/schema'
-
-type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 export type PaymentOperationResultCode =
   | 'CANCELLED'

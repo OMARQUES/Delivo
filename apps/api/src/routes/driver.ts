@@ -34,7 +34,6 @@ import {
   confirmLink, confirmLinkTermsChange, listDriverLinks, rejectLinkTermsChange, StoreDriverError,
 } from '../services/store-driver.service'
 import { endShift, getActiveShift, listDriverRecentShifts, reactivateShift, ShiftError, startShift } from '../services/shift.service'
-import { createPaymentProvider } from '../payments/mercadopago'
 import { PaymentProviderError } from '../payments/provider'
 import { PaymentError } from '../services/payment.service'
 import {
@@ -406,6 +405,6 @@ driverRoutes.openapi(
   async (c) =>
     c.json(toDriverActionResult(await failDelivery(
       c.get('db'), c.get('auth')!.sub, c.req.valid('param').id,
-      c.req.valid('json'), createPaymentProvider(c.env),
+      c.req.valid('json'),
     ).catch(rethrow)), 200),
 )

@@ -1,10 +1,7 @@
 import { and, eq, lt, sql } from 'drizzle-orm'
 import { PIX_EXPIRATION_MINUTES } from '@delivery/shared/constants'
-import type { OrderStatus } from '@delivery/shared/constants'
-import type { Db } from '../db/client'
+import type { Db, DbTransaction } from '../db/client'
 import { orders, payments } from '../db/schema'
-import type { PaymentProvider } from '../payments/provider'
-import { addEvent } from './order-events'
 import { enqueuePaymentOperation } from '../payments/operation-queue.service'
 
 export class PaymentError extends Error {
@@ -16,78 +13,58 @@ export class PaymentError extends Error {
   }
 }
 
-export type PaymentDispositionReason =
-  | { kind: 'ORDER_CANCELLED'; businessKey: string }
-  | { kind: 'PIX_EXPIRED'; businessKey: string }
-  | { kind: 'AMENDMENT_REFUND'; businessKey: string; amendmentId: string; amountCents: number }
+export type OrderPaymentTransition =
+  | 'CUSTOMER_CANCELLED' | 'STORE_CANCELLED' | 'STORE_CANCEL_REQUEST_APPROVED'
+  | 'STALE_PENDING' | 'DELIVERY_FAILED' | 'AMENDMENT_REJECTED' | 'PIX_EXPIRED'
 
-export async function enqueueOrderPaymentDisposition(db: Db, orderId: string, reason: PaymentDispositionReason, now: Date): Promise<boolean> {
-  const payment = await getOrderPayment(db, orderId)
-  if (!payment) return false
-  const approved = payment.status === 'APPROVED'
-  const partial = reason.kind === 'AMENDMENT_REFUND'
-  if (partial) {
-    if (!approved || reason.amountCents <= 0) return false
-    await enqueuePaymentOperation(db, { paymentId: payment.id, type: 'REFUND_PARTIAL', amountCents: reason.amountCents, businessKey: reason.businessKey, idempotencyKey: reason.businessKey }, now)
-    return true
+export async function enqueueOrderPaymentDisposition(
+  tx: Db | DbTransaction,
+  orderId: string,
+  transition: OrderPaymentTransition,
+  now: Date,
+): Promise<{ operationId: string | null; type: 'CANCEL' | 'REFUND_FULL' | null }> {
+  const payment = await getOrderPayment(tx, orderId, true)
+  if (!payment || payment.status === 'REFUNDED') {
+    return { operationId: null, type: null }
   }
-  await enqueuePaymentOperation(db, {
-    paymentId: payment.id,
-    type: approved ? 'REFUND_FULL' : 'CANCEL',
-    amountCents: null,
-    businessKey: reason.businessKey,
-    idempotencyKey: reason.businessKey,
+  const type = payment.status === 'APPROVED' ? 'REFUND_FULL' : payment.status === 'PENDING' ? 'CANCEL' : null
+  if (!type) return { operationId: null, type: null }
+  const key = `${type === 'REFUND_FULL' ? 'refund-full' : 'cancel'}:${payment.id}:${transition}`
+  const result = await enqueuePaymentOperation(tx, {
+    paymentId: payment.id, type, amountCents: null, businessKey: key, idempotencyKey: key,
   }, now)
-  return approved
+  return { operationId: result.id, type }
 }
 
-export async function getOrderPayment(db: Db, orderId: string) {
-  const [row] = await db.select().from(payments)
+export async function getOrderPayment(db: Db | DbTransaction, orderId: string, lock = false) {
+  let query = db.select().from(payments)
     .where(eq(payments.orderId, orderId))
     .orderBy(sql`${payments.createdAt} desc`)
     .limit(1)
+  if (lock) query = query.for('update') as typeof query
+  const [row] = await query
   return row ?? null
-}
-
-/**
- * Cancelamento de pedido: estorna se pago; cancela no gateway se pendente.
- * Retorna true se estornou (pagamento aprovado existia).
- */
-export async function refundOrderPaymentIfAny(
-  db: Db,
-  provider: PaymentProvider | null,
-  orderId: string,
-  event: { status?: OrderStatus; note?: string } = {},
-): Promise<boolean> {
-  return enqueueOrderPaymentDisposition(db, orderId, {
-    kind: 'ORDER_CANCELLED',
-    businessKey: `order-cancel:${orderId}:${event.status ?? 'CANCELLED'}`,
-  }, new Date())
 }
 
 /** Cron: AWAITING_PAYMENT velhos -> CANCELLED + payment EXPIRED. */
 export async function expireStaleAwaitingPayment(
   db: Db,
-  provider: PaymentProvider | null,
   olderThanMinutes = PIX_EXPIRATION_MINUTES,
 ) {
   const cutoff = new Date(Date.now() - olderThanMinutes * 60_000)
-  const stale = await db.update(orders)
-    .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Pagamento não realizado a tempo' })
+  const candidates = await db.select({ id: orders.id }).from(orders)
     .where(and(eq(orders.status, 'AWAITING_PAYMENT'), lt(orders.createdAt, cutoff)))
-    .returning({ id: orders.id })
-  for (const o of stale) {
-    await addEvent(db, o.id, 'CANCELLED', 'SYSTEM', null, 'pagamento expirado')
-    const { expirePendingAmendment } = await import('./amendment.service')
-    await expirePendingAmendment(db, o.id)
-    const payment = await getOrderPayment(db, o.id)
-    if (payment && payment.status === 'PENDING') {
-      await enqueuePaymentOperation(db, {
-        paymentId: payment.id, type: 'CANCEL', amountCents: null,
-        businessKey: `cancel:${payment.id}:PIX_EXPIRED`,
-        idempotencyKey: `cancel:${payment.id}:PIX_EXPIRED`,
-      }, new Date())
-    }
-  }
+  const stale: { id: string }[] = []
+  const { addEvent } = await import('./order-events')
+  const { expirePendingAmendment } = await import('./amendment.service')
+  for (const candidate of candidates) await db.transaction(async (tx) => {
+    const [order] = await tx.update(orders).set({ status: 'CANCELLED', batchId: null, cancelReason: 'Pagamento não realizado a tempo' })
+      .where(and(eq(orders.id, candidate.id), eq(orders.status, 'AWAITING_PAYMENT'))).returning({ id: orders.id })
+    if (!order) return
+    await addEvent(tx, order.id, 'CANCELLED', 'SYSTEM', null, 'pagamento expirado')
+    await expirePendingAmendment(tx, order.id)
+    await enqueueOrderPaymentDisposition(tx, order.id, 'PIX_EXPIRED', new Date())
+    stale.push(order)
+  })
   return stale.length
 }

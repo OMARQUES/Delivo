@@ -9,6 +9,7 @@ import { applyProviderSnapshot } from '../src/payments/transition.service'
 import { providerSnapshot } from './helpers/payment-provider'
 import { createOnlinePayment, recoverUncertainCreate } from '../src/payments/checkout.service'
 import { fakePaymentProvider } from './helpers/payment-provider'
+import { enqueueOrderPaymentDisposition } from '../src/services/payment.service'
 
 const storeInput: StoreFixtureInput = { name: 'Pizzaria', slug: 'pizzaria', category: 'PIZZARIA', phone: '4433334444', city: 'C', addressText: 'Rua A, 1', lat: -23.55, lng: -51.9, owner: { name: 'João', email: 'joao@email.com', password: 'senha123' } }
 const customerInput = { name: 'Ana', phone: '44999998888', password: 'senha123', role: 'CUSTOMER' as const, acceptedTerms: true as const }
@@ -43,6 +44,21 @@ function snapshot(orderId: string, amountCents: number, patch: Partial<ReturnTyp
 }
 
 describe('applyProviderSnapshot', () => {
+  it('rolls back the business mutation when disposition key conflicts', async () => {
+    const { order, payment } = await makePayment()
+    const key = `cancel:${payment.id}:CUSTOMER_CANCELLED`
+    await testDb.insert(paymentOperations).values({
+      paymentId: payment.id, type: 'CANCEL', amountCents: null,
+      businessKey: key, idempotencyKey: `other:${crypto.randomUUID()}`,
+      status: 'SUCCEEDED', resultCode: 'CANCELLED', completedAt: new Date(),
+    })
+    await expect(testDb.transaction(async (tx) => {
+      await tx.update(orders).set({ status: 'CANCELLED' }).where(eq(orders.id, order.id))
+      await enqueueOrderPaymentDisposition(tx, order.id, 'CUSTOMER_CANCELLED', new Date())
+    })).rejects.toThrow('payment operation business key conflict')
+    expect((await testDb.select({ status: orders.status }).from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('AWAITING_PAYMENT')
+  })
+
   it('approves once, releases order, writes one event; duplicate approval is no-op', async () => {
     const { order, payment } = await makePayment()
     const approved = snapshot(order.id, order.totalCents)

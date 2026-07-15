@@ -7,7 +7,6 @@ import { createRouter } from '../app-factory'
 import { stores } from '../db/schema'
 import type { AppContext } from '../env'
 import { sendPushToTokens } from '../lib/fcm'
-import { createPaymentProvider } from '../payments/mercadopago'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import { getStoreOrder, listStoreOrders, OrderError } from '../services/order.service'
 import {
@@ -247,7 +246,6 @@ storeOrderRoutes.openapi(
       to,
       c.get('auth')!.sub,
       reason,
-      createPaymentProvider(c.env),
     ).catch(rethrow)
     return c.json(order, 200)
   },
@@ -283,7 +281,6 @@ storeOrderRoutes.openapi(
         c.req.valid('param').id,
         true,
         c.get('auth')!.sub,
-        createPaymentProvider(c.env),
       ).catch(rethrow),
       200,
     ),
