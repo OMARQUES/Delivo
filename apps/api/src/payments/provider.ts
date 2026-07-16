@@ -89,3 +89,14 @@ export class PaymentProviderError extends Error {
     this.name = 'PaymentProviderError'
   }
 }
+
+const PROVIDER_IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9:_-]{1,64}$/
+
+export function assertProviderIdempotencyKey(value: string): string {
+  if (!PROVIDER_IDEMPOTENCY_KEY_RE.test(value)) throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
+  return value
+}
+
+export function providerIdempotencyKey(scope: string, stableId: string): string {
+  return assertProviderIdempotencyKey(`${scope}:${stableId}`)
+}

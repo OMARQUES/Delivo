@@ -5,6 +5,7 @@ import type { Db, DbTransaction } from '../db/client'
 import { orderAmendmentItems, orderAmendments, orderItems, orders, payments } from '../db/schema'
 import { addEvent } from './order-events'
 import { enqueuePaymentOperation } from '../payments/operation-queue.service'
+import { providerIdempotencyKey } from '../payments/provider'
 import { enqueueOrderPaymentDisposition } from './payment.service'
 
 export class AmendmentError extends Error {
@@ -137,7 +138,7 @@ export async function approveAmendment(db: Db, customerId: string, orderId: stri
       const [payment] = await tx.select().from(payments).where(eq(payments.orderId, orderId))
         .orderBy(sql`${payments.createdAt} desc`).limit(1).for('update')
       if (payment?.status === 'APPROVED') {
-        await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_PARTIAL', amountCents: pending.refundCents, businessKey: `refund-partial:${payment.id}:amendment:${pending.id}`, idempotencyKey: `refund-partial:${payment.id}:amendment:${pending.id}` }, new Date())
+        await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_PARTIAL', amountCents: pending.refundCents, businessKey: `refund-partial:${payment.id}:amendment:${pending.id}`, idempotencyKey: providerIdempotencyKey('rp:am', pending.id) }, new Date())
         await addEvent(tx, orderId, order.status, 'SYSTEM', null, `estorno parcial de ${formatBRL(pending.refundCents)}`)
       }
     }

@@ -211,8 +211,28 @@ describe('MercadoPagoOrdersProvider', () => {
     expect(calls[2]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/cancel')
     expect(calls[3]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')
     expect(calls[4]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')
-    expect(JSON.parse(String(calls[3]![1].body))).toEqual({})
+    expect(calls[2]![1].body).toBeUndefined()
+    expect(calls[3]![1].body).toBeUndefined()
     expect(JSON.parse(String(calls[4]![1].body))).toEqual({ transactions: [{ id: 'transaction-1', amount: '12.00' }] })
+  })
+
+  it.each(['', 'x'.repeat(65)])('rejects provider idempotency key length %j before fetch', async (key) => {
+    const fetchMock = vi.fn(async (_input: string | URL) => response(snapshot(), 201))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local', idempotencyKey: key, method: 'PIX', expiresAt: new Date('2026-07-15T12:15:00Z') })).rejects.toMatchObject({ kind: 'CREDENTIAL_OR_CONFIG' })
+    await expect(provider.cancelOrder('order-1', key)).rejects.toMatchObject({ kind: 'CREDENTIAL_OR_CONFIG' })
+    await expect(provider.refundOrder('order-1', key)).rejects.toMatchObject({ kind: 'CREDENTIAL_OR_CONFIG' })
+    await expect(provider.refundPartial('order-1', 'transaction-1', 1200, key)).rejects.toMatchObject({ kind: 'CREDENTIAL_OR_CONFIG' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('accepts a 64-character provider idempotency key', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL) => response(snapshot(), 200))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.cancelOrder('order-1', 'x'.repeat(64))).resolves.toMatchObject({ providerOrderId: 'order-1' })
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   it('gets credential-scoped account identity', async () => {

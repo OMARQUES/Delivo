@@ -143,6 +143,8 @@ describe('approveAmendment', () => {
     await proposeAmendment(testDb, storeId, ownerUserId, orderId, {
       items: [{ orderItemId: pizzaItemId, newQuantity: 1 }, { orderItemId: cocaItemId, newQuantity: 0 }],
     })
+    const pending = await getPendingAmendment(testDb, orderId)
+    const [payment] = await testDb.select().from(payments).where(eq(payments.orderId, orderId))
     const r = await approveAmendment(testDb, customerId, orderId)
     expect(r.status).toBe('APPROVED')
     const detail = await getCustomerOrder(testDb, customerId, orderId)
@@ -151,7 +153,13 @@ describe('approveAmendment', () => {
     expect(detail!.items[0]).toMatchObject({ quantity: 1, totalCents: 3000 })
     expect(detail!.subtotalCents).toBe(3000)
     expect(detail!.totalCents).toBe(3500)
-    expect((await testDb.select().from(paymentOperations)).some((op) => op.type === 'REFUND_PARTIAL' && op.amountCents === 4000)).toBe(true)
+    const [refundOperation] = await testDb.select().from(paymentOperations)
+    expect(refundOperation).toMatchObject({
+      type: 'REFUND_PARTIAL', amountCents: 4000,
+      businessKey: `refund-partial:${payment!.id}:amendment:${pending!.id}`,
+    })
+    expect(refundOperation!.idempotencyKey).toMatch(/^[A-Za-z0-9:_-]{1,64}$/)
+    expect(refundOperation!.idempotencyKey).not.toContain('card-token')
     expect(detail!.events.some((e) => (e.note ?? '').includes('ajustado'))).toBe(true)
   })
 

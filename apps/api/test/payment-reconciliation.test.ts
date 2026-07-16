@@ -358,7 +358,9 @@ describe('payment reconciliation', () => {
     const summary = await runPaymentReconciliation(testDb, failing, now, context, only('snapshots', 'expirations'))
     expect(summary.stageFailures).toBe(1)
     expect(summary.pixExpired).toBe(1)
-    expect(await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `cancel:${expired.id}:PIX_EXPIRED`))).toHaveLength(1)
+    const [operation] = await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `cancel:${expired.id}:PIX_EXPIRED`))
+    expect(operation).toMatchObject({ businessKey: `cancel:${expired.id}:PIX_EXPIRED` })
+    expect(operation!.idempotencyKey).toMatch(/^[A-Za-z0-9:_-]{1,64}$/)
   })
 
   it('lets overlapping reconcilers transition each payment once', async () => {

@@ -1,7 +1,7 @@
 import { and, eq, ne, or } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { orderEvents, orders, payments } from '../db/schema'
-import type { ProviderOrderSnapshot } from './provider'
+import { providerIdempotencyKey, type ProviderOrderSnapshot } from './provider'
 import { validateSnapshot, type SnapshotDecision } from './snapshot-validation'
 import { enqueuePaymentOperation } from './operation-queue.service'
 
@@ -88,7 +88,7 @@ export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paym
       const alreadyApproved = payment.status === 'APPROVED'
       await tx.update(payments).set({ ...providerFields, status: decision.kind === 'REFUNDED' ? 'REFUNDED' : 'APPROVED', refundedAmountCents: snapshot.refundedAmountCents, reconciliationState: 'HEALTHY', reconciliationFailure: null, reconciliationAttemptCount: 0, nextReconcileAt: null }).where(eq(payments.id, payment.id))
       if (order.status === 'CANCELLED' && options.enqueueLateRefund !== false) {
-        const operation = await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund-full:${payment.id}:LATE_APPROVAL`, idempotencyKey: `refund-full:${payment.id}:LATE_APPROVAL` }, now)
+        const operation = await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund-full:${payment.id}:LATE_APPROVAL`, idempotencyKey: providerIdempotencyKey('rf:la', payment.id) }, now)
         if (operation.inserted) await event(tx, order.id, order.status, 'pagamento tardio: estorno pendente')
         return { changed: !alreadyApproved || operation.inserted, decision: decision.kind, operationEnqueued: operation.inserted }
       }

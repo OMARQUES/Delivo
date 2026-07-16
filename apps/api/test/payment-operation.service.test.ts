@@ -160,7 +160,19 @@ describe('durable payment operations', () => {
     const [cancelId] = await claimDueOperations(testDb, now, 1, 'worker-a')
     await processPaymentOperation(testDb, provider({ cancelOrder: vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'processed', orderStatusDetail: 'accredited', transactionStatus: 'processed', transactionStatusDetail: 'accredited' })) }), cancelId!, 'worker-a', now)
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, cancelId!)))[0]).toMatchObject({ status: 'SUCCEEDED', resultCode: 'ESCALATED_TO_REFUND' })
-    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.paymentId, row.id))).filter((operation) => operation.type === 'REFUND_FULL')).toHaveLength(1)
+    const refunds = (await testDb.select().from(paymentOperations).where(eq(paymentOperations.paymentId, row.id))).filter((operation) => operation.type === 'REFUND_FULL')
+    expect(refunds).toHaveLength(1)
+    expect(refunds[0]).toMatchObject({ businessKey: `refund-full:${row.id}:ESCALATED_CANCEL:${cancelId}` })
+    expect(refunds[0]!.idempotencyKey).toMatch(/^[A-Za-z0-9:_-]{1,64}$/)
+    expect(refunds[0]!.idempotencyKey).not.toContain('access-token')
+    const replay = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id,
+      type: 'REFUND_FULL',
+      amountCents: null,
+      businessKey: refunds[0]!.businessKey,
+      idempotencyKey: refunds[0]!.idempotencyKey,
+    }, now)
+    expect(replay.inserted).toBe(false)
   })
 
   it('escalates expired PIX approval without reopening awaiting order', async () => {

@@ -6,6 +6,7 @@ import { processPaymentOperation } from './operation.service'
 import { recoverUncertainCreate } from './checkout.service'
 import type { PaymentProvider } from './provider'
 import { PaymentProviderError } from './provider'
+import { providerIdempotencyKey } from './provider'
 import { applyProviderSnapshot } from './transition.service'
 import { processWebhookInboxItem } from './webhook-inbox.service'
 import { retryDisposition } from './retry'
@@ -157,7 +158,7 @@ export async function runPaymentReconciliation(
   if (stages.has('expirations')) await runStage(summary, async () => {
     const expiring = await db.select().from(payments).where(and(eq(payments.status, 'PENDING'), eq(payments.method, 'PIX'), isNotNull(payments.providerOrderId), lte(payments.expiresAt, now))).orderBy(asc(payments.expiresAt), asc(payments.createdAt)).limit(capBy('expirations'))
     for (const payment of expiring) {
-      try { await enqueuePaymentOperation(db, { paymentId: payment.id, type: 'CANCEL', amountCents: null, businessKey: `cancel:${payment.id}:PIX_EXPIRED`, idempotencyKey: `cancel:${payment.id}:PIX_EXPIRED` }, now); summary.pixExpired++ } catch { summary.stageFailures++ }
+      try { await enqueuePaymentOperation(db, { paymentId: payment.id, type: 'CANCEL', amountCents: null, businessKey: `cancel:${payment.id}:PIX_EXPIRED`, idempotencyKey: providerIdempotencyKey('c:px', payment.id) }, now); summary.pixExpired++ } catch { summary.stageFailures++ }
     }
   })
   if (stages.has('reviews')) await runStage(summary, async () => {

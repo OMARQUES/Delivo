@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { orderEvents, orders, paymentOperations, payments } from '../db/schema'
-import { PaymentProviderError, type PaymentProvider } from './provider'
+import { PaymentProviderError, providerIdempotencyKey, type PaymentProvider } from './provider'
 import { applyProviderSnapshotInTransaction } from './transition.service'
 import { retryDisposition } from './retry'
 import { enqueuePaymentOperation } from './operation-queue.service'
@@ -80,7 +80,7 @@ async function settleSnapshot(
           type: 'REFUND_FULL',
           amountCents: null,
           businessKey: `refund-full:${operation.paymentId}:ESCALATED_CANCEL:${operation.id}`,
-          idempotencyKey: `refund-full:${operation.paymentId}:ESCALATED_CANCEL:${operation.id}`,
+          idempotencyKey: providerIdempotencyKey('rf:ec', operation.id),
         }, now)
       }
       await tx.update(paymentOperations).set({ status: 'SUCCEEDED', resultCode: outcome.kind === 'ESCALATE_TO_REFUND' ? 'ESCALATED_TO_REFUND' : outcome.resultCode, completedAt: now, observedProviderStatus: snapshot.orderStatus, leaseOwner: null, leasedUntil: null, failureClass: null, updatedAt: now }).where(eq(paymentOperations.id, operation.id))

@@ -3,6 +3,7 @@ import { PIX_EXPIRATION_DURATION } from './constants'
 import { formatProviderAmount, parseProviderAmount } from './money'
 import {
   PaymentProviderError,
+  assertProviderIdempotencyKey,
   type CreateOrderInput,
   type PaymentProvider,
   type ProviderOrderSnapshot,
@@ -61,6 +62,7 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
   ) {}
 
   private async request<T>(url: string, init: RequestInit = {}, idempotencyKey?: string): Promise<T | null> {
+    if (idempotencyKey !== undefined) assertProviderIdempotencyKey(idempotencyKey)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
     const incoming = init.headers instanceof Headers
@@ -70,7 +72,7 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
       ...incoming,
       Authorization: `Bearer ${this.accessToken}`,
       'Content-Type': 'application/json',
-      ...(idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : {}),
+      ...(idempotencyKey !== undefined ? { 'X-Idempotency-Key': idempotencyKey } : {}),
     }
     try {
       const response = await fetch(url, { ...init, headers, signal: controller.signal })
@@ -180,18 +182,18 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
       .filter((item) => item.externalReference === externalReference)
   }
 
-  private async mutation(path: string, key: string, body: Json): Promise<ProviderOrderSnapshot> {
-    const raw = await this.request<Json>(`${ORDERS_BASE}/${path}`, { method: 'POST', body: JSON.stringify(body) }, key)
+  private async mutation(path: string, key: string, body?: Json): Promise<ProviderOrderSnapshot> {
+    const raw = await this.request<Json>(`${ORDERS_BASE}/${path}`, { method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, key)
     if (!raw) return this.getOrder(path.split('/')[0]!)
     return this.normalize(raw)
   }
 
   cancelOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrderSnapshot> {
-    return this.mutation(`${encodeURIComponent(providerOrderId)}/cancel`, idempotencyKey, {})
+    return this.mutation(`${encodeURIComponent(providerOrderId)}/cancel`, idempotencyKey)
   }
 
   refundOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrderSnapshot> {
-    return this.mutation(`${encodeURIComponent(providerOrderId)}/refund`, idempotencyKey, {})
+    return this.mutation(`${encodeURIComponent(providerOrderId)}/refund`, idempotencyKey)
   }
 
   refundPartial(providerOrderId: string, providerTransactionId: string, amountCents: number, idempotencyKey: string): Promise<ProviderOrderSnapshot> {
