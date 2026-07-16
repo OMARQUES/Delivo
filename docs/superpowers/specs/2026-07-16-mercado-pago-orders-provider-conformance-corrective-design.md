@@ -21,7 +21,7 @@ The failed webhook simulation is independent. Its payload identified a different
 - Normalize the current documented Order response shape into `ProviderOrderSnapshot`.
 - Correct uncertain-create Order search to the current endpoint, required bounded date filters, and response envelope.
 - Correct cancel, full-refund, and partial-refund request shapes.
-- Enforce the provider's current 64-character idempotency-key limit.
+- Enforce a conservative 64-character idempotency-key limit across every provider mutation and creation call.
 - Add sanitized provider failure diagnostics without changing the public checkout error.
 - Replace optimistic provider fixtures with sanitized contract fixtures based on current official examples.
 - Add webhook regression coverage for the official notification envelope without weakening signature verification.
@@ -155,8 +155,9 @@ No broad unbounded provider scan is introduced.
 - Full refund sends `POST /v1/orders/{id}/refund` with no request body.
 - Partial refund sends one transaction containing the provider transaction ID and canonical amount.
 - Each mutation retains its persisted stable idempotency key.
-- New provider idempotency keys must be between 1 and 64 characters.
-- The existing overlong escalated-refund key becomes a compact deterministic key derived from the predecessor operation ID. The long business key remains internal and unchanged.
+- Provider idempotency keys must be between 1 and 64 characters. This conservative shared bound satisfies the stricter cancel/refund contract while remaining valid for Order creation.
+- Every generated operation key that can exceed that bound becomes a compact deterministic key. This includes order-disposition, amendment partial-refund, late-approval refund, PIX-expiration cancel, and escalated-refund paths.
+- Long descriptive business keys remain internal and unchanged. Provider keys use short stable scope codes plus an existing UUID; they are never derived from secrets, card tokens, mutable timestamps, or provider responses.
 
 Queue ordering, dependency propagation, retry classification, and outcome verification remain unchanged.
 
