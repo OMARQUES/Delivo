@@ -4,14 +4,16 @@ import type { Db } from '../db/client'
 import { driverShifts, drivers, orders, storeDrivers } from '../db/schema'
 import { OrderError } from './order.service'
 import { addEvent } from './order-events'
-import { enqueueOrderPaymentDisposition } from './payment.service'
+import { enqueueOrderPaymentDisposition, getOrderPayment } from './payment.service'
+import { cancelCustomerOrder as cancelOnlineCustomerOrder } from '../payments/cancellation.service'
 import { expirePendingAmendment, getPendingAmendment } from './amendment.service'
 import { recordOrderLedger } from './finance.service'
 
 export { addEvent } from './order-events'
 
-/** Cliente cancela direto — só PENDING. */
+/** Cliente cancela direto — AWAITING_PAYMENT/PENDING. */
 export async function customerCancelOrder(db: Db, customerId: string, orderId: string) {
+  if (await getOrderPayment(db, orderId)) return cancelOnlineCustomerOrder(db, customerId, orderId, new Date())
   return db.transaction(async (tx) => {
     const rows = await tx.update(orders)
       .set({ status: 'CANCELLED', batchId: null, cancelReason: 'Cancelado pelo cliente' })
@@ -20,8 +22,8 @@ export async function customerCancelOrder(db: Db, customerId: string, orderId: s
     if (rows.length === 0) throw new OrderError('Pedido não pode mais ser cancelado direto — solicite à loja', 409)
     await addEvent(tx, orderId, 'CANCELLED', 'CUSTOMER', customerId)
     await expirePendingAmendment(tx, orderId)
-    await enqueueOrderPaymentDisposition(tx, orderId, 'CUSTOMER_CANCELLED', new Date())
-    return rows[0]!
+    await enqueueOrderPaymentDisposition(tx, orderId, new Date())
+    return { order: rows[0]!, operationId: null, changed: true }
   })
 }
 
@@ -60,7 +62,7 @@ export async function cancelStalePendingOrders(db: Db, olderThanMinutes = 30, li
       if (!row) continue
       await addEvent(tx, row.id, 'CANCELLED', 'SYSTEM', null, 'timeout 30min')
       await expirePendingAmendment(tx, row.id)
-      await enqueueOrderPaymentDisposition(tx, row.id, 'STALE_PENDING', new Date())
+      await enqueueOrderPaymentDisposition(tx, row.id, new Date())
       count++
     }
     return count
@@ -204,7 +206,7 @@ export async function storeUpdateOrderStatus(
       .where(and(eq(orders.id, orderId), eq(orders.status, order.status))).returning()
     if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)
     await addEvent(tx, orderId, to, 'STORE', actorId, reason)
-    if (to === 'CANCELLED') { await expirePendingAmendment(tx, orderId); await enqueueOrderPaymentDisposition(tx, orderId, 'STORE_CANCELLED', new Date()) }
+    if (to === 'CANCELLED') { await expirePendingAmendment(tx, orderId); await enqueueOrderPaymentDisposition(tx, orderId, new Date()) }
     if (to === 'DELIVERED') await recordOrderLedger(tx, orderId)
     let final = rows[0]!
   if (to === 'READY' && final.driverRequestedAt && !final.driverId && !final.batchId) {
@@ -247,7 +249,7 @@ export async function storeResolveCancelRequest(
     if (rows.length === 0) throw new OrderError('Pedido mudou de status — recarregue', 409)
     await addEvent(tx, orderId, 'CANCELLED', 'STORE', actorId, 'solicitação do cliente aprovada')
     await expirePendingAmendment(tx, orderId)
-    await enqueueOrderPaymentDisposition(tx, orderId, 'STORE_CANCEL_REQUEST_APPROVED', new Date())
+    await enqueueOrderPaymentDisposition(tx, orderId, new Date())
     return rows[0]!
   }
   const rows = await tx

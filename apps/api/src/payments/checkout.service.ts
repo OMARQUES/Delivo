@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { Db, DbTransaction } from '../db/client'
 import { orderEvents, orders, payments, users } from '../db/schema'
-import { PIX_EXPIRATION_MS } from './constants'
+import { ONLINE_PAYMENT_EXPIRATION_MS } from './constants'
 import { PaymentProviderError, type PaymentProvider, type ProviderFailureKind } from './provider'
 import { retryDisposition } from './retry'
 import { applyProviderSnapshotInTransaction } from './transition.service'
@@ -67,7 +67,7 @@ export async function createOnlinePayment(db: Db, provider: PaymentProvider, inp
   if (accountId !== payment.expectedAccountId) throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
   try {
     const snapshot = await provider.createOrder(payment.method === 'PIX'
-      ? { method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: input.payerEmail, idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(Date.now() + PIX_EXPIRATION_MS) }
+      ? { method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: input.payerEmail, idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(Date.now() + ONLINE_PAYMENT_EXPIRATION_MS) }
       : { method: 'CARD', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: input.payerEmail, idempotencyKey: payment.createIdempotencyKey, cardToken: input.card?.token ?? '', cardPaymentMethodId: input.card?.methodId ?? '', installments: 1 })
     const persisted = await whileStillUncertain(db, payment.id, (tx) => applyProviderSnapshotInTransaction(tx, payment.id, snapshot, new Date()))
     if (!persisted.applied) {
@@ -98,8 +98,18 @@ export type PayerEmailResolver = (userEmail: string | null, userId: string) => s
 
 type StillUncertainMutation<T> = (tx: DbTransaction, payment: typeof payments.$inferSelect) => Promise<T>
 
-async function whileStillUncertain<T>(db: Db, paymentId: string, mutation: StillUncertainMutation<T>) {
-  return db.transaction(async (tx) => {
+type DbScope = Db | DbTransaction
+
+function isDatabase(scope: DbScope): scope is Db {
+  return typeof (scope as Db).transaction === 'function'
+}
+
+async function inTransaction<T>(scope: DbScope, action: (tx: DbTransaction) => Promise<T>): Promise<T> {
+  return isDatabase(scope) ? scope.transaction(action) : action(scope)
+}
+
+async function whileStillUncertain<T>(db: DbScope, paymentId: string, mutation: StillUncertainMutation<T>) {
+  return inTransaction(db, async (tx) => {
     const [current] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for('update')
     if (!current || current.status !== 'PENDING' || current.providerOrderId !== null) return { applied: false as const }
     return { applied: true as const, value: await mutation(tx, current) }
@@ -134,18 +144,6 @@ async function persistRecoveryReview(db: Db, paymentId: string, now: Date, failu
     const changed = payment.reconciliationState !== 'REVIEW_REQUIRED' || payment.reconciliationFailure !== failure
     await tx.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: failure, nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, payment.id))
     if (changed && order) await tx.insert(orderEvents).values({ orderId: payment.orderId, status: order.status, actorRole: 'SYSTEM', actorId: null, note: 'pagamento em revisão' })
-  })
-}
-
-async function expireUncertainPix(db: Db, paymentId: string, now: Date) {
-  return whileStillUncertain(db, paymentId, async (tx, payment) => {
-    const [order] = await tx.select().from(orders).where(eq(orders.id, payment.orderId)).for('update')
-    if (!order) return
-    await tx.update(payments).set({ status: 'EXPIRED', reconciliationState: 'HEALTHY', reconciliationFailure: null, nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, payment.id))
-    if (order.status === 'AWAITING_PAYMENT') {
-      await tx.update(orders).set({ status: 'CANCELLED', updatedAt: now }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
-      await tx.insert(orderEvents).values({ orderId: order.id, status: 'CANCELLED', actorRole: 'SYSTEM', actorId: null, note: 'pagamento não aprovado' })
-    }
   })
 }
 
@@ -211,29 +209,54 @@ export async function recoverUncertainCreate(
     )
   }
   if (matches.length === 0 && payment.method === 'PIX') {
-    if (payment.expiresAt && payment.expiresAt <= now) {
-      const expired = await expireUncertainPix(db, payment.id, now)
-      return expired.applied ? 'RECOVERED' : currentRecoveryOutcome(db, payment.id, 'RETRY_PIX')
-    }
-    const [identity] = await db.select({ email: users.email, userId: users.id }).from(orders).innerJoin(users, eq(users.id, orders.customerId)).where(eq(orders.id, payment.orderId)).limit(1)
-    if (!identity) {
-      const persisted = await persistRecoveryReview(db, payment.id, now, 'PAYER_NOT_FOUND')
-      return persisted.applied ? 'REVIEW_REQUIRED' : currentRecoveryOutcome(db, payment.id, 'REVIEW_REQUIRED')
-    }
-    try {
-      const accountId = await provider.getAccountId()
-      if (accountId !== payment.expectedAccountId) throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
-      const snapshot = await provider.createOrder({ method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: resolvePayerEmail(identity.email, identity.userId), idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(now.getTime() + PIX_EXPIRATION_MS) })
-      const persisted = await whileStillUncertain(db, payment.id, (tx) => applyProviderSnapshotInTransaction(tx, payment.id, snapshot, now))
-      if (!persisted.applied) return currentRecoveryOutcome(db, payment.id, 'RETRY_PIX')
-      return persisted.value.decision === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : 'RECOVERED'
-    } catch (error) {
-      if (requiresCreateRecovery(error)) {
-        return scheduleCreateRecoveryRetry(db, payment, now, error.kind, error.retryAfterSeconds)
+    return inTransaction(db, async (tx) => {
+      const [current] = await tx.select().from(payments).where(eq(payments.id, payment.id)).for('update')
+      if (!current || current.status !== 'PENDING' || current.providerOrderId !== null) return 'RECOVERED'
+      const [order] = await tx.select().from(orders).where(eq(orders.id, current.orderId)).for('update')
+      if (!order) return 'REVIEW_REQUIRED'
+      if (order.status === 'CANCELLED') {
+        const retry = retryDisposition(now, current.reconciliationAttemptCount, 0.1)
+        if (retry.kind === 'REVIEW_REQUIRED') {
+          await tx.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'RETRY_EXHAUSTED', nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+          return 'REVIEW_REQUIRED'
+        }
+        await tx.update(payments).set({ reconciliationState: 'PENDING', reconciliationFailure: 'CANCELLED_CREATE_SEARCH_PENDING', nextReconcileAt: retry.nextAttemptAt, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+        return 'RETRY_PIX'
       }
-      const persisted = await persistRecoveryReview(db, payment.id, now, error instanceof PaymentProviderError ? error.kind : 'CREATE_FAILED')
-      return persisted.applied ? 'REVIEW_REQUIRED' : currentRecoveryOutcome(db, payment.id, 'REVIEW_REQUIRED')
-    }
+      if (current.expiresAt && current.expiresAt <= now) {
+        await tx.update(payments).set({ status: 'EXPIRED', reconciliationState: 'HEALTHY', reconciliationFailure: null, nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+        if (order.status === 'AWAITING_PAYMENT') {
+          await tx.update(orders).set({ status: 'CANCELLED', updatedAt: now }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
+          await tx.insert(orderEvents).values({ orderId: order.id, status: 'CANCELLED', actorRole: 'SYSTEM', actorId: null, note: 'pagamento não aprovado' })
+        }
+        return 'RECOVERED'
+      }
+      const [identity] = await tx.select({ email: users.email, userId: users.id }).from(users).where(eq(users.id, order.customerId)).limit(1)
+      if (!identity) {
+        await tx.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'PAYER_NOT_FOUND', nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+        return 'REVIEW_REQUIRED'
+      }
+      try {
+        const accountId = await provider.getAccountId()
+        if (accountId !== current.expectedAccountId) throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
+        const snapshot = await provider.createOrder({ method: 'PIX', orderId: current.orderId, amountCents: current.expectedAmountCents, payerEmail: resolvePayerEmail(identity.email, identity.userId), idempotencyKey: current.createIdempotencyKey, expiresAt: current.expiresAt ?? new Date(now.getTime() + ONLINE_PAYMENT_EXPIRATION_MS) })
+        const persisted = await applyProviderSnapshotInTransaction(tx, current.id, snapshot, now)
+        return persisted.decision === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : 'RECOVERED'
+      } catch (error) {
+        if (requiresCreateRecovery(error)) {
+          const retry = retryDisposition(now, current.reconciliationAttemptCount, 0.1, error.retryAfterSeconds)
+          if (retry.kind === 'REVIEW_REQUIRED') {
+            await tx.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'RETRY_EXHAUSTED', nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+            return 'REVIEW_REQUIRED'
+          }
+          await tx.update(payments).set({ reconciliationState: 'PENDING', reconciliationFailure: error.kind, nextReconcileAt: retry.nextAttemptAt, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+          return 'RETRY_PIX'
+        }
+        const failure = error instanceof PaymentProviderError ? error.kind : 'CREATE_FAILED'
+        await tx.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: failure, nextReconcileAt: null, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, current.id))
+        return 'REVIEW_REQUIRED'
+      }
+    })
   }
   let authoritative: Awaited<ReturnType<PaymentProvider['getOrder']>>
   try {

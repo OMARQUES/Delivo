@@ -116,7 +116,17 @@ describe('payment schema migrations', () => {
       'REFUNDED',
       'PARTIALLY_REFUNDED',
       'ESCALATED_TO_REFUND',
+      'NOT_CHARGED',
     ])
+
+    const expiryIndexes = await testDb.execute<{ indexname: string; indexdef: string }>(sql`
+      select indexname, indexdef
+      from pg_indexes
+      where schemaname = 'public' and indexname = 'payments_pending_expires_at_idx'
+    `)
+    expect(expiryIndexes).toHaveLength(1)
+    expect(expiryIndexes[0]!.indexdef).toContain('(expires_at)')
+    expect(expiryIndexes[0]!.indexdef).toContain("WHERE ((status = 'PENDING'::payment_status) AND (expires_at IS NOT NULL))")
 
     const dependencyIndexes = await testDb.execute<{ indexname: string }>(sql`
       select indexname

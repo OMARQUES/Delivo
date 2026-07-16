@@ -1,0 +1,2 @@
+ALTER TYPE "public"."payment_operation_result_code" ADD VALUE 'NOT_CHARGED';--> statement-breakpoint
+CREATE INDEX "payments_pending_expires_at_idx" ON "payments" USING btree ("expires_at") WHERE "payments"."status" = 'PENDING' and "payments"."expires_at" is not null;

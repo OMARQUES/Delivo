@@ -14,6 +14,7 @@ export const paymentOperationResultCode = pgEnum('payment_operation_result_code'
   'REFUNDED',
   'PARTIALLY_REFUNDED',
   'ESCALATED_TO_REFUND',
+  'NOT_CHARGED',
 ])
 
 export const payments = pgTable('payments', {
@@ -49,6 +50,7 @@ export const payments = pgTable('payments', {
   uniqueIndex('payments_create_idempotency_unique').on(t.createIdempotencyKey),
   uniqueIndex('payments_provider_order_unique').on(t.provider, t.providerOrderId).where(sql`${t.providerOrderId} is not null`),
   uniqueIndex('payments_provider_transaction_unique').on(t.provider, t.providerTransactionId).where(sql`${t.providerTransactionId} is not null`),
+  index('payments_pending_expires_at_idx').on(t.expiresAt).where(sql`${t.status} = 'PENDING' and ${t.expiresAt} is not null`),
   check('payments_expected_amount_positive', sql`${t.expectedAmountCents} > 0`),
   check('payments_refunded_amount_valid', sql`${t.refundedAmountCents} >= 0 and ${t.refundedAmountCents} <= ${t.expectedAmountCents}`),
   check('payments_reconciliation_attempt_count_valid', sql`${t.reconciliationAttemptCount} >= 0`),

@@ -167,7 +167,7 @@ export async function rejectAmendment(db: Db, customerId: string, orderId: strin
       .where(and(eq(orders.id, orderId), eq(orders.status, order.status)))
       .returning()
     if (cancelled.length !== 1) throw new AmendmentError('Pedido mudou — recarregue', 409)
-    await enqueueOrderPaymentDisposition(tx, orderId, 'AMENDMENT_REJECTED', new Date())
+    await enqueueOrderPaymentDisposition(tx, orderId, new Date())
     await addEvent(tx, orderId, 'CANCELLED', 'CUSTOMER', customerId, 'recusou alteração')
     return pending
   })

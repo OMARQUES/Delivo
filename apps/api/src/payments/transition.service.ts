@@ -1,9 +1,9 @@
 import { and, eq, ne, or } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { orderEvents, orders, payments } from '../db/schema'
-import { providerIdempotencyKey, type ProviderOrderSnapshot } from './provider'
+import { type ProviderOrderSnapshot } from './provider'
 import { validateSnapshot, type SnapshotDecision } from './snapshot-validation'
-import { enqueuePaymentOperation } from './operation-queue.service'
+import { ensureCancelledOrderPaymentDisposition } from '../services/payment.service'
 
 type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0]
 
@@ -11,6 +11,11 @@ export type TransitionResult = {
   changed: boolean
   decision: SnapshotDecision['kind']
   operationEnqueued: boolean
+}
+
+export type SnapshotTransitionOptions = {
+  ensureCancelledDisposition?: boolean
+  releaseOrderOnApproval?: boolean
 }
 
 function expectedFrom(payment: typeof payments.$inferSelect) {
@@ -31,7 +36,7 @@ async function event(tx: Parameters<Parameters<Db['transaction']>[0]>[0], orderI
   await tx.insert(orderEvents).values({ orderId, status, actorRole: 'SYSTEM', actorId: null, note })
 }
 
-export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paymentId: string, snapshot: ProviderOrderSnapshot, now: Date, options: { enqueueLateRefund?: boolean; releaseOrderOnApproval?: boolean } = {}): Promise<TransitionResult> {
+export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paymentId: string, snapshot: ProviderOrderSnapshot, now: Date, options: SnapshotTransitionOptions = {}): Promise<TransitionResult> {
     const [payment] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for('update')
     if (!payment) throw new Error('payment not found')
     const [order] = await tx.select().from(orders).where(eq(orders.id, payment.orderId)).for('update')
@@ -80,17 +85,24 @@ export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paym
 
     if (decision.kind === 'PENDING') {
       const changed = payment.reconciliationState !== 'HEALTHY' || payment.providerStatus !== snapshot.orderStatus
-      await tx.update(payments).set({ ...providerFields, status: payment.status === 'PENDING' ? 'PENDING' : payment.status, reconciliationState: 'HEALTHY', reconciliationFailure: null, reconciliationAttemptCount: 0, nextReconcileAt: new Date(now.getTime() + 5 * 60_000) }).where(eq(payments.id, payment.id))
+      const [persisted] = await tx.update(payments).set({ ...providerFields, status: payment.status === 'PENDING' ? 'PENDING' : payment.status, reconciliationState: 'HEALTHY', reconciliationFailure: null, reconciliationAttemptCount: 0, nextReconcileAt: new Date(now.getTime() + 5 * 60_000) }).where(eq(payments.id, payment.id)).returning()
+      if (!persisted) throw new Error('payment not found')
+      if (order.status === 'CANCELLED' && options.ensureCancelledDisposition !== false) {
+        const disposition = await ensureCancelledOrderPaymentDisposition(tx, persisted, now)
+        if (disposition.inserted) await event(tx, order.id, order.status, 'cancelamento financeiro pendente')
+        return { changed: changed || disposition.inserted, decision: decision.kind, operationEnqueued: disposition.inserted }
+      }
       return { changed, decision: decision.kind, operationEnqueued: false }
     }
 
     if (decision.kind === 'APPROVED' || decision.kind === 'PARTIALLY_REFUNDED' || decision.kind === 'REFUNDED') {
       const alreadyApproved = payment.status === 'APPROVED'
-      await tx.update(payments).set({ ...providerFields, status: decision.kind === 'REFUNDED' ? 'REFUNDED' : 'APPROVED', refundedAmountCents: snapshot.refundedAmountCents, reconciliationState: 'HEALTHY', reconciliationFailure: null, reconciliationAttemptCount: 0, nextReconcileAt: null }).where(eq(payments.id, payment.id))
-      if (order.status === 'CANCELLED' && options.enqueueLateRefund !== false) {
-        const operation = await enqueuePaymentOperation(tx, { paymentId: payment.id, type: 'REFUND_FULL', amountCents: null, businessKey: `refund-full:${payment.id}:LATE_APPROVAL`, idempotencyKey: providerIdempotencyKey('rf:la', payment.id) }, now)
-        if (operation.inserted) await event(tx, order.id, order.status, 'pagamento tardio: estorno pendente')
-        return { changed: !alreadyApproved || operation.inserted, decision: decision.kind, operationEnqueued: operation.inserted }
+      const [persisted] = await tx.update(payments).set({ ...providerFields, status: decision.kind === 'REFUNDED' ? 'REFUNDED' : 'APPROVED', refundedAmountCents: snapshot.refundedAmountCents, reconciliationState: 'HEALTHY', reconciliationFailure: null, reconciliationAttemptCount: 0, nextReconcileAt: null }).where(eq(payments.id, payment.id)).returning()
+      if (!persisted) throw new Error('payment not found')
+      if (order.status === 'CANCELLED' && options.ensureCancelledDisposition !== false) {
+        const disposition = await ensureCancelledOrderPaymentDisposition(tx, persisted, now)
+        if (disposition.inserted) await event(tx, order.id, order.status, 'pagamento tardio: estorno pendente')
+        return { changed: !alreadyApproved || disposition.inserted, decision: decision.kind, operationEnqueued: disposition.inserted }
       }
       if (alreadyApproved) return { changed: false, decision: decision.kind, operationEnqueued: false }
       if (order.status === 'AWAITING_PAYMENT' && options.releaseOrderOnApproval !== false) {
@@ -110,6 +122,6 @@ export async function applyProviderSnapshotInTransaction(tx: DbTransaction, paym
     return { changed, decision: decision.kind, operationEnqueued: false }
 }
 
-export async function applyProviderSnapshot(db: Db, paymentId: string, snapshot: ProviderOrderSnapshot, now: Date, options: { enqueueLateRefund?: boolean; releaseOrderOnApproval?: boolean } = {}): Promise<TransitionResult> {
+export async function applyProviderSnapshot(db: Db, paymentId: string, snapshot: ProviderOrderSnapshot, now: Date, options: SnapshotTransitionOptions = {}): Promise<TransitionResult> {
   return db.transaction((tx) => applyProviderSnapshotInTransaction(tx, paymentId, snapshot, now, options))
 }

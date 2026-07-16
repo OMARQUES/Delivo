@@ -7,6 +7,7 @@ import { createRouter } from '../app-factory'
 import type { AppContext } from '../env'
 import { users } from '../db/schema'
 import { CheckoutError } from '../payments/checkout.service'
+import { processPaymentOperationInBackground } from '../payments/operation-background.service'
 import { createPaymentProvider as createOrdersPaymentProvider } from '../payments/mercadopago'
 import { PaymentProviderError as OrdersProviderError } from '../payments/provider'
 import { logPaymentProviderFailure } from '../payments/provider-diagnostics'
@@ -161,15 +162,23 @@ orderRoutes.openapi(
     request: { params: IdParam },
     responses: { 200: { description: 'Cancelado', content: { 'application/json': { schema: Out } } } },
   }),
-  async (c) =>
-    c.json(
-      await customerCancelOrder(
-        c.get('db'),
-        c.get('auth')!.sub,
-        c.req.valid('param').id,
-      ).catch(rethrow),
-      200,
-    ),
+  async (c) => {
+    const result = await customerCancelOrder(
+      c.get('db'),
+      c.get('auth')!.sub,
+      c.req.valid('param').id,
+    ).catch(rethrow)
+    if (result.operationId) {
+      try {
+        c.executionCtx.waitUntil(processPaymentOperationInBackground(c.env, result.operationId, new Date()).catch(() => undefined))
+      } catch {
+        // Hono's request adapter has no ExecutionContext; cron remains durable fallback.
+      }
+    }
+    const order = await getCustomerOrder(c.get('db'), c.get('auth')!.sub, c.req.valid('param').id)
+    if (!order) throw new HTTPException(404, { message: 'Pedido não encontrado' })
+    return c.json(order, 200)
+  },
 )
 
 orderRoutes.openapi(

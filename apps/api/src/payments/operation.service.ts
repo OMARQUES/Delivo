@@ -1,11 +1,11 @@
 import { and, eq } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { orderEvents, orders, paymentOperations, payments } from '../db/schema'
-import { PaymentProviderError, providerIdempotencyKey, type PaymentProvider, type ProviderFailureKind } from './provider'
+import { PaymentProviderError, type PaymentProvider, type ProviderFailureKind } from './provider'
 import { applyProviderSnapshotInTransaction } from './transition.service'
 import { retryDisposition } from './retry'
-import { enqueuePaymentOperation } from './operation-queue.service'
 import type { PaymentOperationResultCode } from './operation-queue.service'
+import { ensureCancelledOrderPaymentDisposition } from '../services/payment.service'
 
 async function markReview(db: Db, operationId: string, failureClass: string, now: Date, observedProviderStatus?: string | null) {
   await db.update(paymentOperations).set({ status: 'REVIEW_REQUIRED', failureClass, observedProviderStatus: observedProviderStatus ?? null, leaseOwner: null, leasedUntil: null, updatedAt: now }).where(eq(paymentOperations.id, operationId))
@@ -31,7 +31,8 @@ type OperationOutcome =
 
 function evaluateOperation(operation: typeof paymentOperations.$inferSelect, decision: string, refundedAmountCents: number, expectedAmountCents: number): OperationOutcome {
   if (operation.type === 'CANCEL') {
-    if (decision === 'CANCELLED' || decision === 'EXPIRED') return { kind: 'SUCCEEDED', resultCode: 'CANCELLED' }
+    if (decision === 'CANCELLED') return { kind: 'SUCCEEDED', resultCode: 'CANCELLED' }
+    if (decision === 'REJECTED' || decision === 'EXPIRED') return { kind: 'SUCCEEDED', resultCode: 'NOT_CHARGED' }
     if (decision === 'REFUNDED' && refundedAmountCents === expectedAmountCents) return { kind: 'SUCCEEDED', resultCode: 'REFUNDED' }
     if (decision === 'APPROVED' || decision === 'PARTIALLY_REFUNDED') return { kind: 'ESCALATE_TO_REFUND' }
     if (decision === 'PENDING') return { kind: 'RETRY', failureClass: 'CANCEL_PENDING' }
@@ -58,7 +59,7 @@ async function settleSnapshot(
 ): Promise<OperationOutcome> {
   return db.transaction(async (tx) => {
     const result = await applyProviderSnapshotInTransaction(tx, operation.paymentId, snapshot, now, {
-      enqueueLateRefund: operation.type !== 'CANCEL',
+      ensureCancelledDisposition: operation.type !== 'CANCEL',
       releaseOrderOnApproval: operation.type !== 'CANCEL',
     })
     const [payment] = await tx.select().from(payments).where(eq(payments.id, operation.paymentId)).for('update')
@@ -83,13 +84,7 @@ async function settleSnapshot(
           await tx.update(orders).set({ status: 'CANCELLED', updatedAt: now }).where(and(eq(orders.id, order.id), eq(orders.status, 'AWAITING_PAYMENT')))
           await tx.insert(orderEvents).values({ orderId: order.id, status: 'CANCELLED', actorRole: 'SYSTEM', actorId: null, note: 'pagamento aprovado após cancelamento; estorno pendente' })
         }
-        await enqueuePaymentOperation(tx, {
-          paymentId: payment.id,
-          type: 'REFUND_FULL',
-          amountCents: null,
-          businessKey: `refund-full:${operation.paymentId}:ESCALATED_CANCEL:${operation.id}`,
-          idempotencyKey: providerIdempotencyKey('rf:ec', operation.id),
-        }, now)
+        await ensureCancelledOrderPaymentDisposition(tx, payment, now)
       }
       await tx.update(paymentOperations).set({ status: 'SUCCEEDED', resultCode: outcome.kind === 'ESCALATE_TO_REFUND' ? 'ESCALATED_TO_REFUND' : outcome.resultCode, completedAt: now, observedProviderStatus: snapshot.orderStatus, leaseOwner: null, leasedUntil: null, failureClass: null, updatedAt: now }).where(eq(paymentOperations.id, operation.id))
     }

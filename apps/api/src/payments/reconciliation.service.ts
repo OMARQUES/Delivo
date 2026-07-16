@@ -1,15 +1,15 @@
 import { and, asc, eq, isNotNull, isNull, lte, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
-import { paymentOperations, paymentWebhookInbox, payments } from '../db/schema'
-import { claimDueOperations, enqueuePaymentOperation, propagateReviewedDependencies } from './operation-queue.service'
+import { orders, paymentOperations, paymentWebhookInbox, payments } from '../db/schema'
+import { claimDueOperations, propagateReviewedDependencies } from './operation-queue.service'
 import { processPaymentOperation } from './operation.service'
 import { recoverUncertainCreate } from './checkout.service'
 import type { PaymentProvider } from './provider'
 import { PaymentProviderError } from './provider'
-import { providerIdempotencyKey } from './provider'
 import { applyProviderSnapshot } from './transition.service'
 import { processWebhookInboxItem } from './webhook-inbox.service'
 import { retryDisposition } from './retry'
+import { expireAwaitingPayment } from './cancellation.service'
 
 export type ReconciliationContext = {
   resolvePayerEmail: (userEmail: string | null, userId: string) => string
@@ -19,10 +19,10 @@ export type ReconciliationStage =
   | 'leases'
   | 'dependencies'
   | 'inbox'
-  | 'operations'
   | 'creates'
   | 'snapshots'
   | 'expirations'
+  | 'operations'
   | 'reviews'
 
 type BoundedStage = Exclude<ReconciliationStage, 'leases' | 'dependencies'>
@@ -39,14 +39,14 @@ export type ReconciliationSummary = {
   operationsProcessed: number
   createsRecovered: number
   snapshotsRefreshed: number
-  pixExpired: number
+  paymentsExpired: number
   reviewsRechecked: number
   stageFailures: number
 }
 
 export const DEFAULT_RECONCILIATION_LIMITS = { inbox: 25, operations: 25, creates: 20, snapshots: 50, expirations: 50, reviews: 10 } as const
 
-const allStages: readonly ReconciliationStage[] = ['leases', 'dependencies', 'inbox', 'operations', 'creates', 'snapshots', 'expirations', 'reviews']
+const allStages: readonly ReconciliationStage[] = ['leases', 'dependencies', 'inbox', 'creates', 'snapshots', 'expirations', 'operations', 'reviews']
 
 function cap(value: number | undefined, fallback: number) {
   return Math.max(1, Math.min(100, Math.floor(value ?? fallback)))
@@ -122,7 +122,7 @@ export async function runPaymentReconciliation(
   const stages = new Set(options.stages ?? allStages)
   const limits = options.limits ?? {}
   const capBy = (key: BoundedStage) => cap(limits[key], DEFAULT_RECONCILIATION_LIMITS[key])
-  const summary: ReconciliationSummary = { leasesRecovered: 0, dependenciesReviewed: 0, operationsReleased: 0, inboxProcessed: 0, operationsProcessed: 0, createsRecovered: 0, snapshotsRefreshed: 0, pixExpired: 0, reviewsRechecked: 0, stageFailures: 0 }
+  const summary: ReconciliationSummary = { leasesRecovered: 0, dependenciesReviewed: 0, operationsReleased: 0, inboxProcessed: 0, operationsProcessed: 0, createsRecovered: 0, snapshotsRefreshed: 0, paymentsExpired: 0, reviewsRechecked: 0, stageFailures: 0 }
 
   if (stages.has('leases')) await runStage(summary, async () => { summary.leasesRecovered = await recoverLeases(db, now) })
   if (stages.has('dependencies')) await runStage(summary, async () => { summary.dependenciesReviewed = await propagateReviewedDependencies(db, now, capBy('operations')) })
@@ -133,14 +133,6 @@ export async function runPaymentReconciliation(
         const result = await processWebhookInboxItem(db, provider, row.id, crypto.randomUUID(), now)
         if (result === 'CLAIMED') summary.inboxProcessed++
       } catch { summary.stageFailures++ }
-    }
-  })
-  if (stages.has('operations')) await runStage(summary, async () => {
-    const leaseOwner = crypto.randomUUID()
-    const ids = await claimDueOperations(db, now, capBy('operations'), leaseOwner)
-    summary.operationsReleased = ids.length
-    for (const id of ids) {
-      try { await processPaymentOperation(db, provider, id, leaseOwner, now); summary.operationsProcessed++ } catch { summary.stageFailures++ }
     }
   })
   if (stages.has('creates')) await runStage(summary, async () => {
@@ -159,9 +151,29 @@ export async function runPaymentReconciliation(
     }
   })
   if (stages.has('expirations')) await runStage(summary, async () => {
-    const expiring = await db.select().from(payments).where(and(eq(payments.status, 'PENDING'), eq(payments.method, 'PIX'), isNotNull(payments.providerOrderId), lte(payments.expiresAt, now))).orderBy(asc(payments.expiresAt), asc(payments.createdAt)).limit(capBy('expirations'))
+    const expiring = await db.select({ id: payments.id }).from(payments)
+      .innerJoin(orders, eq(orders.id, payments.orderId))
+      .where(and(
+        eq(payments.status, 'PENDING'),
+        eq(orders.status, 'AWAITING_PAYMENT'),
+        isNotNull(payments.expiresAt),
+        lte(payments.expiresAt, now),
+      ))
+      .orderBy(asc(payments.expiresAt), asc(payments.createdAt))
+      .limit(capBy('expirations'))
     for (const payment of expiring) {
-      try { await enqueuePaymentOperation(db, { paymentId: payment.id, type: 'CANCEL', amountCents: null, businessKey: `cancel:${payment.id}:PIX_EXPIRED`, idempotencyKey: providerIdempotencyKey('c:px', payment.id) }, now); summary.pixExpired++ } catch { summary.stageFailures++ }
+      try {
+        const result = await expireAwaitingPayment(db, payment.id, now)
+        if (result?.changed) summary.paymentsExpired++
+      } catch { summary.stageFailures++ }
+    }
+  })
+  if (stages.has('operations')) await runStage(summary, async () => {
+    const leaseOwner = crypto.randomUUID()
+    const ids = await claimDueOperations(db, now, capBy('operations'), leaseOwner)
+    summary.operationsReleased = ids.length
+    for (const id of ids) {
+      try { await processPaymentOperation(db, provider, id, leaseOwner, now); summary.operationsProcessed++ } catch { summary.stageFailures++ }
     }
   })
   if (stages.has('reviews')) await runStage(summary, async () => {

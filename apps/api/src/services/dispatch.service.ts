@@ -345,7 +345,7 @@ export async function failDelivery(
     if (!candidate) throw new DispatchError('Pedido não está em rota', 409)
     const now = new Date()
     if (candidate.status === 'DELIVERY_FAILED' && candidate.returnPendingAt !== null) {
-      await enqueueOrderPaymentDisposition(tx, orderId, 'DELIVERY_FAILED', now)
+      await enqueueOrderPaymentDisposition(tx, orderId, now)
       return candidate
     }
     if (candidate.status !== 'OUT_FOR_DELIVERY') throw new DispatchError('Pedido não está em rota', 409)
@@ -364,7 +364,7 @@ export async function failDelivery(
     )).returning()
     if (!updated) throw new DispatchError('Pedido não está em rota', 409)
     await addEvent(tx, orderId, 'DELIVERY_FAILED', 'DRIVER', driverUserId, input.note ?? input.reason)
-    await enqueueOrderPaymentDisposition(tx, orderId, 'DELIVERY_FAILED', now)
+      await enqueueOrderPaymentDisposition(tx, orderId, now)
     return updated
   })
 }

@@ -2,7 +2,7 @@
 
 ## Arquitetura
 
-Checkout cria tentativa local antes do provider. Mercado Pago Orders é consultado por HTTP bounded. Webhooks `type=order` validam HMAC, persistem inbox deduplicado e respondem após persistência; processamento ocorre assíncrono com cliente DB próprio. Cancelamentos/refunds viram `payment_operations` idempotentes. Cron executa reconciliação bounded por stages.
+Checkout cria tentativa local antes do provider. PIX e cartão online recebem deadline comum de 30 minutos. Mercado Pago Orders é consultado por HTTP bounded. Webhooks `type=order` validam HMAC, persistem inbox deduplicado e respondem após persistência; processamento ocorre assíncrono com cliente DB próprio. Cancelamentos/refunds viram `payment_operations` idempotentes. Cron executa stages em ordem `leases → dependencies → inbox → creates → snapshots → expirations → operations → reviews`.
 
 ## Configuração não secreta
 
@@ -60,10 +60,39 @@ Inbox e pagamentos usam `retryDisposition` com máximo de 8 tentativas; a oitava
 - `AMBIGUOUS_PROVIDER_CREATE`: múltiplos Orders para mesma referência; mantém pagamento em `REVIEW_REQUIRED`, sem novo create.
 - `RETRY_CARD`: nenhum resultado para CARD; mantém `PENDING` e repete somente search/GET dentro do limite. Nunca recria cobrança nem reutiliza token.
 - `RETRY_PIX`: nenhum resultado para PIX ainda válido, ou falha transitória; mantém `PENDING` e agenda nova tentativa limitada.
-- PIX expirado sem `providerOrderId`: após busca exata sem resultado, expira localmente e cancela apenas pedido `AWAITING_PAYMENT`; não cria operação CANCEL.
-- PIX expirado com `providerOrderId`: somente fila durable `CANCEL` pode atuar; não expirar localmente em paralelo.
+- Create PIX incerto de pedido `CANCELLED`: busca exata permitida; zero resultados nunca recriam Order/cobrança.
+- Pagamento `AWAITING_PAYMENT` vencido (PIX ou cartão): reconciliação cancela comercialmente pedido e cria intenção canônica `cancel:{paymentId}:ORDER_CANCELLED` quando há Order no provider. Sem `providerOrderId`, não há mutação externa.
+- Cancelamento manual e expiração usam mesma intenção canônica; operação durable executa `CANCEL`, confirma por `GET Order`, e escala para `REFUND_FULL` se houver aprovação tardia.
+- Após commit `CANCELLED`, nenhum snapshot, webhook, create recovery ou cron pode reabrir/liberar pedido.
 
 Não registrar email, token, QR, provider ID, idempotency key ou corpo de erro. Summaries de cron carregam somente contagens.
+
+## Cancelamento seguro de AWAITING_PAYMENT
+
+- PIX e cartão expiram comercialmente após 30 minutos; cron de cinco minutos pode iniciar resolução entre 30 e 35 minutos.
+- Cancelamento manual usa `POST /orders/{id}/cancel`. Pedido vira `CANCELLED` antes de I/O com provedor.
+- Pagamento pendente converge por `CANCEL`; aprovação concorrente/tardia converge por `REFUND_FULL`.
+- `processing/in_process` pode recusar cancelamento; manter trabalho retryable e confirmar somente por `GET Order` autoritativo.
+- `NOT_CHARGED` = estado autoritativo cancelado/rejeitado/expirado sem captura. `REFUNDED` = estorno total autoritativo.
+- Oitava falha gera `REVIEW_REQUIRED/RETRY_EXHAUSTED`; pedido permanece cancelado e exige inspeção antes de requeue.
+- Create incerto de pedido já cancelado é somente busca: nunca recriar Order PIX/cartão.
+
+Inspeção sanitizada:
+
+```bash
+psql "$DATABASE_URL" -f apps/api/scripts/payment-work-status.sql
+```
+
+Requeue somente após confirmar identidade, valor, ambiente, método e estado autoritativo:
+
+```bash
+psql "$DATABASE_URL" \
+  -v work_type=operation \
+  -v work_id=UUID \
+  -f apps/api/scripts/requeue-payment-work.sql
+```
+
+Nunca registrar corpo do provider, payload PIX, email, token, credencial ou identificador integral na evidência.
 
 ## HTTP outcome recovery
 
@@ -84,9 +113,10 @@ Após merge, executar manualmente no sandbox, nesta ordem:
 3. criação de QR PIX;
 4. webhook assinado usando o ID real da Order sandbox correspondente;
 5. cancelamento;
-6. refund total e parcial, quando permitidos pela conta sandbox;
-7. inspeção por `apps/api/scripts/payment-work-status.sql`;
-8. inspeção sanitizada dos logs.
+6. expiração de PIX/cartão em `AWAITING_PAYMENT` e confirmação de que loja não recebe pedido;
+7. refund total e parcial, quando permitidos pela conta sandbox;
+8. inspeção por `apps/api/scripts/payment-work-status.sql`;
+9. inspeção sanitizada dos logs.
 
 ## Cadeia de dependências
 
