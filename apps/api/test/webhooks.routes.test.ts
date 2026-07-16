@@ -46,11 +46,30 @@ async function sign(dataId: string, requestId: string, timestamp: string) {
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+function officialNotificationBody() {
+  return {
+    action: 'order.processed',
+    api_version: 'v1',
+    application_id: 'body-app-must-not-select-state',
+    data: {
+      id: 'body-order-must-not-be-trusted',
+      external_reference: 'body-reference-must-not-be-trusted',
+      status: 'processed',
+      status_detail: 'accredited',
+      total_paid_amount: 100000,
+    },
+    date_created: '2026-07-16T12:00:00.000Z',
+    live_mode: true,
+    type: 'order',
+    user_id: 'body-user-must-not-select-state',
+  }
+}
+
 function req(type: string, signature: string, dataId = 'order-1', requestId = 'req-1') {
   return app.request(`/webhooks/mercadopago?type=${type}&data.id=${dataId}`, {
     method: 'POST',
     headers: { 'x-signature': signature, 'x-request-id': requestId, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ data: { id: 'body-must-not-be-trusted' } }),
+    body: JSON.stringify(officialNotificationBody()),
   }, env)
 }
 
@@ -81,12 +100,16 @@ describe('POST /webhooks/mercadopago', () => {
     const second = await req('order', signature)
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
-    expect((await testDb.select().from(paymentWebhookInbox)).length).toBe(1)
-    expect((await testDb.select().from(paymentWebhookInbox))[0]!.resourceId).toBe('order-1')
+    const rows = await testDb.select().from(paymentWebhookInbox)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ topic: 'order', resourceId: 'order-1', requestId: 'req-1' })
+    expect(JSON.stringify(rows[0])).not.toContain('body-order-must-not-be-trusted')
+    expect(JSON.stringify(rows[0])).not.toContain('body-app-must-not-select-state')
   })
 
   it('invalid signature is 401; unsupported topic is harmless 200', async () => {
     expect((await req('order', 'ts=1,v1=deadbeef')).status).toBe(401)
+    expect(await testDb.select().from(paymentWebhookInbox)).toHaveLength(0)
     expect((await req('payment', '')).status).toBe(200)
   })
 
