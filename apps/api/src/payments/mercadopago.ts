@@ -27,6 +27,17 @@ function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
 
+function optionalIdentifier(value: unknown): string | null {
+  if (typeof value === 'string' && value.length > 0) return value
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value)
+  return null
+}
+
+function normalizeCountry(value: unknown): string {
+  const country = requiredString(value).toUpperCase()
+  return country === 'BRA' ? 'BR' : country
+}
+
 function amount(value: unknown): number {
   if (typeof value !== 'string') throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
   try { return parseProviderAmount(value) } catch { throw new PaymentProviderError(`PROVIDER_RESPONSE_INVALID`) }
@@ -99,9 +110,9 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     const transactionId = requiredString(transaction.id)
     const totalAmountCents = amount(order.total_amount)
     const refundedRaw = transaction.refunded_amount ?? order.refunded_amount ?? '0.00'
-    const pixData = asObject(asObject(transaction.point_of_interaction).transaction_data)
+    const integrationData = asObject(order.integration_data)
     const pix = method === 'PIX'
-      ? { qrCode: requiredString(pixData.qr_code), qrCodeBase64: requiredString(pixData.qr_code_base64), ticketUrl: optionalString(pixData.ticket_url), expiresAt: dateOrNull(pixData.expiration_time ?? order.expiration_time) }
+      ? { qrCode: requiredString(paymentMethod.qr_code), qrCodeBase64: requiredString(paymentMethod.qr_code_base64), ticketUrl: optionalString(paymentMethod.ticket_url), expiresAt: dateOrNull(transaction.date_of_expiration ?? order.date_of_expiration) }
       : null
     return {
       providerOrderId: orderId,
@@ -113,17 +124,17 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
       externalReference: requiredString(order.external_reference),
       totalAmountCents,
       refundedAmountCents: amount(refundedRaw),
-      countryCode: requiredString(order.country_code),
-      currency: optionalString(order.currency),
+      countryCode: normalizeCountry(order.country_code),
+      currency: optionalString(order.currency) ?? 'BRL',
       processingMode: requiredString(order.processing_mode),
       method,
       paymentMethodId: methodId,
-      applicationId: optionalString(order.application_id),
-      accountId: optionalString(order.user_id ?? order.collector_id) ?? this.verifiedAccountId,
+      applicationId: optionalIdentifier(integrationData.application_id),
+      accountId: optionalIdentifier(order.user_id ?? order.collector_id) ?? this.verifiedAccountId,
       liveMode: typeof order.live_mode === 'boolean' ? order.live_mode : this.config.liveMode,
       transactionCount: transactions.length,
       pix,
-      updatedAt: dateOrNull(order.updated_at),
+      updatedAt: dateOrNull(order.last_updated_date),
     }
   }
 

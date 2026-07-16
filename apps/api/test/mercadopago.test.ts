@@ -1,12 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MercadoPagoOrdersProvider, createPaymentProvider } from '../src/payments/mercadopago'
 import { PaymentProviderError } from '../src/payments/provider'
 import type { Env } from '../src/env'
 
 const token = 'TEST-token-abc'
-const provider = new MercadoPagoOrdersProvider(token, {
-  applicationId: 'app-test', accountId: 'account-test', liveMode: false,
-})
+let provider: MercadoPagoOrdersProvider
 
 function response(body: unknown, status = 200, headers?: HeadersInit) {
   return new Response(body === undefined ? null : JSON.stringify(body), { status, headers })
@@ -17,18 +15,53 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     id: 'order-1', status: 'processed', status_detail: 'accredited',
     external_reference: 'order-1', total_amount: '64.00',
     processing_mode: 'automatic', country_code: 'BR', currency: 'BRL',
-    application_id: 'app-test', user_id: 'account-test', live_mode: false,
+    integration_data: { application_id: 'app-test' }, user_id: 'account-test', live_mode: false,
     transactions: { payments: [{
       id: 'transaction-1', status: 'processed', status_detail: 'accredited',
-      amount: '64.00', payment_method: { id: 'pix', type: 'bank_transfer' },
-      point_of_interaction: { transaction_data: {
-        qr_code: 'copy-paste', qr_code_base64: 'base64', ticket_url: 'https://mp/t',
-      } },
+      amount: '64.00', date_of_expiration: '2026-07-15T12:15:00Z',
+      payment_method: { id: 'pix', type: 'bank_transfer', qr_code: 'copy-paste', qr_code_base64: 'base64', ticket_url: 'https://mp/t' },
     }] },
     ...overrides,
   }
 }
 
+function officialPixOrder(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'ORD_TEST_PIX', type: 'online', processing_mode: 'automatic',
+    external_reference: 'order-1', total_amount: '64.00', country_code: 'BRA',
+    status: 'action_required', status_detail: 'waiting_transfer',
+    integration_data: { application_id: 'app-test' }, user_id: 'account-test', live_mode: false,
+    last_updated_date: '2026-07-16T12:00:00.000Z',
+    transactions: { payments: [{
+      id: 'PAY_TEST_PIX', amount: '64.00', refunded_amount: '0.00',
+      status: 'action_required', status_detail: 'waiting_transfer',
+      date_of_expiration: '2026-07-16T12:30:00.000Z',
+      payment_method: {
+        id: 'pix', type: 'bank_transfer', ticket_url: 'https://example.invalid/ticket',
+        qr_code: 'sanitized-copy-paste', qr_code_base64: 'sanitized-base64',
+      },
+    }] },
+    ...overrides,
+  }
+}
+
+function officialCardOrder(overrides: Record<string, unknown> = {}) {
+  return officialPixOrder({
+    id: 'ORD_TEST_CARD', country_code: 'BR', status: 'processed', status_detail: 'accredited',
+    transactions: { payments: [{
+      id: 'PAY_TEST_CARD', amount: '64.00', refunded_amount: '0.00',
+      status: 'processed', status_detail: 'accredited',
+      payment_method: { id: 'visa', type: 'credit_card' },
+    }] },
+    ...overrides,
+  })
+}
+
+beforeEach(() => {
+  provider = new MercadoPagoOrdersProvider(token, {
+    applicationId: 'app-test', accountId: 'account-test', liveMode: false,
+  })
+})
 afterEach(() => vi.unstubAllGlobals())
 
 describe('MercadoPagoOrdersProvider', () => {
@@ -78,6 +111,46 @@ describe('MercadoPagoOrdersProvider', () => {
         },
       }] },
     })
+  })
+
+  it('normalizes official PIX fields and nested integration data', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(officialPixOrder())))
+
+    const result = await provider.getOrder('ORD_TEST_PIX')
+
+    expect(result).toMatchObject({
+      providerOrderId: 'ORD_TEST_PIX', providerTransactionId: 'PAY_TEST_PIX',
+      countryCode: 'BR', currency: 'BRL', applicationId: 'app-test', accountId: 'account-test',
+      updatedAt: new Date('2026-07-16T12:00:00.000Z'),
+      pix: {
+        qrCode: 'sanitized-copy-paste', qrCodeBase64: 'sanitized-base64',
+        ticketUrl: 'https://example.invalid/ticket', expiresAt: new Date('2026-07-16T12:30:00.000Z'),
+      },
+    })
+  })
+
+  it('defaults absent currency to BRL and preserves explicit currency', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(officialCardOrder()))
+      .mockResolvedValueOnce(response(officialCardOrder({ currency: 'USD' })))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.getOrder('ORD_TEST_CARD')).resolves.toMatchObject({ method: 'CARD', currency: 'BRL', pix: null })
+    await expect(provider.getOrder('ORD_TEST_CARD')).resolves.toMatchObject({ method: 'CARD', currency: 'USD', pix: null })
+  })
+
+  it('does not invent application or account identity from configuration', async () => {
+    const missingIdentity = officialPixOrder({ integration_data: undefined, user_id: undefined, collector_id: undefined })
+    const fetchMock = vi.fn(async () => response(missingIdentity))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.getOrder('ORD_TEST_PIX')).resolves.toMatchObject({ applicationId: null, accountId: null })
+
+    fetchMock.mockReset()
+    fetchMock.mockResolvedValueOnce(response({ id: 'account-test' }))
+    fetchMock.mockResolvedValueOnce(response(missingIdentity))
+    await expect(provider.getAccountId()).resolves.toBe('account-test')
+    await expect(provider.getOrder('ORD_TEST_PIX')).resolves.toMatchObject({ applicationId: null, accountId: 'account-test' })
   })
 
   it('gets, searches exact external reference, cancels and refunds through Orders paths', async () => {

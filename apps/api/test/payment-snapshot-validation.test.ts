@@ -24,6 +24,10 @@ describe('validateSnapshot', () => {
     expect(validateSnapshot({ ...valid, ...patch } as ProviderOrderSnapshot, expected)).toEqual({ kind: 'REVIEW_REQUIRED', failureCode })
   })
 
+  it('fails closed when adapter omits application identity', () => {
+    expect(validateSnapshot({ ...valid, applicationId: null }, expected)).toEqual({ kind: 'REVIEW_REQUIRED', failureCode: 'MISMATCH_APPLICATION' })
+  })
+
   it.each([
     ['created', 'created', 'PENDING'],
     ['processing', 'in_process', 'PENDING'],
