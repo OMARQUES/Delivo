@@ -159,7 +159,9 @@ async function createIsolationFixture(now: Date): Promise<IsolationFixture> {
       if (providerOrderId === reviewPayment.providerOrderId) return snapshot(reviewPayment)
       throw new Error('unexpected getOrder target')
     }),
-    searchOrders: vi.fn(async (orderId: string) => {
+    searchOrders: vi.fn(async (orderId: string, createdAt: Date, reconciliationNow: Date) => {
+      expect(createdAt).toEqual(createPayment.createdAt)
+      expect(reconciliationNow).toEqual(now)
       if (orderId === createPayment.orderId) return [recoveredCreateSnapshot]
       throw new Error('unexpected searchOrders target')
     }),

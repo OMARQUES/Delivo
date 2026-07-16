@@ -67,7 +67,7 @@ export type CreateOrderInput =
 export interface PaymentProvider {
   createOrder(input: CreateOrderInput): Promise<ProviderOrderSnapshot>
   getOrder(providerOrderId: string): Promise<ProviderOrderSnapshot>
-  searchOrders(externalReference: string): Promise<ProviderOrderSnapshot[]>
+  searchOrders(externalReference: string, createdAt: Date, now: Date): Promise<ProviderOrderSnapshot[]>
   cancelOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrderSnapshot>
   refundOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrderSnapshot>
   refundPartial(

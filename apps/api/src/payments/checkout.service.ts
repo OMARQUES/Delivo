@@ -129,7 +129,7 @@ export async function recoverUncertainCreate(
   }
   let matches: Awaited<ReturnType<PaymentProvider['searchOrders']>>
   try {
-    matches = await provider.searchOrders(payment.orderId)
+    matches = await provider.searchOrders(payment.orderId, payment.createdAt, now)
   } catch (error) {
     if (payment.method === 'PIX' && error instanceof PaymentProviderError && ['TRANSIENT_UNCERTAIN', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE'].includes(error.kind)) {
       const persisted = await whileStillUncertain(db, payment.id, async (tx, current) => {

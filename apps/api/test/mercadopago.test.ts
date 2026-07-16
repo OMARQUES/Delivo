@@ -153,20 +153,61 @@ describe('MercadoPagoOrdersProvider', () => {
     await expect(provider.getOrder('ORD_TEST_PIX')).resolves.toMatchObject({ applicationId: null, accountId: 'account-test' })
   })
 
+  it('searches current Orders endpoint with bounded dates and exact post-filtering', async () => {
+    const wanted = officialPixOrder({ external_reference: 'order-1' })
+    const other = officialPixOrder({ id: 'ORD_OTHER', external_reference: 'other-order' })
+    const fetchMock = vi.fn(async (_input: string | URL) => response({ data: [wanted, other], paging: { total: 2 } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const createdAt = new Date('2026-07-16T12:00:00.000Z')
+    const now = new Date('2026-07-16T13:00:00.000Z')
+    const matches = await provider.searchOrders('order-1', createdAt, now)
+
+    const url = new URL(String(fetchMock.mock.calls[0]![0]))
+    expect(`${url.origin}${url.pathname}`).toBe('https://api.mercadopago.com/v1/orders')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      begin_date: '2026-07-16T11:55:00.000Z',
+      end_date: '2026-07-16T13:05:00.000Z',
+      external_reference: 'order-1',
+      type: 'online', page: '1', page_size: '10',
+    })
+    expect(matches.map((item) => item.externalReference)).toEqual(['order-1'])
+  })
+
+  it('caps search end date at 24 hours after creation', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL) => response({ data: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await provider.searchOrders(
+      'order-1',
+      new Date('2026-07-16T12:00:00.000Z'),
+      new Date('2026-07-17T12:01:00.000Z'),
+    )
+
+    const url = new URL(String(fetchMock.mock.calls[0]![0]))
+    expect(url.searchParams.get('end_date')).toBe('2026-07-17T12:00:00.000Z')
+  })
+
+  it('rejects legacy search response envelope', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ results: [] })))
+
+    await expect(provider.searchOrders('order-1', new Date('2026-07-16T12:00:00.000Z'), new Date('2026-07-16T13:00:00.000Z'))).rejects.toMatchObject({ kind: 'PROVIDER_RESPONSE_INVALID' })
+  })
+
   it('gets, searches exact external reference, cancels and refunds through Orders paths', async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input)
-      if (url.includes('/search')) return response({ results: [snapshot()] })
+      if (url.includes('/v1/orders?')) return response({ data: [snapshot({ external_reference: 'order with spaces' })] })
       return response(snapshot(), 200)
     })
     vi.stubGlobal('fetch', fetchMock)
     await provider.getOrder('order-1')
-    expect(await provider.searchOrders('order with spaces')).toHaveLength(1)
+    expect(await provider.searchOrders('order with spaces', new Date('2026-07-16T12:00:00.000Z'), new Date('2026-07-16T13:00:00.000Z'))).toHaveLength(1)
     await provider.cancelOrder('order-1', 'cancel-key')
     await provider.refundOrder('order-1', 'refund-key')
     await provider.refundPartial('order-1', 'transaction-1', 1200, 'partial-key')
     const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>
-    expect(calls[1]![0]).toContain('external_reference=order%20with%20spaces')
+    expect(new URL(calls[1]![0]).searchParams.get('external_reference')).toBe('order with spaces')
     expect(calls[2]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/cancel')
     expect(calls[3]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')
     expect(calls[4]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')

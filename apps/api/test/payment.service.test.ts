@@ -278,8 +278,11 @@ describe('Orders checkout orchestration', () => {
 
   it('recovers one uncertain create, rejects multiple, requests retry for zero', async () => {
     const one = await makePayment()
-    const oneProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(one.order.id, one.order.totalCents)]) })
-    await expect(recoverUncertainCreate(testDb, oneProvider, one.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('RECOVERED')
+    const now = new Date('2026-07-16T13:00:00.000Z')
+    const oneSearch = vi.fn(async () => [snapshot(one.order.id, one.order.totalCents)])
+    const oneProvider = fakePaymentProvider({ searchOrders: oneSearch })
+    await expect(recoverUncertainCreate(testDb, oneProvider, one.payment.id, now, (email) => email ?? 'payer@test.local')).resolves.toBe('RECOVERED')
+    expect(oneSearch).toHaveBeenCalledWith(one.order.id, one.payment.createdAt, now)
     const many = await makePayment()
     await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, many.payment.id))
     const manyProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(many.order.id, many.order.totalCents), snapshot(many.order.id, many.order.totalCents)]) })

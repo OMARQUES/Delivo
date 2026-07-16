@@ -157,11 +157,27 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     return this.normalize(raw)
   }
 
-  async searchOrders(externalReference: string): Promise<ProviderOrderSnapshot[]> {
-    const raw = await this.request<Json>(`${ORDERS_BASE}/search?external_reference=${encodeURIComponent(externalReference)}`)
-    const results = asObject(raw).results
-    if (!Array.isArray(results)) throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
-    return results.map((item) => this.normalize(item))
+  async searchOrders(externalReference: string, createdAt: Date, now: Date): Promise<ProviderOrderSnapshot[]> {
+    const beginDate = new Date(createdAt.getTime() - 5 * 60_000)
+    const maximumEnd = new Date(createdAt.getTime() + 24 * 60 * 60_000)
+    const reconciliationEnd = new Date(now.getTime() + 5 * 60_000)
+    const endDate = reconciliationEnd < maximumEnd ? reconciliationEnd : maximumEnd
+    if (endDate <= beginDate) throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
+
+    const query = new URLSearchParams({
+      begin_date: beginDate.toISOString(),
+      end_date: endDate.toISOString(),
+      external_reference: externalReference,
+      type: 'online',
+      page: '1',
+      page_size: '10',
+    })
+    const raw = await this.request<Json>(`${ORDERS_BASE}?${query.toString()}`)
+    const data = asObject(raw).data
+    if (!Array.isArray(data)) throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
+    return data
+      .map((item) => this.normalize(item))
+      .filter((item) => item.externalReference === externalReference)
   }
 
   private async mutation(path: string, key: string, body: Json): Promise<ProviderOrderSnapshot> {
