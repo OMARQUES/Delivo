@@ -62,7 +62,20 @@ beforeEach(() => {
     applicationId: 'app-test', accountId: 'account-test', liveMode: false,
   })
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
+
+const cardInput = {
+  orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local',
+  idempotencyKey: 'create-card-key', method: 'CARD' as const,
+  cardToken: 'ephemeral-test-token', cardPaymentMethodId: 'master', installments: 1 as const,
+}
+
+function calls(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls as unknown as Array<[string, RequestInit]>
+}
 
 describe('MercadoPagoOrdersProvider', () => {
   it('creates automatic PIX Order with canonical amount and no notification URL', async () => {
@@ -194,7 +207,7 @@ describe('MercadoPagoOrdersProvider', () => {
     await expect(provider.searchOrders('order-1', new Date('2026-07-16T12:00:00.000Z'), new Date('2026-07-16T13:00:00.000Z'))).rejects.toMatchObject({ kind: 'PROVIDER_RESPONSE_INVALID' })
   })
 
-  it('gets, searches exact external reference, cancels and refunds through Orders paths', async () => {
+  it('gets, searches exact external reference, cancels and refunds through Orders paths with authoritative reads', async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input)
       if (url.includes('/v1/orders?')) return response({ data: [snapshot({ external_reference: 'order with spaces' })] })
@@ -209,11 +222,150 @@ describe('MercadoPagoOrdersProvider', () => {
     const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>
     expect(new URL(calls[1]![0]).searchParams.get('external_reference')).toBe('order with spaces')
     expect(calls[2]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/cancel')
-    expect(calls[3]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')
+    expect(calls[3]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1')
     expect(calls[4]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')
+    expect(calls[5]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1')
+    expect(calls[6]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1/refund')
+    expect(calls[7]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1')
     expect(calls[2]![1].body).toBeUndefined()
-    expect(calls[3]![1].body).toBeUndefined()
-    expect(JSON.parse(String(calls[4]![1].body))).toEqual({ transactions: [{ id: 'transaction-1', amount: '12.00' }] })
+    expect(calls[4]![1].body).toBeUndefined()
+    expect(JSON.parse(String(calls[6]![1].body))).toEqual({ transactions: [{ id: 'transaction-1', amount: '12.00' }] })
+  })
+
+  it.each([
+    [402, 'CREATE_REQUIRES_RECOVERY'],
+    [409, 'CREATE_REQUIRES_RECOVERY'],
+    [423, 'RESOURCE_LOCKED'],
+    [429, 'RATE_LIMITED'],
+    [500, 'PROVIDER_UNAVAILABLE'],
+  ] as const)('classifies create HTTP %s as %s', async (status, kind) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ ignored: true }, status)))
+    await expect(provider.createOrder(cardInput)).rejects.toMatchObject({ kind, httpStatus: status })
+  })
+
+  it.each([
+    [400, 'PROVIDER_RESPONSE_INVALID'],
+    [401, 'CREDENTIAL_OR_CONFIG'],
+    [403, 'CREDENTIAL_OR_CONFIG'],
+  ] as const)('keeps deterministic create HTTP %s as %s', async (status, kind) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ secret: 'must-not-leak' }, status)))
+    await expect(provider.createOrder(cardInput)).rejects.toMatchObject({ kind, httpStatus: status })
+  })
+
+  it('parses Retry-After delta seconds and HTTP date', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-16T12:00:00.000Z'))
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({}, 429, { 'Retry-After': '120' }))
+      .mockResolvedValueOnce(response({}, 429, { 'Retry-After': 'Thu, 16 Jul 2026 12:03:00 GMT' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.getOrder('order-1')).rejects.toMatchObject({ kind: 'RATE_LIMITED', retryAfterSeconds: 120 })
+    await expect(provider.getOrder('order-1')).rejects.toMatchObject({ kind: 'RATE_LIMITED', retryAfterSeconds: 180 })
+  })
+
+  it.each(['invalid', '-1', '999999999'])('ignores unsafe Retry-After %j', async (value) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({}, 429, { 'Retry-After': value })))
+    await expect(provider.getOrder('order-1')).rejects.toMatchObject({ kind: 'RATE_LIMITED', retryAfterSeconds: undefined })
+  })
+
+  it.each([
+    ['cancelOrder', 'cancel'],
+    ['refundOrder', 'refund'],
+  ] as const)('%s ignores mutation body and returns authoritative GET snapshot', async (method, suffix) => {
+    const authoritative = suffix === 'cancel'
+      ? snapshot({ status: 'canceled', status_detail: 'canceled' })
+      : snapshot({ status: 'refunded', status_detail: 'refunded', refunded_amount: '64.00' })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ acknowledgement_only: true }, 200))
+      .mockResolvedValueOnce(response(authoritative, 200))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await provider[method]('order-1', `${suffix}-key`)
+
+    expect(calls(fetchMock)).toHaveLength(2)
+    expect(calls(fetchMock)[0]![0]).toBe(`https://api.mercadopago.com/v1/orders/order-1/${suffix}`)
+    expect(calls(fetchMock)[1]![0]).toBe('https://api.mercadopago.com/v1/orders/order-1')
+  })
+
+  it('recovers mutation 409 through authoritative GET', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ ignored: true }, 409))
+      .mockResolvedValueOnce(response(snapshot({ status: 'canceled', status_detail: 'canceled' }), 200))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.cancelOrder('order-1', 'cancel-key')).resolves.toMatchObject({ orderStatus: 'canceled' })
+    expect(calls(fetchMock)).toHaveLength(2)
+  })
+
+  it('checks authoritative state after mutation 404 before requiring review', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({}, 404))
+      .mockResolvedValueOnce(response(snapshot({ status: 'canceled', status_detail: 'canceled' }), 200))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.cancelOrder('order-1', 'cancel-key')).resolves.toMatchObject({ orderStatus: 'canceled' })
+    expect(calls(fetchMock)).toHaveLength(2)
+  })
+
+  it.each([423, 429, 500])('recovers uncertain mutation HTTP %s through authoritative GET', async (status) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({}, status, status === 429 ? { 'Retry-After': '7' } : undefined))
+      .mockResolvedValueOnce(response(snapshot({ status: 'canceled', status_detail: 'canceled' }), 200))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.cancelOrder('order-1', 'cancel-key')).resolves.toMatchObject({ orderStatus: 'canceled' })
+    expect(calls(fetchMock)).toHaveLength(2)
+  })
+
+  it('recovers a mutation network failure through authoritative GET', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('sanitized network failure'))
+      .mockResolvedValueOnce(response(snapshot({ status: 'canceled', status_detail: 'canceled' }), 200))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.cancelOrder('order-1', 'cancel-key')).resolves.toMatchObject({ orderStatus: 'canceled' })
+    expect(calls(fetchMock)).toHaveLength(2)
+  })
+
+  it('recovers a mutation timeout through authoritative GET', async () => {
+    const timeoutProvider = new MercadoPagoOrdersProvider(token, { applicationId: 'app-test', accountId: 'account-test', liveMode: false }, 10)
+    const fetchMock = vi.fn((_input: string | URL, init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))
+      }
+      return Promise.resolve(response(snapshot({ status: 'canceled', status_detail: 'canceled' }), 200))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(timeoutProvider.cancelOrder('order-1', 'cancel-key')).resolves.toMatchObject({ orderStatus: 'canceled' })
+    expect(calls(fetchMock)).toHaveLength(2)
+  })
+
+  it('preserves original mutation outcome when authoritative GET also fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({}, 409))
+      .mockResolvedValueOnce(response({}, 404))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.cancelOrder('order-1', 'cancel-key')).rejects.toMatchObject({ kind: 'MUTATION_REQUIRES_READ', httpStatus: 409 })
+  })
+
+  it('classifies unavailable readback after successful mutation as uncertain', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ acknowledgement_only: true }, 200))
+      .mockResolvedValueOnce(response({}, 404))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.refundOrder('order-1', 'refund-key')).rejects.toMatchObject({ kind: 'MUTATION_REQUIRES_READ', httpStatus: 404 })
+  })
+
+  it.each([400, 401])('does not read back deterministic mutation HTTP %s', async (status) => {
+    const fetchMock = vi.fn(async () => response({}, status))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(provider.cancelOrder('order-1', 'cancel-key')).rejects.toBeInstanceOf(PaymentProviderError)
+    expect(calls(fetchMock)).toHaveLength(1)
   })
 
   it.each(['', 'x'.repeat(65)])('rejects provider idempotency key length %j before fetch', async (key) => {
@@ -232,7 +384,7 @@ describe('MercadoPagoOrdersProvider', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(provider.cancelOrder('order-1', 'x'.repeat(64))).resolves.toMatchObject({ providerOrderId: 'order-1' })
-    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('gets credential-scoped account identity', async () => {

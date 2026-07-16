@@ -11,7 +11,7 @@ export function nextAttemptAt(now: Date, attempt: number, jitterFraction: number
   const base = Math.min(BASE_DELAY_MS * 2 ** (safeAttempt - 1), MAX_DELAY_MS)
   const jitter = Math.max(0, Math.min(0.25, Number.isFinite(jitterFraction) ? jitterFraction : 0))
   const retryAfter = Number.isFinite(retryAfterSeconds) && retryAfterSeconds !== undefined
-    ? Math.max(0, retryAfterSeconds) * 1000
+    ? Math.min(MAX_DELAY_MS, Math.max(0, retryAfterSeconds) * 1000)
     : 0
   return new Date(now.getTime() + Math.max(base + Math.floor(base * jitter), retryAfter))
 }

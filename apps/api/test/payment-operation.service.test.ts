@@ -82,6 +82,165 @@ describe('durable payment operations', () => {
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, operationId!)))[0]!.status).toBe('PENDING')
   })
 
+  it.each(['CANCEL', 'REFUND_FULL', 'REFUND_PARTIAL'] as const)(
+    '%s retries when mutation readback is still unavailable',
+    async (type) => {
+      const row = await payment()
+      const now = new Date('2026-07-16T12:00:00.000Z')
+      const queued = await enqueuePaymentOperation(testDb, {
+        paymentId: row.id,
+        type,
+        amountCents: type === 'REFUND_PARTIAL' ? 1000 : null,
+        businessKey: `readback:${type}:${row.id}`,
+        idempotencyKey: `readback:${type}:${row.id}`,
+      }, now)
+      const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+      const unavailable = vi.fn(async () => { throw new PaymentProviderError('MUTATION_REQUIRES_READ', 409) })
+      const getOrder = vi.fn(async () => { throw new PaymentProviderError('ORDER_NOT_FOUND', 404) })
+
+      await processPaymentOperation(testDb, provider({
+        cancelOrder: unavailable,
+        refundOrder: unavailable,
+        refundPartial: unavailable,
+        getOrder,
+      }), operationId!, 'worker-a', now)
+
+      expect(getOrder).toHaveBeenCalledWith(row.providerOrderId)
+      expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({
+        status: 'PENDING', failureClass: 'MUTATION_REQUIRES_READ',
+        leaseOwner: null, leasedUntil: null,
+      })
+      expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]!.nextAttemptAt).not.toBeNull()
+    },
+  )
+
+  it.each([
+    ['RESOURCE_LOCKED', 423],
+    ['RATE_LIMITED', 429],
+  ] as const)('retries %s and honors a bounded provider delay', async (kind, status) => {
+    const row = await payment()
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    const queued = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id, type: 'CANCEL', amountCents: null,
+      businessKey: `retry:${kind}:${row.id}`, idempotencyKey: `retry:${kind}:${row.id}`,
+    }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const failure = vi.fn(async () => { throw new PaymentProviderError(kind, status, 60 * 60) })
+
+    await processPaymentOperation(testDb, provider({
+      cancelOrder: failure,
+      getOrder: vi.fn(async () => { throw new PaymentProviderError('ORDER_NOT_FOUND', 404) }),
+    }), operationId!, 'worker-a', now)
+
+    const [stored] = await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id))
+    expect(stored).toMatchObject({ status: 'PENDING', failureClass: kind, leaseOwner: null, leasedUntil: null })
+    expect(stored!.nextAttemptAt).toEqual(new Date(now.getTime() + 60 * 60_000))
+  })
+
+  it('settles an already-canceled Order from mutation conflict readback', async () => {
+    const row = await payment()
+    const now = new Date()
+    const queued = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id, type: 'CANCEL', amountCents: null,
+      businessKey: `cancel-readback:${row.id}`, idempotencyKey: `cancel-readback:${row.id}`,
+    }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const canceled = snapshot(row.providerOrderId!, row.expectedAmountCents, {
+      providerTransactionId: row.providerTransactionId!, externalReference: row.orderId,
+      orderStatus: 'canceled', orderStatusDetail: 'canceled',
+      transactionStatus: 'canceled', transactionStatusDetail: 'canceled', refundedAmountCents: 0,
+    })
+
+    await processPaymentOperation(testDb, provider({
+      cancelOrder: vi.fn(async () => { throw new PaymentProviderError('MUTATION_REQUIRES_READ', 409) }),
+      getOrder: vi.fn(async () => canceled),
+    }), operationId!, 'worker-a', now)
+
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({
+      status: 'SUCCEEDED', resultCode: 'CANCELLED', failureClass: null,
+    })
+  })
+
+  it('escalates an approved cancel conflict readback to full refund', async () => {
+    const row = await payment()
+    const now = new Date()
+    const queued = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id, type: 'CANCEL', amountCents: null,
+      businessKey: `cancel-approved-readback:${row.id}`, idempotencyKey: `cancel-approved-readback:${row.id}`,
+    }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const approved = snapshot(row.providerOrderId!, row.expectedAmountCents, {
+      providerTransactionId: row.providerTransactionId!, externalReference: row.orderId,
+      orderStatus: 'processed', orderStatusDetail: 'accredited',
+      transactionStatus: 'processed', transactionStatusDetail: 'accredited', refundedAmountCents: 0,
+    })
+
+    await processPaymentOperation(testDb, provider({
+      cancelOrder: vi.fn(async () => { throw new PaymentProviderError('MUTATION_REQUIRES_READ', 409) }),
+      getOrder: vi.fn(async () => approved),
+    }), operationId!, 'worker-a', now)
+
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({
+      status: 'SUCCEEDED', resultCode: 'ESCALATED_TO_REFUND',
+    })
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.paymentId, row.id)))
+      .filter((operation) => operation.type === 'REFUND_FULL')).toHaveLength(1)
+  })
+
+  it.each([
+    ['REFUND_FULL', 6000, 'SUCCEEDED', null],
+    ['REFUND_PARTIAL', 1000, 'SUCCEEDED', null],
+    ['REFUND_PARTIAL', 500, 'PENDING', 'REFUND_NOT_COMPLETE'],
+    ['REFUND_PARTIAL', 1500, 'REVIEW_REQUIRED', 'MISMATCH_REFUNDED_TARGET'],
+  ] as const)('settles %s conflict readback at cumulative refund %s', async (type, refundedAmountCents, status, failureClass) => {
+    const row = await payment()
+    const now = new Date()
+    const queued = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id, type, amountCents: type === 'REFUND_PARTIAL' ? 1000 : null,
+      businessKey: `refund-readback:${type}:${refundedAmountCents}:${row.id}`,
+      idempotencyKey: `rr:${row.id}`,
+    }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const refunded = snapshot(row.providerOrderId!, row.expectedAmountCents, {
+      providerTransactionId: row.providerTransactionId!, externalReference: row.orderId,
+      orderStatus: type === 'REFUND_FULL' ? 'refunded' : 'processed',
+      orderStatusDetail: type === 'REFUND_FULL' ? 'refunded' : 'partially_refunded',
+      transactionStatus: type === 'REFUND_FULL' ? 'refunded' : 'partially_refunded',
+      transactionStatusDetail: type === 'REFUND_FULL' ? 'refunded' : 'partially_refunded',
+      refundedAmountCents,
+    })
+    const conflict = vi.fn(async () => { throw new PaymentProviderError('MUTATION_REQUIRES_READ', 409) })
+
+    await processPaymentOperation(testDb, provider({
+      refundOrder: conflict, refundPartial: conflict, getOrder: vi.fn(async () => refunded),
+    }), operationId!, 'worker-a', now)
+
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({
+      status, failureClass,
+    })
+  })
+
+  it('moves deterministic invalid mutation input to review without readback', async () => {
+    const row = await payment()
+    const now = new Date()
+    const queued = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id, type: 'CANCEL', amountCents: null,
+      businessKey: `invalid:${row.id}`, idempotencyKey: `invalid:${row.id}`,
+    }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const getOrder = vi.fn()
+
+    await processPaymentOperation(testDb, provider({
+      cancelOrder: vi.fn(async () => { throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID', 400) }),
+      getOrder,
+    }), operationId!, 'worker-a', now)
+
+    expect(getOrder).not.toHaveBeenCalled()
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({
+      status: 'REVIEW_REQUIRED', failureClass: 'PROVIDER_RESPONSE_INVALID',
+    })
+  })
+
   it('serializes dependent operations and releases only after predecessor success', async () => {
     const row = await payment()
     const now = new Date()

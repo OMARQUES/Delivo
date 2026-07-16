@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { orderEvents, orders, paymentOperations, payments } from '../db/schema'
-import { PaymentProviderError, providerIdempotencyKey, type PaymentProvider } from './provider'
+import { PaymentProviderError, providerIdempotencyKey, type PaymentProvider, type ProviderFailureKind } from './provider'
 import { applyProviderSnapshotInTransaction } from './transition.service'
 import { retryDisposition } from './retry'
 import { enqueuePaymentOperation } from './operation-queue.service'
@@ -11,8 +11,16 @@ async function markReview(db: Db, operationId: string, failureClass: string, now
   await db.update(paymentOperations).set({ status: 'REVIEW_REQUIRED', failureClass, observedProviderStatus: observedProviderStatus ?? null, leaseOwner: null, leasedUntil: null, updatedAt: now }).where(eq(paymentOperations.id, operationId))
 }
 
+const OPERATION_RETRYABLE_KINDS: ReadonlySet<ProviderFailureKind> = new Set([
+  'TRANSIENT_UNCERTAIN',
+  'RATE_LIMITED',
+  'PROVIDER_UNAVAILABLE',
+  'RESOURCE_LOCKED',
+  'MUTATION_REQUIRES_READ',
+])
+
 function retryable(error: unknown): error is PaymentProviderError {
-  return error instanceof PaymentProviderError && ['TRANSIENT_UNCERTAIN', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE'].includes(error.kind)
+  return error instanceof PaymentProviderError && OPERATION_RETRYABLE_KINDS.has(error.kind)
 }
 
 type OperationOutcome =
@@ -106,10 +114,8 @@ export async function processPaymentOperation(db: Db, provider: PaymentProvider,
     if (retryable(error)) {
       try {
         const current = await provider.getOrder(payment.providerOrderId)
-        const outcome = await settleSnapshot(db, operation, current, now)
-        if (outcome.kind === 'SUCCEEDED' || outcome.kind === 'ESCALATE_TO_REFUND' || outcome.kind === 'REVIEW_REQUIRED') {
-          return
-        }
+        await settleSnapshot(db, operation, current, now)
+        return
       } catch { /* retry below */ }
       const disposition = retryDisposition(now, operation.attemptCount, Math.random() * 0.25, error.retryAfterSeconds)
       if (disposition.kind === 'REVIEW_REQUIRED') return markReview(db, operationId, 'RETRY_EXHAUSTED', now)

@@ -15,4 +15,8 @@ describe('payment retry', () => {
     expect(nextAttemptAt(now, 1, 2).getTime() - now.getTime()).toBe(37_500)
     expect(nextAttemptAt(now, 1, -1).getTime() - now.getTime()).toBe(30_000)
   })
+
+  it('caps excessive provider Retry-After at six hours', () => {
+    expect(nextAttemptAt(now, 1, 0, 999_999).getTime() - now.getTime()).toBe(6 * 60 * 60_000)
+  })
 })

@@ -144,9 +144,12 @@ export async function runPaymentReconciliation(
     }
   })
   if (stages.has('creates')) await runStage(summary, async () => {
-    const uncertain = await db.select({ id: payments.id }).from(payments).where(and(isNull(payments.providerOrderId), eq(payments.status, 'PENDING'), duePayment(now))).orderBy(asc(payments.nextReconcileAt), asc(payments.createdAt)).limit(capBy('creates'))
+    const uncertain = await db.select({ id: payments.id }).from(payments).where(and(isNull(payments.providerOrderId), eq(payments.status, 'PENDING'), eq(payments.reconciliationState, 'PENDING'), duePayment(now))).orderBy(asc(payments.nextReconcileAt), asc(payments.createdAt)).limit(capBy('creates'))
     for (const row of uncertain) {
-      try { if (await recoverUncertainCreate(db, provider, row.id, now, context.resolvePayerEmail) === 'RECOVERED') summary.createsRecovered++ } catch { summary.stageFailures++ }
+      try {
+        const claimed = await claimPayment(db, row.id, now, 'PENDING')
+        if (claimed?.providerOrderId === null && await recoverUncertainCreate(db, provider, row.id, now, context.resolvePayerEmail) === 'RECOVERED') summary.createsRecovered++
+      } catch { summary.stageFailures++ }
     }
   })
   if (stages.has('snapshots')) await runStage(summary, async () => {

@@ -27,17 +27,23 @@ export function validateSnapshot(snapshot: ProviderOrderSnapshot, expected: Expe
 
   const orderStatus = snapshot.orderStatus.toLowerCase()
   const transactionStatus = snapshot.transactionStatus?.toLowerCase() ?? null
+  const orderDetail = snapshot.orderStatusDetail.toLowerCase()
+  const transactionDetail = snapshot.transactionStatusDetail?.toLowerCase() ?? null
   const statuses = [orderStatus, transactionStatus].filter((status): status is string => status !== null)
-  if (statuses.some((status) => status.includes('charged_back'))) return review('UNSUPPORTED_CHARGEBACK')
-  if (statuses.some((status) => status.includes('capture') || status.includes('challenge'))) return review('UNSUPPORTED_CAPTURE')
-  if (statuses.some((status) => status.includes('partially_refunded')) || snapshot.orderStatusDetail.toLowerCase().includes('partially_refunded') || snapshot.transactionStatusDetail?.toLowerCase().includes('partially_refunded')) {
+  const details = [orderDetail, transactionDetail].filter((detail): detail is string => detail !== null)
+  const failed = orderStatus === 'failed' || orderStatus === 'rejected' || transactionStatus === 'failed' || transactionStatus === 'rejected'
+  if ([...statuses, ...details].some((value) => value.includes('charged_back') || value.includes('chargeback'))) return review('UNSUPPORTED_CHARGEBACK')
+  if (!failed && (
+    statuses.some((status) => status.includes('capture') || status.includes('challenge'))
+    || details.some((detail) => detail !== 'waiting_capture' && (detail.includes('capture') || detail.includes('challenge')))
+  )) return review('UNSUPPORTED_CAPTURE')
+  if (statuses.some((status) => status.includes('partially_refunded')) || orderDetail.includes('partially_refunded') || transactionDetail?.includes('partially_refunded')) {
     return snapshot.refundedAmountCents > 0 ? { kind: 'PARTIALLY_REFUNDED', refundedAmountCents: snapshot.refundedAmountCents } : review('MISMATCH_REFUNDED_AMOUNT')
   }
 
-  const supported = new Set(['created', 'pending', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_transfer', 'processed', 'accredited', 'failed', 'rejected', 'canceled', 'cancelled', 'expired', 'refunded'])
+  const supported = new Set(['created', 'pending', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_payment', 'waiting_transfer', 'processed', 'accredited', 'failed', 'rejected', 'canceled', 'cancelled', 'expired', 'refunded'])
   if (statuses.some((status) => !supported.has(status) && !status.startsWith('cc_rejected'))) return review('UNSUPPORTED_PROVIDER_STATE')
-  const rejectionDetail = [snapshot.orderStatusDetail, snapshot.transactionStatusDetail, transactionStatus].filter((value): value is string => value !== null).map((value) => value.toLowerCase())
-  if (orderStatus === 'failed' || orderStatus === 'rejected' || rejectionDetail.some((value) => value.startsWith('cc_rejected') || value === 'rejected')) return rejectionDetail.some((value) => value.startsWith('cc_rejected') || value === 'rejected') ? { kind: 'REJECTED' } : review('UNSUPPORTED_REJECTION')
+  if (failed || [...details, transactionStatus].some((value) => value?.startsWith('cc_rejected'))) return { kind: 'REJECTED' }
   if (orderStatus === 'canceled' || orderStatus === 'cancelled') return { kind: 'CANCELLED' }
   if (orderStatus === 'expired') return { kind: 'EXPIRED' }
   if (orderStatus === 'refunded') {
@@ -45,7 +51,7 @@ export function validateSnapshot(snapshot: ProviderOrderSnapshot, expected: Expe
       ? { kind: 'REFUNDED' }
       : review('MISMATCH_REFUNDED_AMOUNT')
   }
-  if (orderStatus === 'processed' && (snapshot.orderStatusDetail.toLowerCase() === 'accredited' || transactionStatus === 'accredited' || transactionStatus === 'processed')) return { kind: 'APPROVED' }
-  if (['created', 'pending', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_transfer'].includes(orderStatus)) return { kind: 'PENDING', qrAvailable: snapshot.pix !== null }
+  if (orderStatus === 'processed' && (orderDetail === 'accredited' || transactionStatus === 'accredited' || transactionStatus === 'processed')) return { kind: 'APPROVED' }
+  if (['created', 'pending', 'processing', 'in_process', 'in_review', 'action_required', 'waiting_payment', 'waiting_transfer'].includes(orderStatus)) return { kind: 'PENDING', qrAvailable: snapshot.pix !== null }
   return review('UNSUPPORTED_PROVIDER_STATE')
 }

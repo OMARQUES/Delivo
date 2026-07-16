@@ -10,6 +10,7 @@ import { providerSnapshot } from './helpers/payment-provider'
 import { createOnlinePayment, recoverUncertainCreate } from '../src/payments/checkout.service'
 import { fakePaymentProvider } from './helpers/payment-provider'
 import { enqueueOrderPaymentDisposition } from '../src/services/payment.service'
+import { PaymentProviderError } from '../src/payments/provider'
 
 const storeInput: StoreFixtureInput = { name: 'Pizzaria', slug: 'pizzaria', category: 'PIZZARIA', phone: '4433334444', city: 'C', addressText: 'Rua A, 1', lat: -23.55, lng: -51.9, owner: { name: 'João', email: 'joao@email.com', password: 'senha123' } }
 const customerInput = { name: 'Ana', phone: '44999998888', password: 'senha123', role: 'CUSTOMER' as const, acceptedTerms: true as const }
@@ -37,6 +38,16 @@ async function makePayment(status: 'AWAITING_PAYMENT' | 'CANCELLED' = 'AWAITING_
     createIdempotencyKey: crypto.randomUUID(), qrCode: 'qr', qrCodeBase64: 'b64',
   }).returning()
   return { order, payment: payment! }
+}
+
+async function makeUncertainCard() {
+  const { order, payment } = await makePayment()
+  await testDb.update(orders).set({ paymentMethod: 'CARD_ONLINE' }).where(eq(orders.id, order.id))
+  const [updated] = await testDb.update(payments).set({
+    method: 'CARD', providerOrderId: null, providerTransactionId: null,
+    qrCode: null, qrCodeBase64: null, ticketUrl: null,
+  }).where(eq(payments.id, payment.id)).returning()
+  return { order, payment: updated! }
 }
 
 function deferred<T>() {
@@ -224,6 +235,77 @@ describe('applyProviderSnapshot', () => {
 })
 
 describe('Orders checkout orchestration', () => {
+  it('recovers create 402 through exact search and authoritative GET as a rejected card', async () => {
+    const { order, payment } = await makeUncertainCard()
+    const rejected = snapshot(order.id, order.totalCents, {
+      providerOrderId: 'provider-order-rejected',
+      providerTransactionId: 'provider-transaction-rejected',
+      method: 'CARD', paymentMethodId: 'master', pix: null,
+      orderStatus: 'failed', orderStatusDetail: 'failed',
+      transactionStatus: 'failed', transactionStatusDetail: 'rejected_by_issuer',
+    })
+    const provider = fakePaymentProvider({
+      createOrder: vi.fn(async () => { throw new PaymentProviderError('CREATE_REQUIRES_RECOVERY', 402) }),
+      searchOrders: vi.fn(async () => [rejected]),
+      getOrder: vi.fn(async () => rejected),
+    })
+
+    await expect(createOnlinePayment(testDb, provider, {
+      paymentId: payment.id,
+      payerEmail: 'payer@test.local',
+      card: { token: 'ephemeral-test-token', methodId: 'master' },
+    })).rejects.toMatchObject({ code: 'PAYMENT_REJECTED', status: 402 })
+
+    expect(provider.searchOrders).toHaveBeenCalledOnce()
+    expect(provider.getOrder).toHaveBeenCalledWith('provider-order-rejected')
+    expect(provider.createOrder).toHaveBeenCalledOnce()
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      status: 'REJECTED', reconciliationState: 'HEALTHY', reconciliationFailure: null,
+      providerOrderId: 'provider-order-rejected', providerTransactionId: 'provider-transaction-rejected',
+    })
+    expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('CANCELLED')
+  })
+
+  it('keeps create 402 with no searchable Order pending without replaying the card', async () => {
+    const { order, payment } = await makeUncertainCard()
+    const provider = fakePaymentProvider({
+      createOrder: vi.fn(async () => { throw new PaymentProviderError('CREATE_REQUIRES_RECOVERY', 402) }),
+      searchOrders: vi.fn(async () => []),
+    })
+
+    await expect(createOnlinePayment(testDb, provider, {
+      paymentId: payment.id,
+      payerEmail: 'payer@test.local',
+      card: { token: 'ephemeral-test-token', methodId: 'master' },
+    })).rejects.toMatchObject({ code: 'PAYMENT_UNCERTAIN', status: 503 })
+
+    expect(provider.createOrder).toHaveBeenCalledOnce()
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      status: 'PENDING', reconciliationState: 'PENDING', providerOrderId: null, providerTransactionId: null,
+    })
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]!.nextReconcileAt).not.toBeNull()
+    expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('AWAITING_PAYMENT')
+  })
+
+  it('moves multiple exact create recovery matches to review', async () => {
+    const { order, payment } = await makeUncertainCard()
+    const match = snapshot(order.id, order.totalCents, { method: 'CARD', paymentMethodId: 'master', pix: null })
+    const provider = fakePaymentProvider({
+      createOrder: vi.fn(async () => { throw new PaymentProviderError('CREATE_REQUIRES_RECOVERY', 409) }),
+      searchOrders: vi.fn(async () => [match, { ...match, providerOrderId: 'other-provider-order' }]),
+    })
+
+    await expect(createOnlinePayment(testDb, provider, {
+      paymentId: payment.id,
+      payerEmail: 'payer@test.local',
+      card: { token: 'ephemeral-test-token', methodId: 'master' },
+    })).rejects.toMatchObject({ code: 'PAYMENT_REVIEW_REQUIRED', status: 503 })
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'AMBIGUOUS_PROVIDER_CREATE',
+    })
+    expect(provider.getOrder).not.toHaveBeenCalled()
+  })
+
   it('does not overwrite a webhook result while uncertain search is in flight', async () => {
     const { order, payment } = await makePayment()
     await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, payment.id))
@@ -281,10 +363,13 @@ describe('Orders checkout orchestration', () => {
   it('recovers one uncertain create, rejects multiple, requests retry for zero', async () => {
     const one = await makePayment()
     const now = new Date('2026-07-16T13:00:00.000Z')
-    const oneSearch = vi.fn(async () => [snapshot(one.order.id, one.order.totalCents)])
-    const oneProvider = fakePaymentProvider({ searchOrders: oneSearch })
+    const oneMatch = snapshot(one.order.id, one.order.totalCents)
+    const oneSearch = vi.fn(async () => [oneMatch])
+    const oneRead = vi.fn(async () => oneMatch)
+    const oneProvider = fakePaymentProvider({ searchOrders: oneSearch, getOrder: oneRead })
     await expect(recoverUncertainCreate(testDb, oneProvider, one.payment.id, now, (email) => email ?? 'payer@test.local')).resolves.toBe('RECOVERED')
     expect(oneSearch).toHaveBeenCalledWith(one.order.id, one.payment.createdAt, now)
+    expect(oneRead).toHaveBeenCalledWith(oneMatch.providerOrderId)
     const many = await makePayment()
     await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, many.payment.id))
     const manyProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(many.order.id, many.order.totalCents), snapshot(many.order.id, many.order.totalCents)]) })
@@ -297,7 +382,7 @@ describe('Orders checkout orchestration', () => {
     expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: zero.payment.createIdempotencyKey, payerEmail: expect.any(String) }))
   })
 
-  it('persists ambiguous and fresh-card decisions, expires uncertain PIX once', async () => {
+  it('persists ambiguous and bounded card-retry decisions, expires uncertain PIX once', async () => {
     const many = await makePayment()
     await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, many.payment.id))
     const manyProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(many.order.id, many.order.totalCents), snapshot(many.order.id, many.order.totalCents)]) })
@@ -307,8 +392,11 @@ describe('Orders checkout orchestration', () => {
     const card = await makePayment()
     await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null, method: 'CARD', qrCode: null, qrCodeBase64: null }).where(eq(payments.id, card.payment.id))
     const cardProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => []), createOrder: vi.fn() })
-    await expect(recoverUncertainCreate(testDb, cardProvider, card.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('FRESH_CARD_REQUIRED')
+    await expect(recoverUncertainCreate(testDb, cardProvider, card.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('RETRY_CARD')
     expect(cardProvider.createOrder).not.toHaveBeenCalled()
+    expect((await testDb.select().from(payments).where(eq(payments.id, card.payment.id)))[0]).toMatchObject({
+      reconciliationState: 'PENDING', reconciliationFailure: 'CREATE_NOT_VISIBLE',
+    })
 
     const expired = await makePayment()
     const expiredAt = new Date('2026-07-15T11:00:00.000Z')

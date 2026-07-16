@@ -250,6 +250,51 @@ describe('POST /orders/quote + POST /orders', () => {
     vi.restoreAllMocks()
   })
 
+  it('CARD_ONLINE create 402 recovers rejected_by_issuer and returns 402 instead of 503', async () => {
+    let attemptedOrderId = ''
+    const rejected = () => providerSnapshot({
+      providerOrderId: 'provider-order-rejected',
+      providerTransactionId: 'provider-transaction-rejected',
+      externalReference: attemptedOrderId,
+      method: 'CARD', paymentMethodId: 'master', pix: null,
+      orderStatus: 'failed', orderStatusDetail: 'failed',
+      transactionStatus: 'failed', transactionStatusDetail: 'rejected_by_issuer',
+    })
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
+      getAccountId: async () => 'account-test',
+      createOrder: async (input) => {
+        attemptedOrderId = input.orderId
+        throw new OrdersProviderError('CREATE_REQUIRES_RECOVERY', 402)
+      },
+      searchOrders: async () => [rejected()],
+      getOrder: async () => rejected(),
+      cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
+    })
+
+    try {
+      const res = await req('/orders', {
+        method: 'POST',
+        body: JSON.stringify(checkout({
+          paymentMethod: 'CARD_ONLINE', cardToken: 'ephemeral-route-token',
+          cardPaymentMethodId: 'master', installments: 1,
+        })),
+      }, customerToken)
+
+      expect(res.status).toBe(402)
+      expect((await res.json()) as { error: string }).toEqual({
+        error: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega',
+      })
+      const [payment] = await testDb.select().from(payments).where(eq(payments.orderId, attemptedOrderId))
+      expect(payment).toMatchObject({
+        status: 'REJECTED', reconciliationState: 'HEALTHY', reconciliationFailure: null,
+        providerOrderId: 'provider-order-rejected', providerTransactionId: 'provider-transaction-rejected',
+      })
+      expect((await testDb.select().from(orders).where(eq(orders.id, attemptedOrderId)))[0]!.status).toBe('CANCELLED')
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
   it('CARD_ONLINE provider failure stays generic and logs safe diagnostics', async () => {
     const logSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({

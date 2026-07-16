@@ -155,6 +155,7 @@ async function createIsolationFixture(now: Date): Promise<IsolationFixture> {
   const stageProvider = provider({
     getOrder: vi.fn(async (providerOrderId: string) => {
       if (providerOrderId === inboxResourceId) return inboxUnknownSnapshot
+      if (providerOrderId === recoveredOrderId) return recoveredCreateSnapshot
       if (providerOrderId === snapshotPayment.providerOrderId) return snapshot(snapshotPayment)
       if (providerOrderId === reviewPayment.providerOrderId) return snapshot(reviewPayment)
       throw new Error('unexpected getOrder target')
@@ -270,7 +271,7 @@ describe('payment reconciliation', () => {
       dependencies: {},
       inbox: { getAccountId: 1, getOrder: 1 },
       operations: { cancelOrder: 1 },
-      creates: { searchOrders: 1 },
+      creates: { getOrder: 1, searchOrders: 1 },
       snapshots: { getOrder: 1 },
       expirations: {},
       reviews: { getOrder: 1 },
@@ -349,6 +350,132 @@ describe('payment reconciliation', () => {
     const failing = provider({ getOrder: vi.fn(async () => { throw new PaymentProviderError('PROVIDER_UNAVAILABLE') }) }, pending)
     await runPaymentReconciliation(testDb, failing, now, context, only('snapshots'))
     expect((await testDb.select().from(payments).where(eq(payments.id, pending.id)))[0]).toMatchObject({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'RETRY_EXHAUSTED', reconciliationAttemptCount: 8 })
+  })
+
+  it('keeps a zero-result CARD create bounded and never replays createOrder', async () => {
+    const payment = await pendingPayment()
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    await testDb.update(payments).set({
+      method: 'CARD', providerOrderId: null, providerTransactionId: null,
+      nextReconcileAt: now, qrCode: null, qrCodeBase64: null,
+    }).where(eq(payments.id, payment.id))
+    const searchOrders = vi.fn(async () => [])
+    const createOrder = vi.fn()
+
+    await runPaymentReconciliation(testDb, provider({ searchOrders, createOrder }), now, context, only('creates'))
+
+    expect(searchOrders).toHaveBeenCalledOnce()
+    expect(createOrder).not.toHaveBeenCalled()
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      status: 'PENDING', providerOrderId: null, reconciliationState: 'PENDING',
+      reconciliationFailure: 'CREATE_NOT_VISIBLE', reconciliationAttemptCount: 1,
+    })
+  })
+
+  it('applies a later authoritative CARD result after a bounded zero-result run', async () => {
+    const payment = await pendingPayment()
+    const firstNow = new Date('2026-07-16T12:00:00.000Z')
+    await testDb.update(payments).set({
+      method: 'CARD', providerOrderId: null, providerTransactionId: null,
+      nextReconcileAt: firstNow, qrCode: null, qrCodeBase64: null,
+    }).where(eq(payments.id, payment.id))
+    await runPaymentReconciliation(testDb, provider({ searchOrders: vi.fn(async () => []) }), firstNow, context, only('creates'))
+
+    const secondNow = new Date('2026-07-16T13:00:00.000Z')
+    await testDb.update(payments).set({ nextReconcileAt: secondNow }).where(eq(payments.id, payment.id))
+    const found = snapshot(payment, {
+      providerOrderId: 'found-card-order', providerTransactionId: 'found-card-transaction',
+      method: 'CARD', paymentMethodId: 'master', pix: null,
+      orderStatus: 'processed', orderStatusDetail: 'accredited',
+      transactionStatus: 'processed', transactionStatusDetail: 'accredited',
+    })
+    const getOrder = vi.fn(async () => found)
+    const result = await runPaymentReconciliation(testDb, provider({
+      searchOrders: vi.fn(async () => [found]), getOrder, createOrder: vi.fn(),
+    }), secondNow, context, only('creates'))
+
+    expect(result.createsRecovered).toBe(1)
+    expect(getOrder).toHaveBeenCalledWith(found.providerOrderId)
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      status: 'APPROVED', providerOrderId: found.providerOrderId,
+      providerTransactionId: found.providerTransactionId, reconciliationState: 'HEALTHY',
+    })
+  })
+
+  it('moves zero-result CARD create attempt eight to retry-exhausted review', async () => {
+    const payment = await pendingPayment()
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    await testDb.update(payments).set({
+      method: 'CARD', providerOrderId: null, providerTransactionId: null,
+      reconciliationAttemptCount: 7, nextReconcileAt: now,
+      qrCode: null, qrCodeBase64: null,
+    }).where(eq(payments.id, payment.id))
+    const createOrder = vi.fn()
+
+    await runPaymentReconciliation(testDb, provider({ searchOrders: vi.fn(async () => []), createOrder }), now, context, only('creates'))
+
+    expect(createOrder).not.toHaveBeenCalled()
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'RETRY_EXHAUSTED',
+      reconciliationAttemptCount: 8, nextReconcileAt: null,
+    })
+  })
+
+  it('retries zero-result PIX with its original key and stops at the shared budget', async () => {
+    const payment = await pendingPayment()
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    await testDb.update(payments).set({
+      providerOrderId: null, providerTransactionId: null,
+      reconciliationAttemptCount: 7, nextReconcileAt: now,
+    }).where(eq(payments.id, payment.id))
+    const createOrder = vi.fn(async () => { throw new PaymentProviderError('RESOURCE_LOCKED', 423) })
+
+    await runPaymentReconciliation(testDb, provider({ searchOrders: vi.fn(async () => []), createOrder }), now, context, only('creates'))
+
+    expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: payment.createIdempotencyKey }))
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'RETRY_EXHAUSTED',
+      reconciliationAttemptCount: 8, nextReconcileAt: null,
+    })
+  })
+
+  it('moves multiple create matches directly to ambiguous review', async () => {
+    const payment = await pendingPayment()
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null, nextReconcileAt: now }).where(eq(payments.id, payment.id))
+    const match = snapshot(payment, { providerOrderId: 'first-match' })
+
+    await runPaymentReconciliation(testDb, provider({
+      searchOrders: vi.fn(async () => [match, { ...match, providerOrderId: 'second-match' }]),
+    }), now, context, only('creates'))
+
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({
+      reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'AMBIGUOUS_PROVIDER_CREATE',
+      reconciliationAttemptCount: 1,
+    })
+  })
+
+  it('does not let a null-ID review row consume the bounded create batch', async () => {
+    const reviewed = await pendingPayment()
+    const actionable = await pendingPayment()
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    await testDb.update(payments).set({
+      providerOrderId: null, providerTransactionId: null,
+      reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'AMBIGUOUS_PROVIDER_CREATE',
+      nextReconcileAt: new Date(now.getTime() - 60_000),
+    }).where(eq(payments.id, reviewed.id))
+    await testDb.update(payments).set({
+      providerOrderId: null, providerTransactionId: null, nextReconcileAt: now,
+    }).where(eq(payments.id, actionable.id))
+    const found = snapshot(actionable, { providerOrderId: 'actionable-order', providerTransactionId: 'actionable-transaction' })
+
+    const result = await runPaymentReconciliation(testDb, provider({
+      searchOrders: vi.fn(async () => [found]),
+      getOrder: vi.fn(async () => found),
+    }), now, context, only('creates'))
+
+    expect(result.createsRecovered).toBe(1)
+    expect((await testDb.select().from(payments).where(eq(payments.id, actionable.id)))[0]!.providerOrderId).toBe(found.providerOrderId)
   })
 
   it('continues to expiration after snapshot-stage failure', async () => {

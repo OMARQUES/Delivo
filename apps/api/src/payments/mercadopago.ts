@@ -6,6 +6,7 @@ import {
   assertProviderIdempotencyKey,
   type CreateOrderInput,
   type PaymentProvider,
+  type ProviderFailureKind,
   type ProviderOrderSnapshot,
 } from './provider'
 
@@ -14,6 +15,31 @@ const USER_URL = 'https://api.mercadolibre.com/users/me'
 
 type ProviderConfig = { applicationId: string; accountId: string; liveMode: boolean }
 type Json = Record<string, unknown>
+type RequestIntent = 'READ' | 'CREATE' | 'MUTATION'
+type ResponseMode = 'JSON' | 'IGNORE'
+type RequestOptions = { intent?: RequestIntent; responseMode?: ResponseMode; idempotencyKey?: string }
+
+const MAX_RETRY_AFTER_SECONDS = 6 * 60 * 60
+const MUTATION_RECOVERY_KINDS = new Set<ProviderFailureKind>([
+  'MUTATION_REQUIRES_READ', 'RESOURCE_LOCKED', 'ORDER_NOT_FOUND', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE', 'TRANSIENT_UNCERTAIN',
+])
+
+function failureKind(status: number, intent: RequestIntent): ProviderFailureKind {
+  if (status === 401 || status === 403) return 'CREDENTIAL_OR_CONFIG'
+  if (intent === 'CREATE' && (status === 402 || status === 409)) return 'CREATE_REQUIRES_RECOVERY'
+  if (intent === 'MUTATION' && status === 409) return 'MUTATION_REQUIRES_READ'
+  if (status === 423) return 'RESOURCE_LOCKED'
+  if (status === 404) return 'ORDER_NOT_FOUND'
+  if (status === 429) return 'RATE_LIMITED'
+  if (status >= 500) return 'PROVIDER_UNAVAILABLE'
+  return 'PROVIDER_RESPONSE_INVALID'
+}
+
+function parseRetryAfterSeconds(value: string | null, nowMs = Date.now()): number | undefined {
+  if (!value) return undefined
+  const delta = /^\d+$/.test(value) ? Number(value) : Math.ceil((Date.parse(value) - nowMs) / 1000)
+  return Number.isFinite(delta) && delta >= 0 && delta <= MAX_RETRY_AFTER_SECONDS ? delta : undefined
+}
 
 function asObject(value: unknown): Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Json : {}
@@ -61,7 +87,8 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     private readonly timeoutMs = 8_000,
   ) {}
 
-  private async request<T>(url: string, init: RequestInit = {}, idempotencyKey?: string): Promise<T | null> {
+  private async request<T>(url: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T | null> {
+    const { intent = 'READ', responseMode = 'JSON', idempotencyKey } = options
     if (idempotencyKey !== undefined) assertProviderIdempotencyKey(idempotencyKey)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
@@ -77,18 +104,13 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     try {
       const response = await fetch(url, { ...init, headers, signal: controller.signal })
       if (!response.ok) {
-        const retryAfter = Number.parseInt(response.headers.get('Retry-After') ?? '', 10)
-        const kind = response.status === 401 || response.status === 403
-          ? 'CREDENTIAL_OR_CONFIG'
-          : response.status === 404
-            ? 'ORDER_NOT_FOUND'
-            : response.status === 429
-              ? 'RATE_LIMITED'
-              : response.status >= 500
-                ? 'PROVIDER_UNAVAILABLE'
-                : 'PROVIDER_RESPONSE_INVALID'
-        throw new PaymentProviderError(kind, response.status, Number.isFinite(retryAfter) ? retryAfter : undefined)
+        throw new PaymentProviderError(
+          failureKind(response.status, intent),
+          response.status,
+          parseRetryAfterSeconds(response.headers.get('Retry-After')),
+        )
       }
+      if (responseMode === 'IGNORE') return null
       const text = await response.text()
       if (!text) return null
       try { return JSON.parse(text) as T } catch { throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID', response.status) }
@@ -148,7 +170,7 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     const raw = await this.request<Json>(ORDERS_BASE, {
       method: 'POST',
       body: JSON.stringify({ type: 'online', processing_mode: 'automatic', external_reference: input.orderId, total_amount: amountText, payer: { email: input.payerEmail }, transactions: { payments: [payment] } }),
-    }, input.idempotencyKey)
+    }, { intent: 'CREATE', idempotencyKey: input.idempotencyKey })
     if (!raw) throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
     return this.normalize(raw)
   }
@@ -182,22 +204,43 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
       .filter((item) => item.externalReference === externalReference)
   }
 
-  private async mutation(path: string, key: string, body?: Json): Promise<ProviderOrderSnapshot> {
-    const raw = await this.request<Json>(`${ORDERS_BASE}/${path}`, { method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, key)
-    if (!raw) return this.getOrder(path.split('/')[0]!)
-    return this.normalize(raw)
+  private async authoritativeMutationRead(providerOrderId: string, original?: PaymentProviderError): Promise<ProviderOrderSnapshot> {
+    try {
+      return await this.getOrder(providerOrderId)
+    } catch (readError) {
+      if (original) throw original
+      if (readError instanceof PaymentProviderError && readError.kind === 'CREDENTIAL_OR_CONFIG') throw readError
+      throw new PaymentProviderError(
+        'MUTATION_REQUIRES_READ',
+        readError instanceof PaymentProviderError ? readError.httpStatus : undefined,
+        readError instanceof PaymentProviderError ? readError.retryAfterSeconds : undefined,
+      )
+    }
+  }
+
+  private async mutation(providerOrderId: string, action: 'cancel' | 'refund', key: string, body?: Json): Promise<ProviderOrderSnapshot> {
+    try {
+      await this.request<never>(`${ORDERS_BASE}/${encodeURIComponent(providerOrderId)}/${action}`, {
+        method: 'POST',
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }, { intent: 'MUTATION', responseMode: 'IGNORE', idempotencyKey: key })
+      return this.authoritativeMutationRead(providerOrderId)
+    } catch (error) {
+      if (!(error instanceof PaymentProviderError) || !MUTATION_RECOVERY_KINDS.has(error.kind)) throw error
+      return this.authoritativeMutationRead(providerOrderId, error)
+    }
   }
 
   cancelOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrderSnapshot> {
-    return this.mutation(`${encodeURIComponent(providerOrderId)}/cancel`, idempotencyKey)
+    return this.mutation(providerOrderId, 'cancel', idempotencyKey)
   }
 
   refundOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrderSnapshot> {
-    return this.mutation(`${encodeURIComponent(providerOrderId)}/refund`, idempotencyKey)
+    return this.mutation(providerOrderId, 'refund', idempotencyKey)
   }
 
   refundPartial(providerOrderId: string, providerTransactionId: string, amountCents: number, idempotencyKey: string): Promise<ProviderOrderSnapshot> {
-    return this.mutation(`${encodeURIComponent(providerOrderId)}/refund`, idempotencyKey, { transactions: [{ id: providerTransactionId, amount: formatProviderAmount(amountCents) }] })
+    return this.mutation(providerOrderId, 'refund', idempotencyKey, { transactions: [{ id: providerTransactionId, amount: formatProviderAmount(amountCents) }] })
   }
 
   async getAccountId(): Promise<string> {

@@ -46,7 +46,8 @@ Script aceita apenas linha `REVIEW_REQUIRED`; preserva idempotency/business key 
 
 ## Failure classes
 
-- `TRANSIENT_UNCERTAIN`, `PROVIDER_UNAVAILABLE`, `RATE_LIMITED`: retry bounded.
+- `CREATE_REQUIRES_RECOVERY`: create `402`/`409`; pesquisar pela referência e confirmar por `GET` autoritativo.
+- `MUTATION_REQUIRES_READ`, `RESOURCE_LOCKED`, `TRANSIENT_UNCERTAIN`, `PROVIDER_UNAVAILABLE`, `RATE_LIMITED`: retry bounded.
 - `ORDER_NOT_FOUND`: review/recheck limitado.
 - `CREDENTIAL_OR_CONFIG`, `MISMATCH_*`, `UNSUPPORTED_*`, `CHARGEBACK`: review manual.
 - `RETRY_EXHAUSTED`: parar e investigar; não repetir cegamente.
@@ -57,12 +58,35 @@ Inbox e pagamentos usam `retryDisposition` com máximo de 8 tentativas; a oitava
 
 - `RECOVERED`: snapshot único aplicado; `lastReconciledAt` atualizado.
 - `AMBIGUOUS_PROVIDER_CREATE`: múltiplos Orders para mesma referência; mantém pagamento em `REVIEW_REQUIRED`, sem novo create.
-- `FRESH_CARD_REQUIRED`: nenhum resultado para CARD; exige nova tentativa com token novo, sem replay do token anterior.
+- `RETRY_CARD`: nenhum resultado para CARD; mantém `PENDING` e repete somente search/GET dentro do limite. Nunca recria cobrança nem reutiliza token.
 - `RETRY_PIX`: nenhum resultado para PIX ainda válido, ou falha transitória; mantém `PENDING` e agenda nova tentativa limitada.
 - PIX expirado sem `providerOrderId`: após busca exata sem resultado, expira localmente e cancela apenas pedido `AWAITING_PAYMENT`; não cria operação CANCEL.
 - PIX expirado com `providerOrderId`: somente fila durable `CANCEL` pode atuar; não expirar localmente em paralelo.
 
 Não registrar email, token, QR, provider ID, idempotency key ou corpo de erro. Summaries de cron carregam somente contagens.
+
+## HTTP outcome recovery
+
+| Outcome | Recovery |
+| --- | --- |
+| create 402/409 | exact-reference search, authoritative GET, then validate |
+| create 423/429/5xx/network | search-first bounded reconciliation |
+| mutation 2xx/409/uncertain | authoritative GET before settlement |
+| deterministic 400/401/403 | configuration/review; no unchanged retry |
+| unknown/contradictory snapshot | fail closed in REVIEW_REQUIRED |
+
+CARD tokens nunca são persistidos nem repetidos. Create sem resultado fica pendente até recuperação bounded ou `RETRY_EXHAUSTED`. `Retry-After` aceita delta ou data HTTP, limitado a seis horas. Uma recusa confirmada deve resultar em pagamento `REJECTED/HEALTHY`, IDs do provider presentes e pedido `CANCELLED`. Logs e evidências nunca incluem corpo bruto do provider.
+
+Após merge, executar manualmente no sandbox, nesta ordem:
+
+1. cartão aprovado;
+2. cartão de teste `OTHE/rejected_by_issuer` recusado;
+3. criação de QR PIX;
+4. webhook assinado usando o ID real da Order sandbox correspondente;
+5. cancelamento;
+6. refund total e parcial, quando permitidos pela conta sandbox;
+7. inspeção por `apps/api/scripts/payment-work-status.sql`;
+8. inspeção sanitizada dos logs.
 
 ## Cadeia de dependências
 

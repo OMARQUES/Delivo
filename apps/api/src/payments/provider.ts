@@ -7,6 +7,9 @@ export type ProviderFailureKind =
   | 'CREDENTIAL_OR_CONFIG'
   | 'ORDER_NOT_FOUND'
   | 'PROVIDER_RESPONSE_INVALID'
+  | 'CREATE_REQUIRES_RECOVERY'
+  | 'MUTATION_REQUIRES_READ'
+  | 'RESOURCE_LOCKED'
 
 export type ProviderOrderSnapshot = {
   providerOrderId: string
