@@ -1,0 +1,2 @@
+export const PIX_EXPIRATION_MS = 30 * 60_000
+export const PIX_EXPIRATION_DURATION = 'PT30M'

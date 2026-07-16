@@ -23,6 +23,7 @@ import { getMenuProductsByIds } from './catalog.service'
 import { getPendingAmendment } from './amendment.service'
 import { getOrderPayment } from './payment.service'
 import { createOnlinePayment, createPaymentAttempt, CheckoutError } from '../payments/checkout.service'
+import { PIX_EXPIRATION_MS } from '../payments/constants'
 
 export class OrderError extends Error {
   constructor(
@@ -248,16 +249,21 @@ export async function createOrder(
         actorRole: 'CUSTOMER',
         actorId: customerId,
       })
-      if (isOnline) paymentAttempt = await createPaymentAttempt(tx, {
-        orderId: order.id,
-        method: input.paymentMethod === 'PIX_ONLINE' ? 'PIX' : 'CARD',
-        amountCents: order.totalCents,
-        applicationId: paymentCtx!.applicationId,
-        accountId: paymentCtx!.accountId,
-        liveMode: paymentCtx!.liveMode,
-        expiresAt: input.paymentMethod === 'PIX_ONLINE' ? new Date(Date.now() + 15 * 60_000) : undefined,
-        now: new Date(),
-      })
+      if (isOnline) {
+        const paymentNow = new Date()
+        paymentAttempt = await createPaymentAttempt(tx, {
+          orderId: order.id,
+          method: input.paymentMethod === 'PIX_ONLINE' ? 'PIX' : 'CARD',
+          amountCents: order.totalCents,
+          applicationId: paymentCtx!.applicationId,
+          accountId: paymentCtx!.accountId,
+          liveMode: paymentCtx!.liveMode,
+          expiresAt: input.paymentMethod === 'PIX_ONLINE'
+            ? new Date(paymentNow.getTime() + PIX_EXPIRATION_MS)
+            : undefined,
+          now: paymentNow,
+        })
+      }
       return order
     })
   } catch (e) {

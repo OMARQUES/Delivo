@@ -8,7 +8,7 @@ vi.mock('../src/db/client', async () => {
 })
 
 import { app } from '../src/app'
-import { orders, users } from '../src/db/schema'
+import { orders, payments, users } from '../src/db/schema'
 import * as mp from '../src/payments/mercadopago'
 import { PaymentProviderError as OrdersProviderError, type ProviderOrderSnapshot } from '../src/payments/provider'
 import { createAddress } from '../src/services/address.service'
@@ -189,9 +189,13 @@ describe('POST /orders/quote + POST /orders', () => {
   })
 
   it('PIX_ONLINE: order born AWAITING_PAYMENT, response has QR; replay returns same QR', async () => {
+    let providerExpiry: Date | null = null
     vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
       getAccountId: async () => 'account-test',
-      createOrder: async (i) => providerSnapshot({ providerOrderId: `mp-${i.orderId}`, providerTransactionId: `tx-${i.orderId}`, externalReference: i.orderId, method: 'PIX', pix: { qrCode: 'copia', qrCodeBase64: 'b64', ticketUrl: null, expiresAt: i.method === 'PIX' ? i.expiresAt : null } }),
+      createOrder: async (i) => {
+        if (i.method === 'PIX') providerExpiry = i.expiresAt
+        return providerSnapshot({ providerOrderId: `mp-${i.orderId}`, providerTransactionId: `tx-${i.orderId}`, externalReference: i.orderId, method: 'PIX', pix: { qrCode: 'copia', qrCodeBase64: 'b64', ticketUrl: null, expiresAt: i.method === 'PIX' ? i.expiresAt : null } })
+      },
       getOrder: async () => providerSnapshot(), searchOrders: async () => [], cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
     })
     const body = checkout({ paymentMethod: 'PIX_ONLINE' })
@@ -200,6 +204,9 @@ describe('POST /orders/quote + POST /orders', () => {
     const r = (await res.json()) as { order: { id: string; status: string }; payment: { qrCode: string } }
     expect(r.order.status).toBe('AWAITING_PAYMENT')
     expect(r.payment.qrCode).toBe('copia')
+    const [persisted] = await testDb.select().from(payments).where(eq(payments.orderId, r.order.id))
+    expect(persisted!.expiresAt!.getTime() - persisted!.createdAt.getTime()).toBe(30 * 60_000)
+    expect(providerExpiry).toEqual(persisted!.expiresAt)
     const detail = await req(`/orders/${r.order.id}`, {}, customerToken)
     expect(((await detail.json()) as { payment: { qrCode: string } }).payment.qrCode).toBe('copia')
     const replay = await req('/orders', { method: 'POST', body: JSON.stringify(body) }, customerToken)

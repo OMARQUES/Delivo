@@ -42,7 +42,18 @@ describe('MercadoPagoOrdersProvider', () => {
     expect(url).toBe('https://api.mercadopago.com/v1/orders')
     expect((init.headers as Record<string, string>)['X-Idempotency-Key']).toBe('create-key')
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
-    expect(body).toMatchObject({ type: 'online', processing_mode: 'automatic', external_reference: 'order-1', total_amount: '64.00', transactions: { payments: [{ amount: '64.00' }] } })
+    expect(body).toEqual({
+      type: 'online',
+      processing_mode: 'automatic',
+      external_reference: 'order-1',
+      total_amount: '64.00',
+      payer: { email: 'payer@test.local' },
+      transactions: { payments: [{
+        amount: '64.00',
+        payment_method: { id: 'pix', type: 'bank_transfer' },
+        expiration_time: 'PT30M',
+      }] },
+    })
     expect(JSON.stringify(body)).not.toContain('notification_url')
   })
 
@@ -57,7 +68,16 @@ describe('MercadoPagoOrdersProvider', () => {
     expect(card.method).toBe('CARD')
     expect(JSON.stringify(card)).not.toContain('card-token-secret')
     const [, cardInit] = fetchMock.mock.calls[1]! as unknown as [string, RequestInit]
-    expect(JSON.stringify(cardInit.body)).toContain('card-token-secret')
+    expect(JSON.parse(String(cardInit.body))).toMatchObject({
+      transactions: { payments: [{
+        payment_method: {
+          id: 'visa',
+          type: 'credit_card',
+          token: 'card-token-secret',
+          installments: 1,
+        },
+      }] },
+    })
   })
 
   it('gets, searches exact external reference, cancels and refunds through Orders paths', async () => {

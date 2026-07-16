@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { Db, DbTransaction } from '../db/client'
 import { orderEvents, orders, payments, users } from '../db/schema'
+import { PIX_EXPIRATION_MS } from './constants'
 import { PaymentProviderError, type PaymentProvider } from './provider'
 import { applyProviderSnapshotInTransaction } from './transition.service'
 
@@ -51,7 +52,7 @@ export async function createOnlinePayment(db: Db, provider: PaymentProvider, inp
   if (accountId !== payment.expectedAccountId) throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
   try {
     const snapshot = await provider.createOrder(payment.method === 'PIX'
-      ? { method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: input.payerEmail, idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(Date.now() + 15 * 60_000) }
+      ? { method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: input.payerEmail, idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(Date.now() + PIX_EXPIRATION_MS) }
       : { method: 'CARD', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: input.payerEmail, idempotencyKey: payment.createIdempotencyKey, cardToken: input.card?.token ?? '', cardPaymentMethodId: input.card?.methodId ?? '', installments: 1 })
     const persisted = await whileStillUncertain(db, payment.id, (tx) => applyProviderSnapshotInTransaction(tx, payment.id, snapshot, new Date()))
     if (!persisted.applied) {
@@ -160,7 +161,7 @@ export async function recoverUncertainCreate(
     try {
       const accountId = await provider.getAccountId()
       if (accountId !== payment.expectedAccountId) throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
-      const snapshot = await provider.createOrder({ method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: resolvePayerEmail(identity.email, identity.userId), idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(now.getTime() + 15 * 60_000) })
+      const snapshot = await provider.createOrder({ method: 'PIX', orderId: payment.orderId, amountCents: payment.expectedAmountCents, payerEmail: resolvePayerEmail(identity.email, identity.userId), idempotencyKey: payment.createIdempotencyKey, expiresAt: payment.expiresAt ?? new Date(now.getTime() + PIX_EXPIRATION_MS) })
       const persisted = await whileStillUncertain(db, payment.id, (tx) => applyProviderSnapshotInTransaction(tx, payment.id, snapshot, now))
       if (!persisted.applied) return currentRecoveryOutcome(db, payment.id, 'RETRY_PIX')
       return persisted.value.decision === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : 'RECOVERED'
