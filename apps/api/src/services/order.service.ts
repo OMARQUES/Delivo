@@ -14,6 +14,7 @@ import {
   orderItemOptions,
   orderItems,
   orders,
+  paymentOperations,
   stores,
   users,
 } from '../db/schema'
@@ -23,7 +24,7 @@ import { getMenuProductsByIds } from './catalog.service'
 import { getPendingAmendment } from './amendment.service'
 import { getOrderPayment } from './payment.service'
 import { createOnlinePayment, createPaymentAttempt, CheckoutError } from '../payments/checkout.service'
-import { PIX_EXPIRATION_MS } from '../payments/constants'
+import { ONLINE_PAYMENT_EXPIRATION_MS } from '../payments/constants'
 
 export class OrderError extends Error {
   constructor(
@@ -258,9 +259,7 @@ export async function createOrder(
           applicationId: paymentCtx!.applicationId,
           accountId: paymentCtx!.accountId,
           liveMode: paymentCtx!.liveMode,
-          expiresAt: input.paymentMethod === 'PIX_ONLINE'
-            ? new Date(paymentNow.getTime() + PIX_EXPIRATION_MS)
-            : undefined,
+          expiresAt: new Date(paymentNow.getTime() + ONLINE_PAYMENT_EXPIRATION_MS),
           now: paymentNow,
         })
       }
@@ -316,6 +315,24 @@ export async function getCustomerOrder(db: Db, customerId: string, orderId: stri
   }
   const payment = await getOrderPayment(db, order.id)
   const amendment = await getPendingAmendment(db, order.id)
+  const [latestPaymentOperation] = payment
+    ? await db.select({ status: paymentOperations.status, resultCode: paymentOperations.resultCode, type: paymentOperations.type })
+      .from(paymentOperations)
+      .where(eq(paymentOperations.paymentId, payment.id))
+      .orderBy(desc(paymentOperations.createdAt))
+      .limit(1)
+    : []
+  const paymentResolution = payment && order.status === 'CANCELLED' && order.paymentMethod.endsWith('_ONLINE')
+    ? payment.reconciliationState === 'REVIEW_REQUIRED' || latestPaymentOperation?.status === 'REVIEW_REQUIRED'
+      ? 'REVIEW_REQUIRED' as const
+      : payment.status === 'REFUNDED' || latestPaymentOperation?.resultCode === 'REFUNDED'
+        ? 'REFUNDED' as const
+        : payment.status === 'REJECTED' || payment.status === 'EXPIRED' || latestPaymentOperation?.resultCode === 'CANCELLED' || latestPaymentOperation?.resultCode === 'NOT_CHARGED' || (order.status === 'CANCELLED' && payment.providerOrderId === null)
+          ? 'NOT_CHARGED' as const
+          : latestPaymentOperation?.status === 'PENDING' || latestPaymentOperation?.status === 'PROCESSING'
+            ? 'PROCESSING' as const
+            : null
+    : null
   return {
     ...detail,
     storeName: store?.name ?? '',
@@ -323,8 +340,13 @@ export async function getCustomerOrder(db: Db, customerId: string, orderId: stri
     storeSlug: store?.slug ?? '',
     driverName,
     amendment,
-    payment: payment && order.status === 'AWAITING_PAYMENT' && payment.qrCode
-      ? { qrCode: payment.qrCode, qrCodeBase64: payment.qrCodeBase64, expiresAt: payment.expiresAt?.toISOString() ?? null }
+    paymentResolution,
+    payment: payment && order.status === 'AWAITING_PAYMENT'
+      ? {
+        qrCode: payment.method === 'PIX' ? payment.qrCode : null,
+        qrCodeBase64: payment.method === 'PIX' ? payment.qrCodeBase64 : null,
+        expiresAt: payment.expiresAt?.toISOString() ?? null,
+      }
       : null,
   }
 }

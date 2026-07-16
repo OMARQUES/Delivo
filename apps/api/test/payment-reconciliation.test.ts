@@ -4,7 +4,7 @@ import { createActiveStoreTestFixture, createVerifiedTestAccount, migrateTestDb,
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { updateStore } from '../src/services/store.service'
-import { paymentOperations, paymentWebhookInbox, payments } from '../src/db/schema'
+import { orders, paymentOperations, paymentWebhookInbox, payments } from '../src/db/schema'
 import { enqueueWebhook } from '../src/payments/webhook-inbox.service'
 import { runPaymentReconciliation, type ReconciliationOptions, type ReconciliationStage } from '../src/payments/reconciliation.service'
 import { PaymentProviderError, type PaymentProvider, type ProviderOrderSnapshot } from '../src/payments/provider'
@@ -25,14 +25,15 @@ beforeEach(async () => {
 })
 afterAll(closeTestDb)
 
-async function pendingPayment(expiresAt: Date | null = null) {
+async function pendingPayment(expiresAt: Date | null = null, method: 'PIX' | 'CARD' = 'PIX', orderStatus: 'PENDING' | 'AWAITING_PAYMENT' = 'PENDING') {
   const { order } = await createOrder(testDb, customerId, { storeSlug: 'pizzaria', fulfillment: 'PICKUP', paymentMethod: 'CASH', items: [{ productId, quantity: 1, selections: [] }], idempotencyKey: crypto.randomUUID() })
-  const [payment] = await testDb.insert(payments).values({ orderId: order.id, providerOrderId: `mp-${order.id}`, providerTransactionId: `tx-${order.id}`, method: 'PIX', expectedAmountCents: order.totalCents, expectedCurrency: 'BRL', expectedCountry: 'BR', expectedApplicationId: 'app-test', expectedAccountId: 'account-test', expectedLiveMode: false, createIdempotencyKey: crypto.randomUUID(), expiresAt }).returning()
+  await testDb.update(orders).set({ status: orderStatus, paymentMethod: method === 'CARD' ? 'CARD_ONLINE' : 'PIX_ONLINE' }).where(eq(orders.id, order.id))
+  const [payment] = await testDb.insert(payments).values({ orderId: order.id, providerOrderId: `mp-${order.id}`, providerTransactionId: `tx-${order.id}`, method, expectedAmountCents: order.totalCents, expectedCurrency: 'BRL', expectedCountry: 'BR', expectedApplicationId: 'app-test', expectedAccountId: 'account-test', expectedLiveMode: false, createIdempotencyKey: crypto.randomUUID(), expiresAt }).returning()
   return payment!
 }
 
 function snapshot(payment: typeof payments.$inferSelect, patch: Partial<ProviderOrderSnapshot> = {}): ProviderOrderSnapshot {
-  return { providerOrderId: payment.providerOrderId!, providerTransactionId: payment.providerTransactionId!, orderStatus: 'created', orderStatusDetail: 'pending', transactionStatus: 'pending', transactionStatusDetail: 'pending', externalReference: payment.orderId, totalAmountCents: payment.expectedAmountCents, refundedAmountCents: 0, countryCode: 'BR', currency: 'BRL', processingMode: 'automatic', method: 'PIX', paymentMethodId: 'pix', applicationId: payment.expectedApplicationId, accountId: payment.expectedAccountId, liveMode: false, transactionCount: 1, pix: null, updatedAt: new Date(), ...patch }
+  return { providerOrderId: payment.providerOrderId!, providerTransactionId: payment.providerTransactionId!, orderStatus: 'created', orderStatusDetail: 'pending', transactionStatus: 'pending', transactionStatusDetail: 'pending', externalReference: payment.orderId, totalAmountCents: payment.expectedAmountCents, refundedAmountCents: 0, countryCode: 'BR', currency: 'BRL', processingMode: 'automatic', method: payment.method, paymentMethodId: payment.method === 'CARD' ? 'visa' : 'pix', applicationId: payment.expectedApplicationId, accountId: payment.expectedAccountId, liveMode: false, transactionCount: 1, pix: null, updatedAt: new Date(), ...patch }
 }
 
 function provider(overrides: Partial<PaymentProvider> = {}, payment?: typeof payments.$inferSelect): PaymentProvider {
@@ -42,7 +43,7 @@ function provider(overrides: Partial<PaymentProvider> = {}, payment?: typeof pay
 
 const context = { resolvePayerEmail: (email: string | null) => email ?? 'masked@test.local' }
 const only = (...stages: ReconciliationStage[]): ReconciliationOptions => ({ stages, limits: { inbox: 1, operations: 1, creates: 1, snapshots: 1, expirations: 1, reviews: 1 } })
-const stages = ['leases', 'dependencies', 'inbox', 'operations', 'creates', 'snapshots', 'expirations', 'reviews'] as const
+const stages = ['leases', 'dependencies', 'inbox', 'creates', 'snapshots', 'expirations', 'operations', 'reviews'] as const
 
 type IsolationState = {
   leases: { inboxStatus: string; inboxAttemptCount: number; operationStatus: string; operationAttemptCount: number }
@@ -134,9 +135,9 @@ async function createIsolationFixture(now: Date): Promise<IsolationFixture> {
   const snapshotPayment = await pendingPayment()
   await testDb.update(payments).set({ nextReconcileAt: snapshotAt }).where(eq(payments.id, snapshotPayment.id))
 
-  const expirationPayment = await pendingPayment(expiredAt)
+  const expirationPayment = await pendingPayment(expiredAt, 'PIX', 'AWAITING_PAYMENT')
   await testDb.update(payments).set({ nextReconcileAt: futureAt }).where(eq(payments.id, expirationPayment.id))
-  const expirationKey = 'cancel:' + expirationPayment.id + ':PIX_EXPIRED'
+  const expirationKey = 'cancel:' + expirationPayment.id + ':ORDER_CANCELLED'
 
   const reviewPayment = await pendingPayment()
   await testDb.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'ORDER_NOT_FOUND', nextReconcileAt: reviewAt }).where(eq(payments.id, reviewPayment.id))
@@ -240,7 +241,7 @@ describe('payment reconciliation', () => {
       operationsProcessed: 0,
       createsRecovered: 0,
       snapshotsRefreshed: 0,
-      pixExpired: 0,
+      paymentsExpired: 0,
       reviewsRechecked: 0,
       stageFailures: 0,
     }
@@ -253,7 +254,7 @@ describe('payment reconciliation', () => {
     }
     if (stage === 'creates') expectedSummary.createsRecovered = 1
     if (stage === 'snapshots') expectedSummary.snapshotsRefreshed = 1
-    if (stage === 'expirations') expectedSummary.pixExpired = 1
+    if (stage === 'expirations') expectedSummary.paymentsExpired = 1
     if (stage === 'reviews') expectedSummary.reviewsRechecked = 1
     expect(summary).toEqual(expectedSummary)
 
@@ -479,15 +480,51 @@ describe('payment reconciliation', () => {
   })
 
   it('continues to expiration after snapshot-stage failure', async () => {
-    const expired = await pendingPayment(new Date(Date.now() - 1_000))
+    const expired = await pendingPayment(new Date(Date.now() - 1_000), 'PIX', 'AWAITING_PAYMENT')
     const now = new Date()
     const failing = provider({ getOrder: vi.fn(async () => { throw new PaymentProviderError('PROVIDER_UNAVAILABLE') }) }, expired)
     const summary = await runPaymentReconciliation(testDb, failing, now, context, only('snapshots', 'expirations'))
     expect(summary.stageFailures).toBe(1)
-    expect(summary.pixExpired).toBe(1)
-    const [operation] = await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `cancel:${expired.id}:PIX_EXPIRED`))
-    expect(operation).toMatchObject({ businessKey: `cancel:${expired.id}:PIX_EXPIRED` })
+    expect(summary.paymentsExpired).toBe(1)
+    const [operation] = await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `cancel:${expired.id}:ORDER_CANCELLED`))
+    expect(operation).toMatchObject({ businessKey: `cancel:${expired.id}:ORDER_CANCELLED` })
     expect(operation!.idempotencyKey).toMatch(/^[A-Za-z0-9:_-]{1,64}$/)
+  })
+
+  it.each(['PIX', 'CARD'] as const)('expires due %s payment only at deadline', async (method) => {
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    const due = await pendingPayment(new Date(now.getTime()), method, 'AWAITING_PAYMENT')
+    const early = await pendingPayment(new Date(now.getTime() + 1), method, 'AWAITING_PAYMENT')
+    const summary = await runPaymentReconciliation(testDb, provider(), now, context, only('expirations'))
+
+    expect(summary.paymentsExpired).toBe(1)
+    const [dueOrder] = await testDb.select({ status: orders.status }).from(orders).where(eq(orders.id, due.orderId))
+    const [earlyOrder] = await testDb.select({ status: orders.status }).from(orders).where(eq(orders.id, early.orderId))
+    expect(dueOrder?.status).toBe('CANCELLED')
+    expect(earlyOrder?.status).toBe('AWAITING_PAYMENT')
+  })
+
+  it.each(['PIX', 'CARD'] as const)('commercially cancels due %s and processes its operation in one run', async (method) => {
+    const now = new Date('2026-07-16T12:30:00.000Z')
+    const due = await pendingPayment(now, method, 'AWAITING_PAYMENT')
+    await testDb.update(payments).set({ nextReconcileAt: new Date(now.getTime() + 60_000) }).where(eq(payments.id, due.id))
+    const cancelled = snapshot(due, {
+      orderStatus: 'canceled', orderStatusDetail: 'canceled',
+      transactionStatus: 'canceled', transactionStatusDetail: 'canceled',
+    })
+    const fake = provider({ cancelOrder: vi.fn(async () => cancelled) }, due)
+    const summary = await runPaymentReconciliation(testDb, fake, now, context)
+    expect(summary.paymentsExpired).toBe(1)
+    expect(summary.operationsProcessed).toBe(1)
+    expect((await testDb.select({ status: orders.status }).from(orders).where(eq(orders.id, due.orderId)))[0]?.status).toBe('CANCELLED')
+  })
+
+  it('does not expire one millisecond before deadline', async () => {
+    const deadline = new Date('2026-07-16T12:30:00.000Z')
+    const due = await pendingPayment(deadline, 'CARD', 'AWAITING_PAYMENT')
+    const summary = await runPaymentReconciliation(testDb, provider({}, due), new Date(deadline.getTime() - 1), context, only('expirations'))
+    expect(summary.paymentsExpired).toBe(0)
+    expect((await testDb.select({ status: orders.status }).from(orders).where(eq(orders.id, due.orderId)))[0]?.status).toBe('AWAITING_PAYMENT')
   })
 
   it('lets overlapping reconcilers transition each payment once', async () => {

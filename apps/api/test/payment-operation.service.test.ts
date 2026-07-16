@@ -5,7 +5,7 @@ import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { payments, paymentOperations, orders } from '../src/db/schema'
 import { updateStore } from '../src/services/store.service'
-import { claimDueOperations, enqueuePaymentOperation, propagateReviewedDependencies } from '../src/payments/operation-queue.service'
+import { claimDueOperations, claimPaymentOperationById, enqueuePaymentOperation, propagateReviewedDependencies } from '../src/payments/operation-queue.service'
 import { processPaymentOperation } from '../src/payments/operation.service'
 import type { PaymentProvider, ProviderOrderSnapshot } from '../src/payments/provider'
 import { PaymentProviderError } from '../src/payments/provider'
@@ -50,6 +50,18 @@ describe('durable payment operations', () => {
     expect((await testDb.select().from(paymentOperations)).length).toBe(1)
     expect((await claimDueOperations(testDb, now, 10, 'worker-a')).length).toBe(1)
     expect((await claimDueOperations(testDb, now, 10, 'worker-b')).length).toBe(0)
+  })
+
+  it('claims only requested due operation by id', async () => {
+    const row = await payment()
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    const queued = await enqueuePaymentOperation(testDb, {
+      paymentId: row.id, type: 'REFUND_FULL', amountCents: null,
+      businessKey: `claim-by-id:${row.id}`, idempotencyKey: `claim-by-id:${row.id}`,
+    }, now)
+    expect(await claimPaymentOperationById(testDb, queued.id, now, 'request:test')).toBe(true)
+    expect(await claimPaymentOperationById(testDb, queued.id, now, 'request:other')).toBe(false)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({ status: 'PROCESSING', leaseOwner: 'request:test', attemptCount: 1 })
   })
 
   it('executes full refund with persisted idempotency key', async () => {
@@ -321,7 +333,7 @@ describe('durable payment operations', () => {
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, cancelId!)))[0]).toMatchObject({ status: 'SUCCEEDED', resultCode: 'ESCALATED_TO_REFUND' })
     const refunds = (await testDb.select().from(paymentOperations).where(eq(paymentOperations.paymentId, row.id))).filter((operation) => operation.type === 'REFUND_FULL')
     expect(refunds).toHaveLength(1)
-    expect(refunds[0]).toMatchObject({ businessKey: `refund-full:${row.id}:ESCALATED_CANCEL:${cancelId}` })
+    expect(refunds[0]).toMatchObject({ businessKey: `refund-full:${row.id}:ORDER_CANCELLED` })
     expect(refunds[0]!.idempotencyKey).toMatch(/^[A-Za-z0-9:_-]{1,64}$/)
     expect(refunds[0]!.idempotencyKey).not.toContain('access-token')
     const replay = await enqueuePaymentOperation(testDb, {

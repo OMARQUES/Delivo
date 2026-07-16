@@ -250,6 +250,24 @@ describe('POST /orders/quote + POST /orders', () => {
     vi.restoreAllMocks()
   })
 
+  it('CARD_ONLINE persists a 30-minute payment deadline', async () => {
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
+      getAccountId: async () => 'account-test',
+      createOrder: async (i) => providerSnapshot({ providerOrderId: `mp-${i.orderId}`, providerTransactionId: `tx-${i.orderId}`, externalReference: i.orderId, method: 'CARD', paymentMethodId: 'visa', orderStatus: 'processing', orderStatusDetail: 'in_process', transactionStatus: 'processing', transactionStatusDetail: 'in_process', pix: null }),
+      getOrder: async () => providerSnapshot(), searchOrders: async () => [], cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
+    })
+    const response = await req('/orders', {
+      method: 'POST',
+      body: JSON.stringify(checkout({ paymentMethod: 'CARD_ONLINE', cardToken: 'tok_deadline', cardPaymentMethodId: 'visa', installments: 1 })),
+    }, customerToken)
+    expect(response.status).toBe(201)
+    const body = await response.json() as { order: { id: string } }
+    const [payment] = await testDb.select().from(payments).where(eq(payments.orderId, body.order.id))
+    expect(payment?.expiresAt).not.toBeNull()
+    expect(payment!.expiresAt!.getTime() - payment!.createdAt.getTime()).toBe(30 * 60_000)
+    vi.restoreAllMocks()
+  })
+
   it('CARD_ONLINE create 402 recovers rejected_by_issuer and returns 402 instead of 503', async () => {
     let attemptedOrderId = ''
     const rejected = () => providerSnapshot({
@@ -487,6 +505,19 @@ describe('customer amendment routes', () => {
 })
 
 describe('cancel flows', () => {
+  it('AWAITING_PAYMENT: direct cancel commits immediately and returns safe payment resolution', async () => {
+    const { order: o } = await createOrder(testDb, customerId, checkout())
+    await testDb.update(orders).set({ status: 'AWAITING_PAYMENT', paymentMethod: 'PIX_ONLINE' }).where(eq(orders.id, o.id))
+    await testDb.insert(payments).values({
+      orderId: o.id, providerOrderId: `mp-${o.id}`, providerTransactionId: `tx-${o.id}`, method: 'PIX',
+      expectedAmountCents: o.totalCents, expectedCurrency: 'BRL', expectedCountry: 'BR', expectedApplicationId: 'app-test',
+      expectedAccountId: 'account-test', expectedLiveMode: false, createIdempotencyKey: crypto.randomUUID(),
+    })
+    const res = await req(`/orders/${o.id}/cancel`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ status: 'CANCELLED', payment: null, paymentResolution: 'PROCESSING' })
+  })
+
   it('PENDING: direct cancel 200; after ACCEPTED: cancel 409 but cancel-request 200', async () => {
     const { order: o } = await createOrder(testDb, customerId, checkout())
     expect((await req(`/orders/${o.id}/cancel`, { method: 'POST' })).status).toBe(200)

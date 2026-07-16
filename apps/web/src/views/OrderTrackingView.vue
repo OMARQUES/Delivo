@@ -29,7 +29,8 @@ type Order = {
   storePhone: string | null
   storeSlug: string
   driverName: string | null
-  payment: { qrCode: string; qrCodeBase64: string | null; expiresAt: string | null } | null
+  payment: { qrCode: string | null; qrCodeBase64: string | null; expiresAt: string | null } | null
+  paymentResolution: 'PROCESSING' | 'NOT_CHARGED' | 'REFUNDED' | 'REVIEW_REQUIRED' | null
   amendment: {
     note: string | null
     refundCents: number
@@ -43,6 +44,7 @@ const route = useRoute()
 const order = ref<Order | null>(null)
 const error = ref('')
 const copied = ref(false)
+const isCancelling = ref(false)
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
@@ -69,7 +71,7 @@ onBeforeUnmount(() => {
 
 const stepIndex = computed(() => (order.value ? STEPS.indexOf(order.value.status) : -1))
 const isFinal = computed(() => order.value && ['DELIVERED', 'CANCELLED', 'DELIVERY_FAILED'].includes(order.value.status))
-const pixCountdown = computed(() => {
+const paymentCountdown = computed(() => {
   const exp = order.value?.payment?.expiresAt
   if (!exp) return null
   const ms = new Date(exp).getTime() - now.value
@@ -80,19 +82,27 @@ const pixCountdown = computed(() => {
 })
 
 function copyPix() {
-  if (!order.value?.payment) return
-  navigator.clipboard.writeText(order.value.payment.qrCode)
+  const qrCode = order.value?.payment?.qrCode
+  if (!qrCode) return
+  navigator.clipboard.writeText(qrCode)
   copied.value = true
   setTimeout(() => (copied.value = false), 3000)
 }
 
 async function cancel() {
-  if (!order.value || !confirm('Cancelar este pedido?')) return
+  if (!order.value || isCancelling.value) return
+  const message = order.value.status === 'AWAITING_PAYMENT'
+    ? 'Cancelar o pagamento e o pedido? Se a cobrança for aprovada ao mesmo tempo, o estorno será solicitado automaticamente.'
+    : 'Cancelar este pedido?'
+  if (!confirm(message)) return
+  isCancelling.value = true
   try {
     await api(`/orders/${order.value.id}/cancel`, { method: 'POST' })
     await load()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'
+  } finally {
+    isCancelling.value = false
   }
 }
 
@@ -133,12 +143,16 @@ async function resolveAmendment(action: 'approve' | 'reject') {
       >WhatsApp da loja</a>
 
       <section v-if="order.status === 'CANCELLED'" class="rounded border border-red-300 bg-red-50 p-3">
-        Cancelado{{ order.cancelReason ? ` — ${order.cancelReason}` : '' }}
+        <p v-if="order.paymentResolution === 'PROCESSING'">Pedido cancelado — confirmação financeira em processamento.</p>
+        <p v-else-if="order.paymentResolution === 'NOT_CHARGED'">Pedido cancelado — nenhuma cobrança foi concluída.</p>
+        <p v-else-if="order.paymentResolution === 'REFUNDED'">Pedido cancelado — pagamento estornado.</p>
+        <p v-else-if="order.paymentResolution === 'REVIEW_REQUIRED'">Pedido cancelado — confirmação financeira em análise.</p>
+        <p v-else>Cancelado{{ order.cancelReason ? ` — ${order.cancelReason}` : '' }}</p>
       </section>
       <section v-else-if="order.status === 'DELIVERY_FAILED'" class="rounded border border-red-300 bg-red-50 p-3">
         Entrega não realizada. Entre em contato com a loja.
       </section>
-      <section v-else-if="order.status === 'AWAITING_PAYMENT' && order.payment" class="space-y-2 rounded border border-blue-300 bg-blue-50 p-3">
+      <section v-else-if="order.status === 'AWAITING_PAYMENT' && order.payment?.qrCode" class="space-y-2 rounded border border-blue-300 bg-blue-50 p-3">
         <p class="font-semibold">Pague com PIX para confirmar o pedido</p>
         <img
           v-if="order.payment.qrCodeBase64"
@@ -152,11 +166,12 @@ async function resolveAmendment(action: 'approve' | 'reject') {
         </div>
         <p class="text-xs text-gray-600">
           {{ copied ? 'Copiado! Cole no app do seu banco.' : 'Escaneie o QR ou copie o código.' }}
-          <span v-if="pixCountdown"> Expira em {{ pixCountdown }}.</span>
+          <span v-if="paymentCountdown"> Expira em {{ paymentCountdown }}.</span>
         </p>
       </section>
       <section v-else-if="order.status === 'AWAITING_PAYMENT'" class="rounded border border-blue-300 bg-blue-50 p-3">
-        Aguardando confirmação do pagamento…
+        <p>Aguardando confirmação do pagamento…</p>
+        <p v-if="paymentCountdown" class="mt-1 text-sm text-gray-600">Esta tentativa expira em {{ paymentCountdown }}.</p>
       </section>
       <ol v-else class="space-y-1">
         <li
@@ -215,8 +230,8 @@ async function resolveAmendment(action: 'approve' | 'reject') {
       </section>
 
       <div v-if="!isFinal" class="flex gap-2">
-        <button v-if="order.status === 'PENDING'" class="flex-1 rounded border border-red-400 p-2 text-red-600" @click="cancel">
-          Cancelar pedido
+        <button v-if="order.status === 'PENDING' || order.status === 'AWAITING_PAYMENT'" :data-testid="order.status === 'AWAITING_PAYMENT' ? 'cancel-awaiting-payment' : 'cancel-payment'" :disabled="isCancelling" class="flex-1 rounded border border-red-400 p-2 text-red-600 disabled:opacity-50" @click="cancel">
+          {{ isCancelling ? 'Cancelando…' : order.status === 'AWAITING_PAYMENT' ? 'Cancelar pagamento e pedido' : 'Cancelar pedido' }}
         </button>
         <button
           v-else-if="!order.cancelRequestedAt && order.status !== 'OUT_FOR_DELIVERY'"

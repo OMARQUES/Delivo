@@ -223,7 +223,7 @@ describe('release / collect / deliver / fail', () => {
   it('repairs a missing financial intent on idempotent delivery failure retry', async () => {
     const { orderId, driverId, paymentId } = await makeOutForDeliveryOnlineOrder()
     await failDelivery(testDb, driverId, orderId, { reason: 'NO_ANSWER' })
-    const key = `refund-full:${paymentId}:DELIVERY_FAILED`
+    const key = `refund-full:${paymentId}:ORDER_CANCELLED`
     await testDb.delete(paymentOperations).where(eq(paymentOperations.businessKey, key))
     await failDelivery(testDb, driverId, orderId, { reason: 'NO_ANSWER' })
     expect(await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, key))).toHaveLength(1)

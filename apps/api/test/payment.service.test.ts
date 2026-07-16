@@ -9,8 +9,9 @@ import { applyProviderSnapshot } from '../src/payments/transition.service'
 import { providerSnapshot } from './helpers/payment-provider'
 import { createOnlinePayment, recoverUncertainCreate } from '../src/payments/checkout.service'
 import { fakePaymentProvider } from './helpers/payment-provider'
-import { enqueueOrderPaymentDisposition } from '../src/services/payment.service'
+import { enqueueOrderPaymentDisposition, ensureCancelledOrderPaymentDisposition } from '../src/services/payment.service'
 import { PaymentProviderError } from '../src/payments/provider'
+import { cancelCustomerOrder, expireAwaitingPayment } from '../src/payments/cancellation.service'
 
 const storeInput: StoreFixtureInput = { name: 'Pizzaria', slug: 'pizzaria', category: 'PIZZARIA', phone: '4433334444', city: 'C', addressText: 'Rua A, 1', lat: -23.55, lng: -51.9, owner: { name: 'João', email: 'joao@email.com', password: 'senha123' } }
 const customerInput = { name: 'Ana', phone: '44999998888', password: 'senha123', role: 'CUSTOMER' as const, acceptedTerms: true as const }
@@ -61,9 +62,90 @@ function snapshot(orderId: string, amountCents: number, patch: Partial<ReturnTyp
 }
 
 describe('applyProviderSnapshot', () => {
+  it('cancels owned awaiting payment atomically and is idempotent', async () => {
+    const { order, payment } = await makePayment()
+    const now = new Date('2026-07-16T12:30:00.000Z')
+    const first = await cancelCustomerOrder(testDb, customerId, order.id, now)
+    const second = await cancelCustomerOrder(testDb, customerId, order.id, now)
+    expect(first).toMatchObject({ changed: true, order: { status: 'CANCELLED' } })
+    expect(second).toMatchObject({ changed: false, operationId: first.operationId, order: { status: 'CANCELLED' } })
+    expect(await testDb.select().from(orderEvents).where(and(
+      eq(orderEvents.orderId, order.id),
+      eq(orderEvents.note, 'cancelamento de pagamento solicitado pelo cliente'),
+    ))).toHaveLength(1)
+    expect(await testDb.select().from(paymentOperations).where(and(
+      eq(paymentOperations.paymentId, payment.id),
+      eq(paymentOperations.type, 'CANCEL'),
+    ))).toHaveLength(1)
+  })
+
+  it('rejects another customer and later operational states', async () => {
+    const { order } = await makePayment()
+    await expect(cancelCustomerOrder(testDb, crypto.randomUUID(), order.id, new Date()))
+      .rejects.toMatchObject({ status: 404 })
+    await testDb.update(orders).set({ status: 'ACCEPTED' }).where(eq(orders.id, order.id))
+    await expect(cancelCustomerOrder(testDb, customerId, order.id, new Date()))
+      .rejects.toMatchObject({ status: 409 })
+  })
+
+  it('expires only due pending payments whose order still awaits payment', async () => {
+    const now = new Date('2026-07-16T12:30:00.000Z')
+    const due = await makePayment()
+    const future = await makePayment()
+    await testDb.update(payments).set({ expiresAt: now }).where(eq(payments.id, due.payment.id))
+    await testDb.update(payments).set({ expiresAt: new Date(now.getTime() + 1) }).where(eq(payments.id, future.payment.id))
+    expect(await expireAwaitingPayment(testDb, due.payment.id, now)).toMatchObject({ changed: true, order: { status: 'CANCELLED' } })
+    expect(await expireAwaitingPayment(testDb, due.payment.id, now)).toMatchObject({ changed: false })
+    expect(await expireAwaitingPayment(testDb, future.payment.id, now)).toBeNull()
+  })
+
+  it('converges manual cancellation racing approval without reopening', async () => {
+    const { order, payment } = await makePayment()
+    const now = new Date('2026-07-16T12:30:00.000Z')
+    await Promise.allSettled([
+      cancelCustomerOrder(testDb, customerId, order.id, now),
+      applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents), now),
+    ])
+    const [storedOrder] = await testDb.select().from(orders).where(eq(orders.id, order.id))
+    if (storedOrder!.status === 'PENDING') await cancelCustomerOrder(testDb, customerId, order.id, now)
+    expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('CANCELLED')
+    expect(await testDb.select().from(paymentOperations).where(and(
+      eq(paymentOperations.paymentId, payment.id),
+      eq(paymentOperations.type, 'REFUND_FULL'),
+    ))).toHaveLength(1)
+  })
+
+  it('deduplicates every cancellation source into one canonical intent', async () => {
+    const { order, payment } = await makePayment('CANCELLED')
+    const now = new Date('2026-07-16T12:00:00.000Z')
+    const first = await ensureCancelledOrderPaymentDisposition(testDb, payment, now)
+    const second = await ensureCancelledOrderPaymentDisposition(testDb, payment, now)
+    expect(first).toMatchObject({ type: 'CANCEL', inserted: true })
+    expect(second).toMatchObject({ operationId: first.operationId, type: 'CANCEL', inserted: false })
+    const rows = await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `cancel:${payment.id}:ORDER_CANCELLED`))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.idempotencyKey).toBe(`c:oc:${payment.id}`)
+    expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('CANCELLED')
+  })
+
+  it.each([
+    ['PENDING', 'CANCEL'],
+    ['APPROVED', 'REFUND_FULL'],
+    ['REJECTED', null],
+    ['CANCELLED', null],
+    ['EXPIRED', null],
+    ['REFUNDED', null],
+  ] as const)('maps cancelled payment %s to %s', async (status, expectedType) => {
+    const { payment } = await makePayment('CANCELLED')
+    await testDb.update(payments).set({ status }).where(eq(payments.id, payment.id))
+    const current = (await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]!
+    const result = await ensureCancelledOrderPaymentDisposition(testDb, current, new Date())
+    expect(result.type).toBe(expectedType)
+  })
+
   it('rolls back the business mutation when disposition key conflicts', async () => {
     const { order, payment } = await makePayment()
-    const key = `cancel:${payment.id}:CUSTOMER_CANCELLED`
+    const key = `cancel:${payment.id}:ORDER_CANCELLED`
     await testDb.insert(paymentOperations).values({
       paymentId: payment.id, type: 'CANCEL', amountCents: null,
       businessKey: key, idempotencyKey: `other:${crypto.randomUUID()}`,
@@ -71,7 +153,7 @@ describe('applyProviderSnapshot', () => {
     })
     await expect(testDb.transaction(async (tx) => {
       await tx.update(orders).set({ status: 'CANCELLED' }).where(eq(orders.id, order.id))
-      await enqueueOrderPaymentDisposition(tx, order.id, 'CUSTOMER_CANCELLED', new Date())
+      await enqueueOrderPaymentDisposition(tx, order.id, new Date())
     })).rejects.toThrow('payment operation business key conflict')
     expect((await testDb.select({ status: orders.status }).from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('AWAITING_PAYMENT')
   })
@@ -122,8 +204,8 @@ describe('applyProviderSnapshot', () => {
     const result = await applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents), new Date())
     expect(result).toMatchObject({ changed: true, decision: 'APPROVED', operationEnqueued: true })
     expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('CANCELLED')
-    const [operation] = await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `refund-full:${payment.id}:LATE_APPROVAL`))
-    expect(operation).toMatchObject({ businessKey: `refund-full:${payment.id}:LATE_APPROVAL`, idempotencyKey: `rf:la:${payment.id}` })
+    const [operation] = await testDb.select().from(paymentOperations).where(eq(paymentOperations.businessKey, `refund-full:${payment.id}:ORDER_CANCELLED`))
+    expect(operation).toMatchObject({ businessKey: `refund-full:${payment.id}:ORDER_CANCELLED`, idempotencyKey: `rf:oc:${payment.id}` })
     expect(operation!.idempotencyKey).toMatch(/^[A-Za-z0-9:_-]{1,64}$/)
     const again = await applyProviderSnapshot(testDb, payment.id, snapshot(order.id, order.totalCents), new Date())
     expect(again.operationEnqueued).toBe(false)
@@ -378,11 +460,47 @@ describe('Orders checkout orchestration', () => {
     const manyProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => [snapshot(many.order.id, many.order.totalCents), snapshot(many.order.id, many.order.totalCents)]) })
     await expect(recoverUncertainCreate(testDb, manyProvider, many.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('REVIEW_REQUIRED')
     const zero = await makePayment()
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, zero.payment.id))
     const zeroProvider = fakePaymentProvider({ searchOrders: vi.fn(async () => []) })
     const createOrder = vi.fn(async () => snapshot(zero.order.id, zero.order.totalCents))
     zeroProvider.createOrder = createOrder
     await expect(recoverUncertainCreate(testDb, zeroProvider, zero.payment.id, new Date(), (email) => email ?? 'payer@test.local')).resolves.toBe('RECOVERED')
     expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: zero.payment.createIdempotencyKey, payerEmail: expect.any(String) }))
+  })
+
+  it('never recreates a zero-match PIX order after commercial cancellation', async () => {
+    const { order, payment } = await makePayment('CANCELLED')
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, payment.id))
+    const searchOrders = vi.fn(async () => [])
+    const createOrder = vi.fn()
+    const recoveryProvider = fakePaymentProvider({ searchOrders, createOrder })
+
+    await expect(recoverUncertainCreate(testDb, recoveryProvider, payment.id, new Date(), (email) => email ?? 'masked@test.local')).resolves.toBe('RETRY_PIX')
+    expect(searchOrders).toHaveBeenCalledOnce()
+    expect(createOrder).not.toHaveBeenCalled()
+    expect((await testDb.select().from(orders).where(eq(orders.id, order.id)))[0]!.status).toBe('CANCELLED')
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({ status: 'PENDING', providerOrderId: null, providerTransactionId: null, reconciliationFailure: 'CANCELLED_CREATE_SEARCH_PENDING' })
+  })
+
+  it.each([
+    ['PENDING', 'CANCEL', 'processing', 'processing'],
+    ['APPROVED', 'REFUND_FULL', 'processed', 'accredited'],
+    ['REJECTED', null, 'failed', 'rejected_by_issuer'],
+  ] as const)('search-only cancelled recovery settles provider %s without create', async (decision, operationType, orderStatus, transactionStatusDetail) => {
+    const { order, payment } = await makePayment('CANCELLED')
+    await testDb.update(payments).set({ providerOrderId: null, providerTransactionId: null }).where(eq(payments.id, payment.id))
+    const found = snapshot(order.id, order.totalCents, {
+      providerOrderId: `found-${payment.id}`, providerTransactionId: `found-tx-${payment.id}`,
+      orderStatus, orderStatusDetail: transactionStatusDetail,
+      transactionStatus: orderStatus, transactionStatusDetail,
+    })
+    const createOrder = vi.fn()
+    const fake = fakePaymentProvider({ searchOrders: vi.fn(async () => [{ providerOrderId: found.providerOrderId, externalReference: found.externalReference }]), getOrder: vi.fn(async () => found), createOrder })
+    await expect(recoverUncertainCreate(testDb, fake, payment.id, new Date(), (email) => email ?? 'masked@test.local')).resolves.toBe('RECOVERED')
+    expect(createOrder).not.toHaveBeenCalled()
+    const operations = await testDb.select().from(paymentOperations).where(eq(paymentOperations.paymentId, payment.id))
+    expect(operations.map((row) => row.type)).toEqual(operationType ? [operationType] : [])
+    expect((await testDb.select({ status: payments.status }).from(payments).where(eq(payments.id, payment.id)))[0]?.status).toBe(decision)
   })
 
   it('persists ambiguous and bounded card-retry decisions, expires uncertain PIX once', async () => {

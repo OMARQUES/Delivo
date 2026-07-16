@@ -139,6 +139,14 @@ describe('GET /store/me/orders', () => {
     const list2 = (await res2.json()) as { isFirstOrder: boolean }[]
     expect(list2.some((o) => o.isFirstOrder === false)).toBe(true)
   })
+
+  it('never exposes awaiting-payment orders in store active queue', async () => {
+    const { order } = await createOrder(testDb, customerId, checkout())
+    await testDb.update(orders).set({ status: 'AWAITING_PAYMENT', paymentMethod: 'PIX_ONLINE' }).where(eq(orders.id, order.id))
+    const res = await req('/store/me/orders?scope=active')
+    expect(res.status).toBe(200)
+    expect((await res.json() as { id: string }[]).some((row) => row.id === order.id)).toBe(false)
+  })
 })
 
 describe('GET /store/me/orders/:id driver info', () => {

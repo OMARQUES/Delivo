@@ -1,5 +1,5 @@
 import type { Env } from '../env'
-import { PIX_EXPIRATION_DURATION } from './constants'
+import { ONLINE_PAYMENT_EXPIRATION_DURATION } from './constants'
 import { formatProviderAmount, parseProviderAmount } from './money'
 import {
   PaymentProviderError,
@@ -166,7 +166,7 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
   async createOrder(input: CreateOrderInput): Promise<ProviderOrderSnapshot> {
     const amountText = formatProviderAmount(input.amountCents)
     const payment = input.method === 'PIX'
-      ? { amount: amountText, payment_method: { id: 'pix', type: 'bank_transfer' }, expiration_time: PIX_EXPIRATION_DURATION }
+      ? { amount: amountText, payment_method: { id: 'pix', type: 'bank_transfer' }, expiration_time: ONLINE_PAYMENT_EXPIRATION_DURATION }
       : { amount: amountText, payment_method: { id: input.cardPaymentMethodId, type: 'credit_card', token: input.cardToken, installments: 1 } }
     const raw = await this.request<Json>(ORDERS_BASE, {
       method: 'POST',

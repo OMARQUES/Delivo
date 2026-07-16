@@ -7,6 +7,7 @@ export type PaymentOperationResultCode =
   | 'REFUNDED'
   | 'PARTIALLY_REFUNDED'
   | 'ESCALATED_TO_REFUND'
+  | 'NOT_CHARGED'
 
 export type PaymentOperationIntent = {
   paymentId: string
@@ -136,6 +137,27 @@ export async function claimDueOperations(db: Db, now: Date, limit: number, lease
     }).where(inArray(paymentOperations.id, ids))
     return ids
   })
+}
+
+export async function claimPaymentOperationById(db: Db, operationId: string, now: Date, leaseOwner: string): Promise<boolean> {
+  const [claimed] = await db.update(paymentOperations).set({
+    status: 'PROCESSING',
+    leaseOwner,
+    leasedUntil: new Date(now.getTime() + 5 * 60_000),
+    attemptCount: sql`${paymentOperations.attemptCount} + 1`,
+    updatedAt: now,
+  }).where(and(
+    eq(paymentOperations.id, operationId),
+    or(
+      and(eq(paymentOperations.status, 'PENDING'), or(isNull(paymentOperations.nextAttemptAt), lte(paymentOperations.nextAttemptAt, now))),
+      and(eq(paymentOperations.status, 'PROCESSING'), lte(paymentOperations.leasedUntil, now)),
+    ),
+    or(
+      isNull(paymentOperations.dependsOnOperationId),
+      sql`exists (select 1 from payment_operations predecessor where predecessor.id = ${paymentOperations.dependsOnOperationId} and predecessor.status = 'SUCCEEDED')`,
+    ),
+  )).returning({ id: paymentOperations.id })
+  return Boolean(claimed)
 }
 
 export async function propagateReviewedDependencies(db: Db, now: Date, limit: number): Promise<number> {
