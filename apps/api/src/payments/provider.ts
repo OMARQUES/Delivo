@@ -39,6 +39,8 @@ export type ProviderOrderSnapshot = {
   updatedAt: Date | null
 }
 
+export type ProviderOrderMatch = Pick<ProviderOrderSnapshot, 'providerOrderId' | 'externalReference'>
+
 export type ExpectedPayment = {
   paymentId: string
   orderId: string
@@ -70,7 +72,7 @@ export type CreateOrderInput =
 export interface PaymentProvider {
   createOrder(input: CreateOrderInput): Promise<ProviderOrderSnapshot>
   getOrder(providerOrderId: string): Promise<ProviderOrderSnapshot>
-  searchOrders(externalReference: string, createdAt: Date, now: Date): Promise<ProviderOrderSnapshot[]>
+  searchOrders(externalReference: string, createdAt: Date, now: Date): Promise<ProviderOrderMatch[]>
   cancelOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrderSnapshot>
   refundOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrderSnapshot>
   refundPartial(

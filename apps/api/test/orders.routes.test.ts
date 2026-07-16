@@ -266,7 +266,10 @@ describe('POST /orders/quote + POST /orders', () => {
         attemptedOrderId = input.orderId
         throw new OrdersProviderError('CREATE_REQUIRES_RECOVERY', 402)
       },
-      searchOrders: async () => [rejected()],
+      searchOrders: async () => [{
+        providerOrderId: 'provider-order-rejected',
+        externalReference: attemptedOrderId,
+      }],
       getOrder: async () => rejected(),
       cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
     })

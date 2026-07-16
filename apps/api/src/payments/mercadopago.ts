@@ -7,6 +7,7 @@ import {
   type CreateOrderInput,
   type PaymentProvider,
   type ProviderFailureKind,
+  type ProviderOrderMatch,
   type ProviderOrderSnapshot,
 } from './provider'
 
@@ -181,7 +182,7 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     return this.normalize(raw)
   }
 
-  async searchOrders(externalReference: string, createdAt: Date, now: Date): Promise<ProviderOrderSnapshot[]> {
+  async searchOrders(externalReference: string, createdAt: Date, now: Date): Promise<ProviderOrderMatch[]> {
     const beginDate = new Date(createdAt.getTime() - 5 * 60_000)
     const maximumEnd = new Date(createdAt.getTime() + 24 * 60 * 60_000)
     const reconciliationEnd = new Date(now.getTime() + 5 * 60_000)
@@ -200,7 +201,13 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     const data = asObject(raw).data
     if (!Array.isArray(data)) throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
     return data
-      .map((item) => this.normalize(item))
+      .map((item) => {
+        const summary = asObject(item)
+        return {
+          providerOrderId: requiredString(summary.id),
+          externalReference: requiredString(summary.external_reference),
+        }
+      })
       .filter((item) => item.externalReference === externalReference)
   }
 

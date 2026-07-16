@@ -246,7 +246,10 @@ describe('Orders checkout orchestration', () => {
     })
     const provider = fakePaymentProvider({
       createOrder: vi.fn(async () => { throw new PaymentProviderError('CREATE_REQUIRES_RECOVERY', 402) }),
-      searchOrders: vi.fn(async () => [rejected]),
+      searchOrders: vi.fn(async () => [{
+        providerOrderId: rejected.providerOrderId,
+        externalReference: rejected.externalReference,
+      }]),
       getOrder: vi.fn(async () => rejected),
     })
 

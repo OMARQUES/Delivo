@@ -187,6 +187,31 @@ describe('MercadoPagoOrdersProvider', () => {
     expect(matches.map((item) => item.externalReference)).toEqual(['order-1'])
   })
 
+  it('parses documented search summaries without full-order country data', async () => {
+    const summary = {
+      id: 'ORD_SEARCH_CARD', type: 'online', processing_mode: 'automatic',
+      external_reference: 'order-1', total_amount: '64.00', total_paid_amount: '0.00',
+      user_id: 'account-test', status: 'failed', status_detail: 'failed', currency: 'BRL',
+      created_date: '2026-07-16T12:00:00.000Z', last_updated_date: '2026-07-16T12:00:01.000Z',
+      integration_data: { application_id: 'app-test' },
+      transactions: { payments: [{
+        id: 'PAY_SEARCH_CARD', amount: '64.00', paid_amount: '0.00',
+        status: 'failed', status_detail: 'rejected_by_issuer',
+        payment_method: { id: 'master', type: 'credit_card', installments: 1 },
+      }] },
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => response({ data: [summary], paging: { total: '1' } })))
+
+    await expect(provider.searchOrders(
+      'order-1',
+      new Date('2026-07-16T12:00:00.000Z'),
+      new Date('2026-07-16T12:01:00.000Z'),
+    )).resolves.toEqual([{
+      providerOrderId: 'ORD_SEARCH_CARD',
+      externalReference: 'order-1',
+    }])
+  })
+
   it('caps search end date at 24 hours after creation', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => response({ data: [] }))
     vi.stubGlobal('fetch', fetchMock)
