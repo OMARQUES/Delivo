@@ -156,7 +156,7 @@ describe('MercadoPagoOrdersProvider', () => {
   it('searches current Orders endpoint with bounded dates and exact post-filtering', async () => {
     const wanted = officialPixOrder({ external_reference: 'order-1' })
     const other = officialPixOrder({ id: 'ORD_OTHER', external_reference: 'other-order' })
-    const fetchMock = vi.fn(async (_input: string | URL) => response({ data: [wanted, other], paging: { total: 2 } }))
+    const fetchMock = vi.fn<typeof fetch>(async () => response({ data: [wanted, other], paging: { total: 2 } }))
     vi.stubGlobal('fetch', fetchMock)
 
     const createdAt = new Date('2026-07-16T12:00:00.000Z')
@@ -175,7 +175,7 @@ describe('MercadoPagoOrdersProvider', () => {
   })
 
   it('caps search end date at 24 hours after creation', async () => {
-    const fetchMock = vi.fn(async (_input: string | URL) => response({ data: [] }))
+    const fetchMock = vi.fn<typeof fetch>(async () => response({ data: [] }))
     vi.stubGlobal('fetch', fetchMock)
 
     await provider.searchOrders(
@@ -217,7 +217,7 @@ describe('MercadoPagoOrdersProvider', () => {
   })
 
   it.each(['', 'x'.repeat(65)])('rejects provider idempotency key length %j before fetch', async (key) => {
-    const fetchMock = vi.fn(async (_input: string | URL) => response(snapshot(), 201))
+    const fetchMock = vi.fn<typeof fetch>(async () => response(snapshot(), 201))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(provider.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local', idempotencyKey: key, method: 'PIX', expiresAt: new Date('2026-07-15T12:15:00Z') })).rejects.toMatchObject({ kind: 'CREDENTIAL_OR_CONFIG' })
@@ -228,7 +228,7 @@ describe('MercadoPagoOrdersProvider', () => {
   })
 
   it('accepts a 64-character provider idempotency key', async () => {
-    const fetchMock = vi.fn(async (_input: string | URL) => response(snapshot(), 200))
+    const fetchMock = vi.fn<typeof fetch>(async () => response(snapshot(), 200))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(provider.cancelOrder('order-1', 'x'.repeat(64))).resolves.toMatchObject({ providerOrderId: 'order-1' })
