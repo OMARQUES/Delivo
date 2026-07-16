@@ -9,6 +9,7 @@ import { users } from '../db/schema'
 import { CheckoutError } from '../payments/checkout.service'
 import { createPaymentProvider as createOrdersPaymentProvider } from '../payments/mercadopago'
 import { PaymentProviderError as OrdersProviderError } from '../payments/provider'
+import { logPaymentProviderFailure } from '../payments/provider-diagnostics'
 import { resolvePayerEmail } from '../lib/payer-email'
 import { authMiddleware, requireRole } from '../middleware/auth'
 import {
@@ -30,12 +31,19 @@ export const orderRoutes = createRouter()
 orderRoutes.use('/orders/*', authMiddleware, requireRole('CUSTOMER'))
 orderRoutes.use('/orders', authMiddleware, requireRole('CUSTOMER'))
 
-function rethrow(e: unknown): never {
+type ProviderDiagnosticContext = { paymentMethod: 'PIX' | 'CARD'; requestId: string }
+
+function rethrow(e: unknown, diagnosticContext?: ProviderDiagnosticContext): never {
   if (e instanceof AmendmentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof OrderError || e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
-  if (e instanceof CheckoutError) throw new HTTPException(e.status, { message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega' })
-  if (e instanceof OrdersProviderError)
+  if (e instanceof CheckoutError) {
+    if (e.providerError && diagnosticContext) logPaymentProviderFailure(e.providerError, diagnosticContext)
+    throw new HTTPException(e.status, { message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega' })
+  }
+  if (e instanceof OrdersProviderError) {
+    if (diagnosticContext) logPaymentProviderFailure(e, diagnosticContext)
     throw new HTTPException(503, { message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega' })
+  }
   throw e
 }
 
@@ -78,13 +86,19 @@ orderRoutes.openapi(
     const db = c.get('db')
     const sub = c.get('auth')!.sub
     const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, sub))
-    const result = await createOrder(db, sub, c.req.valid('json'), {
+    const input = c.req.valid('json')
+    const paymentMethod = input.paymentMethod === 'PIX_ONLINE'
+      ? 'PIX'
+      : input.paymentMethod === 'CARD_ONLINE'
+        ? 'CARD'
+        : null
+    const result = await createOrder(db, sub, input, {
       provider: createOrdersPaymentProvider(c.env),
       payerEmail: resolvePayerEmail(c.env, user?.email, sub),
       applicationId: c.env.MP_APPLICATION_ID ?? '',
       accountId: c.env.MP_ACCOUNT_ID ?? '',
       liveMode: c.env.MP_LIVE_MODE === 'true',
-    }).catch(rethrow)
+    }).catch((error) => rethrow(error, paymentMethod ? { paymentMethod, requestId: c.get('requestId') } : undefined))
     return c.json(result, 201)
   },
 )

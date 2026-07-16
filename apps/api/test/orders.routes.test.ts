@@ -250,18 +250,61 @@ describe('POST /orders/quote + POST /orders', () => {
     vi.restoreAllMocks()
   })
 
+  it('CARD_ONLINE provider failure stays generic and logs safe diagnostics', async () => {
+    const logSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
+      getAccountId: async () => 'account-test',
+      createOrder: async () => { throw new OrdersProviderError('PROVIDER_RESPONSE_INVALID', 400) },
+      getOrder: async () => providerSnapshot(), searchOrders: async () => [], cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
+    })
+    const forbidden = ['tok_diagnostic_secret', 'ana@example.invalid', 'qr-content-marker', 'provider-body-marker', 'webhook-marker', 'env-secret-marker']
+
+    try {
+      const res = await req('/orders', {
+        method: 'POST',
+        body: JSON.stringify(checkout({
+          paymentMethod: 'CARD_ONLINE', cardToken: forbidden[0], cardPaymentMethodId: 'visa', installments: 1,
+        })),
+      }, customerToken)
+      expect(res.status).toBe(503)
+      expect((await res.json()) as { error: string }).toEqual({
+        error: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega',
+      })
+      expect(logSpy).toHaveBeenCalledWith('payment_provider_failure', {
+        failureClass: 'PROVIDER_RESPONSE_INVALID',
+        upstreamStatus: 400,
+        paymentMethod: 'CARD',
+        requestId: res.headers.get('x-request-id'),
+      })
+      const output = JSON.stringify(logSpy.mock.calls)
+      expect(forbidden.some((marker) => output.includes(marker))).toBe(false)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
   it('PIX_ONLINE gateway uncertain -> 503 + order remains awaiting payment', async () => {
+    const logSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
       getAccountId: async () => 'account-test',
       createOrder: async () => { throw new OrdersProviderError('TRANSIENT_UNCERTAIN', 503) },
       getOrder: async () => providerSnapshot(), searchOrders: async () => [], cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
     })
-    const res = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({ paymentMethod: 'PIX_ONLINE' })) }, customerToken)
-    expect(res.status).toBe(503)
-    const list = await listCustomerOrders(testDb, customerId)
-    expect(list.length).toBe(1)
-    expect(list[0]!.status).toBe('AWAITING_PAYMENT')
-    vi.restoreAllMocks()
+    try {
+      const res = await req('/orders', { method: 'POST', body: JSON.stringify(checkout({ paymentMethod: 'PIX_ONLINE' })) }, customerToken)
+      expect(res.status).toBe(503)
+      expect(logSpy).toHaveBeenCalledWith('payment_provider_failure', {
+        failureClass: 'TRANSIENT_UNCERTAIN',
+        upstreamStatus: 503,
+        paymentMethod: 'PIX',
+        requestId: res.headers.get('x-request-id'),
+      })
+      const list = await listCustomerOrders(testDb, customerId)
+      expect(list.length).toBe(1)
+      expect(list[0]!.status).toBe('AWAITING_PAYMENT')
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 
   it('online payment without provider configured -> 503', async () => {

@@ -8,7 +8,7 @@ import { applyProviderSnapshotInTransaction } from './transition.service'
 export type CheckoutErrorCode = 'PAYMENT_REJECTED' | 'PAYMENT_REVIEW_REQUIRED' | 'PAYMENT_UNCERTAIN'
 
 export class CheckoutError extends Error {
-  constructor(public readonly code: CheckoutErrorCode, public readonly status: 402 | 503) {
+  constructor(public readonly code: CheckoutErrorCode, public readonly status: 402 | 503, public readonly providerError?: PaymentProviderError) {
     super(`Payment checkout failure: ${code}`)
   }
 }
@@ -69,7 +69,7 @@ export async function createOnlinePayment(db: Db, provider: PaymentProvider, inp
     if (payment.method === 'PIX' && snapshot.pix) return { kind: 'PIX', qrCode: snapshot.pix.qrCode, qrCodeBase64: snapshot.pix.qrCodeBase64, expiresAt: (snapshot.pix.expiresAt ?? payment.expiresAt ?? new Date()).toISOString() }
     return { kind: result.decision === 'APPROVED' || result.decision === 'PARTIALLY_REFUNDED' ? 'APPROVED' : 'PENDING' }
   } catch (error) {
-    if (error instanceof PaymentProviderError && error.kind === 'TRANSIENT_UNCERTAIN') throw new CheckoutError('PAYMENT_UNCERTAIN', 503)
+    if (error instanceof PaymentProviderError && error.kind === 'TRANSIENT_UNCERTAIN') throw new CheckoutError('PAYMENT_UNCERTAIN', 503, error)
     throw error
   }
 }
