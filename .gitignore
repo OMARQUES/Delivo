@@ -4,6 +4,7 @@ dist/
 .dev.vars*
 !.dev.vars.example
 !.dev.vars.*.example
+.demo-accounts.md
 .env*
 !.env.example
 !.env.*.example
