@@ -75,7 +75,8 @@ set of trusted payment outcomes.
 
 The existing operation processor remains authoritative. Once a canceled PIX
 snapshot can be normalized, the existing validation maps it to `CANCELLED`, and
-the existing cancellation operation completes with `NOT_CHARGED`. Approved or
+the existing cancellation operation completes with result code `CANCELLED`.
+`NOT_CHARGED` remains reserved for rejected or expired outcomes. Approved or
 refunded snapshots continue following the existing full-refund and refunded
 paths. No order may be reopened by this correction.
 
@@ -101,7 +102,7 @@ Use TDD and cover:
    `PROVIDER_RESPONSE_INVALID`;
 5. terminal PIX snapshots for canceled, expired, rejected, processed, and
    refunded outcomes normalize with `pix: null` even without QR fields;
-6. the existing canceled-operation test still completes as `NOT_CHARGED`;
+6. the existing canceled-operation test still completes as `CANCELLED`;
 7. focused API and web suites, typecheck, lint, and `git diff --check` pass.
 
 ## Completion boundary
