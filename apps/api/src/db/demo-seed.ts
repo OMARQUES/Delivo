@@ -6,7 +6,7 @@ import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { hashPassword } from '../lib/password'
 import * as schema from './schema'
-import { parseDemoAccounts, type DemoAccount } from './demo-seed-config'
+import { DEMO_OPENING_HOURS, parseDemoAccounts, type DemoAccount } from './demo-seed-config'
 
 const DEMO_FILE = path.resolve(process.cwd(), '.demo-accounts.md')
 const REQUIRED_KEYS = [
@@ -102,10 +102,18 @@ async function main(): Promise<void> {
           minOrderCents: 1000,
           deliveryEtaMinutes: [30, 50],
           pickupEtaMinutes: [15, 25],
-          openingHours: [],
+          openingHours: DEMO_OPENING_HOURS,
         }).returning())[0]
         if (!store) throw new Error(`DEMO_STORE_CREATE_FAILED_${values.slug}`)
         if (store.ownerUserId !== owner.id) throw new Error(`DEMO_STORE_OWNER_MISMATCH_${values.slug}`)
+        await tx.update(schema.stores).set({
+          openingHours: DEMO_OPENING_HOURS,
+          isPaused: false,
+          securityStatus: 'ACTIVE',
+          updatedAt: new Date(),
+        }).where(eq(schema.stores.id, store.id))
+        const [opened] = await tx.select().from(schema.stores).where(eq(schema.stores.id, store.id)).limit(1)
+        if (!opened) throw new Error(`DEMO_STORE_UPDATE_FAILED_${values.slug}`)
         stores.push(store)
       }
 
