@@ -20,6 +20,12 @@ function emailFailureClass(error: unknown): string {
   return 'UNEXPECTED'
 }
 
+export function shouldEagerlyRefreshPendingPix(env: Env): boolean {
+  return env.APP_ENV === 'local'
+    && env.MP_LIVE_MODE === 'false'
+    && env.MP_TEST_PIX_SCENARIO?.trim() === 'APRO'
+}
+
 async function hasDueEmail(db: ReturnType<typeof createDb>['db'], now: Date): Promise<boolean> {
   const [due] = await db.select({ id: emailOutbox.id }).from(emailOutbox).where(or(
     and(eq(emailOutbox.status, 'PENDING'), lte(emailOutbox.nextAttemptAt, now)),
@@ -59,7 +65,7 @@ export default {
       if (provider) {
         const reconciliation = await runPaymentReconciliation(db, provider, now, {
           resolvePayerEmail: (email, userId) => resolvePayerEmail(env, email, userId),
-        })
+        }, { eagerPendingPix: shouldEagerlyRefreshPendingPix(env) })
         if (Object.values(reconciliation).some((count) => count > 0)) console.log('cron: pagamentos reconciliados', reconciliation)
       }
       const dailies = await autoApproveStaleShiftDailies(db)

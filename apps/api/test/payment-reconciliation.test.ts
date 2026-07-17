@@ -4,7 +4,7 @@ import { createActiveStoreTestFixture, createVerifiedTestAccount, migrateTestDb,
 import { createCategory, createProduct } from '../src/services/catalog.service'
 import { createOrder } from '../src/services/order.service'
 import { updateStore } from '../src/services/store.service'
-import { orders, paymentOperations, paymentWebhookInbox, payments } from '../src/db/schema'
+import { orderEvents, orders, paymentOperations, paymentWebhookInbox, payments } from '../src/db/schema'
 import { enqueueWebhook } from '../src/payments/webhook-inbox.service'
 import { runPaymentReconciliation, type ReconciliationOptions, type ReconciliationStage } from '../src/payments/reconciliation.service'
 import { PaymentProviderError, type PaymentProvider, type ProviderOrderSnapshot } from '../src/payments/provider'
@@ -44,6 +44,113 @@ function provider(overrides: Partial<PaymentProvider> = {}, payment?: typeof pay
 const context = { resolvePayerEmail: (email: string | null) => email ?? 'masked@test.local' }
 const only = (...stages: ReconciliationStage[]): ReconciliationOptions => ({ stages, limits: { inbox: 1, operations: 1, creates: 1, snapshots: 1, expirations: 1, reviews: 1 } })
 const stages = ['leases', 'dependencies', 'inbox', 'creates', 'snapshots', 'expirations', 'operations', 'reviews'] as const
+
+async function configureFastRefreshCandidate(paymentId: string, createdAt: Date, updatedAt: Date) {
+  await testDb.update(payments).set({
+    createdAt,
+    updatedAt,
+    lastReconciledAt: updatedAt,
+    nextReconcileAt: new Date(createdAt.getTime() + 5 * 60_000),
+  }).where(eq(payments.id, paymentId))
+}
+
+describe('bounded local PIX APRO eager reconciliation', () => {
+  it('eagerly refreshes a recent identified pending PIX and releases it once', async () => {
+    const createdAt = new Date('2026-07-17T12:00:00.000Z')
+    const now = new Date(createdAt.getTime() + 10_000)
+    const payment = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    await testDb.update(payments).set({ createdAt, updatedAt: createdAt, lastReconciledAt: createdAt, nextReconcileAt: new Date(createdAt.getTime() + 5 * 60_000) }).where(eq(payments.id, payment.id))
+    const approved = snapshot(payment, { orderStatus: 'processed', orderStatusDetail: 'accredited', transactionStatus: 'processed', transactionStatusDetail: 'accredited', pix: null })
+    const getOrder = vi.fn(async () => approved)
+    const options = { ...only('snapshots'), eagerPendingPix: true }
+    const first = await runPaymentReconciliation(testDb, provider({ getOrder }, payment), now, context, options)
+    const second = await runPaymentReconciliation(testDb, provider({ getOrder }, payment), new Date(now.getTime() + 10_000), context, options)
+    expect(first.snapshotsRefreshed).toBe(1)
+    expect(second.snapshotsRefreshed).toBe(0)
+    expect(getOrder).toHaveBeenCalledTimes(1)
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({ status: 'APPROVED', reconciliationState: 'HEALTHY', reconciliationFailure: null })
+    expect((await testDb.select().from(orders).where(eq(orders.id, payment.orderId)))[0]?.status).toBe('PENDING')
+    const events = await testDb.select().from(orderEvents).where(eq(orderEvents.orderId, payment.orderId))
+    expect(events.filter((event) => event.note === 'pagamento confirmado')).toHaveLength(1)
+  })
+
+  it('does not eagerly refresh before 10 seconds, after 60 seconds, or for CARD', async () => {
+    const createdAt = new Date('2026-07-17T12:00:00.000Z')
+    const now = new Date(createdAt.getTime() + 10_000)
+    const tooSoon = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    await configureFastRefreshCandidate(tooSoon.id, createdAt, new Date(now.getTime() - 5_000))
+    const tooOld = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    await configureFastRefreshCandidate(tooOld.id, new Date(now.getTime() - 61_000), new Date(now.getTime() - 11_000))
+    const card = await pendingPayment(null, 'CARD', 'AWAITING_PAYMENT')
+    await configureFastRefreshCandidate(card.id, createdAt, createdAt)
+    const getOrder = vi.fn()
+    await runPaymentReconciliation(testDb, provider({ getOrder }), now, context, { ...only('snapshots'), eagerPendingPix: true, limits: { ...only('snapshots').limits, snapshots: 10 } })
+    expect(getOrder).not.toHaveBeenCalled()
+  })
+
+  it('keeps a recent PIX on the normal five-minute schedule without the eager option', async () => {
+    const createdAt = new Date('2026-07-17T12:00:00.000Z')
+    const now = new Date(createdAt.getTime() + 20_000)
+    const payment = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    await configureFastRefreshCandidate(payment.id, createdAt, createdAt)
+    const getOrder = vi.fn()
+    await runPaymentReconciliation(testDb, provider({ getOrder }), now, context, { ...only('snapshots'), eagerPendingPix: false })
+    expect(getOrder).not.toHaveBeenCalled()
+  })
+
+  it('does not let an eager review row consume the bounded snapshot batch', async () => {
+    const createdAt = new Date('2026-07-17T12:00:00.000Z')
+    const now = new Date(createdAt.getTime() + 10_000)
+    const reviewed = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    const actionable = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    await configureFastRefreshCandidate(reviewed.id, createdAt, createdAt)
+    await configureFastRefreshCandidate(actionable.id, createdAt, createdAt)
+    await testDb.update(payments).set({ reconciliationState: 'REVIEW_REQUIRED', reconciliationFailure: 'MISMATCH_ACCOUNT', nextReconcileAt: null }).where(eq(payments.id, reviewed.id))
+    const getOrder = vi.fn(async () => snapshot(actionable))
+    const summary = await runPaymentReconciliation(testDb, provider({ getOrder }, actionable), now, context, { ...only('snapshots'), eagerPendingPix: true })
+    expect(summary.snapshotsRefreshed).toBe(1)
+    expect(getOrder).toHaveBeenCalledWith(actionable.providerOrderId)
+  })
+
+  it('polls a local APRO PIX at most once per interval and stops the eager path after 60 seconds', async () => {
+    const createdAt = new Date('2026-07-17T12:00:00.000Z')
+    const payment = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    await configureFastRefreshCandidate(payment.id, createdAt, createdAt)
+    const pending = snapshot(payment, { orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer', pix: { qrCode: 'sanitized-test-marker', qrCodeBase64: null, ticketUrl: null, expiresAt: new Date(createdAt.getTime() + 30 * 60_000) } })
+    const getOrder = vi.fn(async () => pending)
+    const options = { ...only('snapshots'), eagerPendingPix: true }
+    for (const seconds of [10, 20, 30, 40, 50, 60]) await runPaymentReconciliation(testDb, provider({ getOrder }, payment), new Date(createdAt.getTime() + seconds * 1_000), context, options)
+    await runPaymentReconciliation(testDb, provider({ getOrder }, payment), new Date(createdAt.getTime() + 70_000), context, options)
+    expect(getOrder).toHaveBeenCalledTimes(6)
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({ status: 'PENDING', reconciliationState: 'HEALTHY', reconciliationAttemptCount: 0 })
+  })
+
+  it('claims one eager PIX refresh once across overlapping reconcilers', async () => {
+    const createdAt = new Date('2026-07-17T12:00:00.000Z')
+    const now = new Date(createdAt.getTime() + 10_000)
+    const payment = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    await configureFastRefreshCandidate(payment.id, createdAt, createdAt)
+    const getOrder = vi.fn(async () => snapshot(payment, { orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer', pix: { qrCode: 'sanitized-test-marker', qrCodeBase64: null, ticketUrl: null, expiresAt: new Date(createdAt.getTime() + 30 * 60_000) } }))
+    const fake = provider({ getOrder }, payment)
+    const options = { ...only('snapshots'), eagerPendingPix: true }
+    const [first, second] = await Promise.all([runPaymentReconciliation(testDb, fake, now, context, options), runPaymentReconciliation(testDb, fake, now, context, options)])
+    expect(first.snapshotsRefreshed + second.snapshotsRefreshed).toBe(1)
+    expect(getOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let eager polling bypass a provider failure backoff', async () => {
+    const createdAt = new Date('2026-07-17T12:00:00.000Z')
+    const firstNow = new Date(createdAt.getTime() + 10_000)
+    const payment = await pendingPayment(null, 'PIX', 'AWAITING_PAYMENT')
+    await configureFastRefreshCandidate(payment.id, createdAt, createdAt)
+    const getOrder = vi.fn(async () => { throw new PaymentProviderError('RATE_LIMITED', 429, 120) })
+    const options = { ...only('snapshots'), eagerPendingPix: true }
+    await runPaymentReconciliation(testDb, provider({ getOrder }, payment), firstNow, context, options)
+    await runPaymentReconciliation(testDb, provider({ getOrder }, payment), new Date(firstNow.getTime() + 10_000), context, options)
+    expect(getOrder).toHaveBeenCalledTimes(1)
+    expect((await testDb.select().from(payments).where(eq(payments.id, payment.id)))[0]).toMatchObject({ reconciliationState: 'PENDING', reconciliationFailure: 'RATE_LIMITED', reconciliationAttemptCount: 1 })
+  })
+})
 
 type IsolationState = {
   leases: { inboxStatus: string; inboxAttemptCount: number; operationStatus: string; operationAttemptCount: number }

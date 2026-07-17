@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, isNull, lte, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, isNotNull, isNull, lte, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { orders, paymentOperations, paymentWebhookInbox, payments } from '../db/schema'
 import { claimDueOperations, propagateReviewedDependencies } from './operation-queue.service'
@@ -29,6 +29,7 @@ type BoundedStage = Exclude<ReconciliationStage, 'leases' | 'dependencies'>
 export type ReconciliationOptions = {
   limits?: Partial<Record<BoundedStage, number>>
   stages?: readonly ReconciliationStage[]
+  eagerPendingPix?: boolean
 }
 
 export type ReconciliationSummary = {
@@ -47,6 +48,8 @@ export type ReconciliationSummary = {
 export const DEFAULT_RECONCILIATION_LIMITS = { inbox: 25, operations: 25, creates: 20, snapshots: 50, expirations: 50, reviews: 10 } as const
 
 const allStages: readonly ReconciliationStage[] = ['leases', 'dependencies', 'inbox', 'creates', 'snapshots', 'expirations', 'operations', 'reviews']
+const LOCAL_APRO_PIX_REFRESH_INTERVAL_MS = 10_000
+const LOCAL_APRO_PIX_REFRESH_WINDOW_MS = 60_000
 
 function cap(value: number | undefined, fallback: number) {
   return Math.max(1, Math.min(100, Math.floor(value ?? fallback)))
@@ -66,12 +69,31 @@ function duePayment(now: Date) {
   return or(isNull(payments.nextReconcileAt), lte(payments.nextReconcileAt, now))
 }
 
-async function claimPayment(db: Db, paymentId: string, now: Date, state: 'PENDING' | 'REVIEW_REQUIRED') {
+function snapshotDue(now: Date, eagerPendingPix: boolean) {
+  const normallyDue = duePayment(now)
+  if (!eagerPendingPix) return normallyDue
+  return or(
+    normallyDue,
+    and(
+      eq(payments.method, 'PIX'),
+      or(eq(payments.reconciliationState, 'PENDING'), eq(payments.reconciliationState, 'HEALTHY')),
+      isNull(payments.reconciliationFailure),
+      gte(payments.createdAt, new Date(now.getTime() - LOCAL_APRO_PIX_REFRESH_WINDOW_MS)),
+      lte(payments.updatedAt, new Date(now.getTime() - LOCAL_APRO_PIX_REFRESH_INTERVAL_MS)),
+    ),
+  )
+}
+
+async function claimPayment(db: Db, paymentId: string, now: Date, state: 'PENDING' | 'REVIEW_REQUIRED', eagerPendingPix = false) {
+  const eligibility = state === 'PENDING' ? snapshotDue(now, eagerPendingPix) : duePayment(now)
+  const stateEligibility = state === 'PENDING'
+    ? or(eq(payments.reconciliationState, 'PENDING'), eq(payments.reconciliationState, 'HEALTHY'))
+    : eq(payments.reconciliationState, state)
   const [claimed] = await db.update(payments).set({
     reconciliationAttemptCount: sql`${payments.reconciliationAttemptCount} + 1`,
     nextReconcileAt: new Date(now.getTime() + 5 * 60_000),
     updatedAt: now,
-  }).where(and(eq(payments.id, paymentId), eq(payments.reconciliationState, state), duePayment(now))).returning()
+  }).where(and(eq(payments.id, paymentId), stateEligibility, eligibility)).returning()
   return claimed
 }
 
@@ -86,8 +108,8 @@ async function retryPayment(db: Db, paymentId: string, attemptCount: number, now
   await db.update(payments).set({ reconciliationState: state, reconciliationFailure: failure, nextReconcileAt: disposition.nextAttemptAt, lastReconciledAt: now, updatedAt: now }).where(eq(payments.id, paymentId))
 }
 
-async function refreshPendingSnapshot(db: Db, provider: PaymentProvider, paymentId: string, now: Date): Promise<'REFRESHED' | 'FAILED'> {
-  const payment = await claimPayment(db, paymentId, now, 'PENDING')
+async function refreshPendingSnapshot(db: Db, provider: PaymentProvider, paymentId: string, now: Date, eagerPendingPix = false): Promise<'REFRESHED' | 'FAILED'> {
+  const payment = await claimPayment(db, paymentId, now, 'PENDING', eagerPendingPix)
   if (!payment) return 'FAILED'
   try {
     const snapshot = await provider.getOrder(payment.providerOrderId!)
@@ -121,6 +143,7 @@ export async function runPaymentReconciliation(
 ): Promise<ReconciliationSummary> {
   const stages = new Set(options.stages ?? allStages)
   const limits = options.limits ?? {}
+  const eagerPendingPix = options.eagerPendingPix === true
   const capBy = (key: BoundedStage) => cap(limits[key], DEFAULT_RECONCILIATION_LIMITS[key])
   const summary: ReconciliationSummary = { leasesRecovered: 0, dependenciesReviewed: 0, operationsReleased: 0, inboxProcessed: 0, operationsProcessed: 0, createsRecovered: 0, snapshotsRefreshed: 0, paymentsExpired: 0, reviewsRechecked: 0, stageFailures: 0 }
 
@@ -145,9 +168,9 @@ export async function runPaymentReconciliation(
     }
   })
   if (stages.has('snapshots')) await runStage(summary, async () => {
-    const pending = await db.select({ id: payments.id }).from(payments).where(and(eq(payments.status, 'PENDING'), isNotNull(payments.providerOrderId), duePayment(now))).orderBy(asc(payments.nextReconcileAt), asc(payments.createdAt)).limit(capBy('snapshots'))
+    const pending = await db.select({ id: payments.id }).from(payments).where(and(eq(payments.status, 'PENDING'), or(eq(payments.reconciliationState, 'PENDING'), eq(payments.reconciliationState, 'HEALTHY')), isNotNull(payments.providerOrderId), snapshotDue(now, eagerPendingPix))).orderBy(asc(payments.nextReconcileAt), asc(payments.createdAt)).limit(capBy('snapshots'))
     for (const row of pending) {
-      try { if (await refreshPendingSnapshot(db, provider, row.id, now) === 'REFRESHED') summary.snapshotsRefreshed++ } catch { summary.stageFailures++ }
+      try { if (await refreshPendingSnapshot(db, provider, row.id, now, eagerPendingPix) === 'REFRESHED') summary.snapshotsRefreshed++ } catch { summary.stageFailures++ }
     }
   })
   if (stages.has('expirations')) await runStage(summary, async () => {

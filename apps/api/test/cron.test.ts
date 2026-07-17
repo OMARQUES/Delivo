@@ -8,7 +8,7 @@ vi.mock('../src/db/client', async () => {
   return { ...actual, createDb: () => ({ db: testDb, client: { end: scheduledClientEnd } }) }
 })
 
-import worker from '../src/index'
+import worker, { shouldEagerlyRefreshPendingPix } from '../src/index'
 import type { Env } from '../src/env'
 import { createAddress } from '../src/services/address.service'
 import { createVerifiedTestAccount } from './helpers/test-db'
@@ -122,6 +122,15 @@ function checkout(overrides: Record<string, unknown> = {}) {
     ...overrides,
   }
 }
+
+describe('local PIX APRO reconciliation configuration', () => {
+  it('enables eager refresh only for exact local sandbox APRO', () => {
+    expect(shouldEagerlyRefreshPendingPix(cronEnv({ APP_ENV: 'local', MP_LIVE_MODE: 'false', MP_TEST_PIX_SCENARIO: 'APRO' }))).toBe(true)
+    expect(shouldEagerlyRefreshPendingPix(cronEnv({ APP_ENV: 'local', MP_LIVE_MODE: 'false' }))).toBe(false)
+    expect(shouldEagerlyRefreshPendingPix(cronEnv({ APP_ENV: 'staging', MP_LIVE_MODE: 'false', MP_TEST_PIX_SCENARIO: 'APRO' }))).toBe(false)
+    expect(shouldEagerlyRefreshPendingPix(cronEnv({ APP_ENV: 'local', MP_LIVE_MODE: 'true', MP_TEST_PIX_SCENARIO: 'APRO' }))).toBe(false)
+  })
+})
 
 describe('cancelStalePendingOrders', () => {
   it('cancels only PENDING older than cutoff, adds SYSTEM event', async () => {

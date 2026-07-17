@@ -120,6 +120,8 @@ Nunca registrar corpo do provider, payload PIX, email, token, credencial ou iden
 - `MP_TEST_PIX_SCENARIO=` mantém o QR PIX pendente normal para expiração e cancelamento.
 - `MP_TEST_PIX_SCENARIO=APRO` usa a fixture oficial de aprovação automática do Mercado Pago.
 - `APRO` é permitido somente com `APP_ENV=local` e `MP_LIVE_MODE=false`; staging, produção, live mode e qualquer outro valor falham fechados antes de I/O externo.
+- Com `APRO`, o cron local consulta a Order identificada a cada 10s, somente nos primeiros 60s da criação e apenas enquanto o pagamento PIX estiver pendente/saudável, sem falha persistida. A leitura é autoritativa: o QR inicial e o countdown continuam normais; a aprovação libera o pedido para a loja uma única vez.
+- Fora dessa janela, o reconciliador volta ao deadline normal de 5min. Falhas do provider, `Retry-After`, backoff, `REVIEW_REQUIRED` e concorrência não são ignorados pelo caminho rápido.
 - Reinicie `pnpm dev:api` após alternar o valor.
 - A resposta inicial pode conter somente o código copia-e-cola; imagem base64 vazia não invalida o PIX.
 - Confirme aprovação pela tela do pedido, liberação única para a loja e projeção sanitizada. Não registre QR, email, token ou identificador integral.
@@ -141,12 +143,14 @@ Após merge, executar manualmente no sandbox, nesta ordem:
 1. cartão aprovado;
 2. cartão de teste `OTHE/rejected_by_issuer` recusado;
 3. criação de QR PIX;
-4. webhook assinado usando o ID real da Order sandbox correspondente;
-5. cancelamento;
-6. expiração de PIX/cartão em `AWAITING_PAYMENT` e confirmação de que loja não recebe pedido;
-7. refund total e parcial, quando permitidos pela conta sandbox;
-8. inspeção por `apps/api/scripts/payment-work-status.sql`;
-9. inspeção sanitizada dos logs.
+4. com `MP_TEST_PIX_SCENARIO=APRO`, confirmar QR inicial, aprovação automática em até 60s e liberação única para a loja;
+5. repetir ticks concorrentes e confirmar uma única consulta/um único evento de pagamento confirmado;
+6. webhook assinado usando o ID real da Order sandbox correspondente;
+7. cancelamento;
+8. expiração de PIX/cartão em `AWAITING_PAYMENT` e confirmação de que loja não recebe pedido;
+9. refund total e parcial, quando permitidos pela conta sandbox;
+10. inspeção por `apps/api/scripts/payment-work-status.sql`;
+11. inspeção sanitizada dos logs.
 
 ## Cadeia de dependências
 
