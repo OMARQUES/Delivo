@@ -5,9 +5,15 @@ export type LocalCronStatus = 'TRIGGERED' | 'HTTP_ERROR' | 'API_UNAVAILABLE'
 export type LocalCronFetch = (input: string, init?: RequestInit) => Promise<Response>
 export type LocalCronWait = (milliseconds: number, signal: AbortSignal) => Promise<void>
 
-export async function triggerLocalCron(fetcher: LocalCronFetch = fetch): Promise<LocalCronStatus> {
+export async function triggerLocalCron(
+  fetcher: LocalCronFetch = fetch,
+  signal?: AbortSignal,
+): Promise<LocalCronStatus> {
   try {
-    const response = await fetcher(LOCAL_CRON_URL, { method: 'GET' })
+    const response = await fetcher(LOCAL_CRON_URL, {
+      method: 'GET',
+      ...(signal ? { signal } : {}),
+    })
     await response.body?.cancel()
     return response.ok ? 'TRIGGERED' : 'HTTP_ERROR'
   } catch {
@@ -16,17 +22,17 @@ export async function triggerLocalCron(fetcher: LocalCronFetch = fetch): Promise
 }
 
 export async function runLocalCronLoop(options: {
+  signal: AbortSignal
   fetcher?: LocalCronFetch
   wait?: LocalCronWait
-  signal?: AbortSignal
   onStatus?: (status: LocalCronStatus) => void
-} = {}): Promise<void> {
-  const signal = options.signal ?? new AbortController().signal
+}): Promise<void> {
+  const signal = options.signal
   const fetcher = options.fetcher ?? fetch
   const wait = options.wait ?? waitForLocalCron
 
   while (!signal.aborted) {
-    const status = await triggerLocalCron(fetcher)
+    const status = await triggerLocalCron(fetcher, signal)
     options.onStatus?.(status)
     if (signal.aborted) break
     await wait(LOCAL_CRON_INTERVAL_MS, signal)
@@ -46,4 +52,5 @@ export const waitForLocalCron: LocalCronWait = (milliseconds, signal) => new Pro
   }
   const timer = setTimeout(finish, milliseconds)
   signal.addEventListener('abort', finish, { once: true })
+  if (signal.aborted) finish()
 })

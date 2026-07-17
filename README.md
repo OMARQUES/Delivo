@@ -22,9 +22,12 @@ pnpm dev:driver  # http://localhost:5174
 pnpm dev:cron    # dispara o scheduled event local a cada 10s
 ```
 
-Mantenha os quatro processos em terminais separados. `dev:cron` chama somente o
-endpoint loopback do Wrangler (`127.0.0.1:8787`), executa chamadas sequenciais e
-emite apenas `STARTED`, `TRIGGERED`, `HTTP_ERROR` ou `API_UNAVAILABLE`.
+Mantenha os quatro processos em terminais separados. `dev:cron` é somente local,
+chama apenas o endpoint loopback do Wrangler (`127.0.0.1:8787`), executa chamadas
+sequenciais e emite apenas `STARTED`, `TRIGGERED`, `HTTP_ERROR` ou
+`API_UNAVAILABLE`. O reconciliador continua respeitando `next_attempt_at`;
+interromper o runner pode deixar operações de pagamento retryable pendentes até
+outro tick agendado.
 
 ### Reset e seed de demonstração local
 

@@ -32,6 +32,11 @@ mostrar `local_cron=STARTED` e, a cada 10 segundos, `local_cron=TRIGGERED`.
 resposta HTTP não-2xx. Nenhum desses estados imprime corpo de resposta ou dado
 financeiro.
 
+CANCEL_PENDING durante desenvolvimento local não avança apenas com espera:
+o próximo tick agendado precisa ocorrer. `pnpm dev:cron` fornece esses ticks.
+TRIGGERED confirma somente execução do evento local; conclusão financeira deve
+ser comprovada pela projeção do pedido e por `payment-work-status.sql`.
+
 ```bash
 pnpm --filter @delivery/api test -- mercadopago.test.ts payment-reconciliation.test.ts payment-operation.service.test.ts webhooks.routes.test.ts
 pnpm --filter @delivery/api exec tsc --noEmit

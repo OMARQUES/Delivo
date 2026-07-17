@@ -39,7 +39,8 @@ describe('local cron runner', () => {
     const wait = vi.fn(async () => {})
     let active = 0
     let maxActive = 0
-    fetcher.mockImplementation(async () => {
+    fetcher.mockImplementation(async (_input: string, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal)
       active += 1
       maxActive = Math.max(maxActive, active)
       await Promise.resolve()
@@ -54,5 +55,24 @@ describe('local cron runner', () => {
     expect(wait).toHaveBeenCalledTimes(2)
     expect(wait).toHaveBeenCalledWith(LOCAL_CRON_INTERVAL_MS, controller.signal)
     expect(maxActive).toBe(1)
+  })
+
+  it('aborts an in-flight scheduled request', async () => {
+    const controller = new AbortController()
+    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal)
+      controller.abort()
+      throw new DOMException('aborted', 'AbortError')
+    })
+
+    const statuses: LocalCronStatus[] = []
+    await runLocalCronLoop({
+      fetcher,
+      signal: controller.signal,
+      onStatus: status => statuses.push(status),
+    })
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(statuses).toEqual(['API_UNAVAILABLE'])
   })
 })
