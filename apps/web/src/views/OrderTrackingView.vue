@@ -97,7 +97,10 @@ async function cancel() {
   if (!confirm(message)) return
   isCancelling.value = true
   try {
-    await api(`/orders/${order.value.id}/cancel`, { method: 'POST' })
+    await api(`/orders/${order.value.id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
     await load()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro'

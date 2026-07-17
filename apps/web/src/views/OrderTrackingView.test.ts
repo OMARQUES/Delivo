@@ -42,7 +42,10 @@ describe('OrderTrackingView online cancellation', () => {
 
     await cancel.trigger('click')
     await flushPromises()
-    expect(mocks.api).toHaveBeenCalledWith('/orders/order-1/cancel', { method: 'POST' })
+    expect(mocks.api).toHaveBeenCalledWith('/orders/order-1/cancel', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
     expect(wrapper.text()).toContain('nenhuma cobrança foi concluída')
     wrapper.unmount()
   })

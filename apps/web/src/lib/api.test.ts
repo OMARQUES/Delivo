@@ -19,6 +19,17 @@ describe('api errors', () => {
     )
   })
 
+  it('marks an explicit empty JSON mutation body as application/json', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api('/orders/order-1/cancel', { method: 'POST', body: JSON.stringify({}) })
+
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit]
+    expect(new Headers(init.headers).get('Content-Type')).toBe('application/json')
+    expect(init.credentials).toBe('include')
+  })
+
   it('preserves stable code and Retry-After metadata', async () => {
     vi.stubGlobal(
       'fetch',

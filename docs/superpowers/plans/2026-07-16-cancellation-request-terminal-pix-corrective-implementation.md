@@ -34,7 +34,7 @@
 - Produces: direct cancellation calls `POST /orders/{id}/cancel` with the literal JSON body `{}`; terminal PIX snapshots normalize with `pix: null`; active PIX still requires both `qr_code` and `qr_code_base64`.
 - Preserves: `ProviderOrderSnapshot` type, payment decision mapping, operation result codes, route authorization, and body security policy.
 
-- [ ] **Step 1: Write RED frontend cancellation contract**
+- [x] **Step 1: Write RED frontend cancellation contract**
 
 Change the final assertion in `apps/web/src/views/OrderTrackingView.test.ts` to require the explicit empty JSON body:
 
@@ -45,17 +45,17 @@ expect(mocks.api).toHaveBeenCalledWith('/orders/order-1/cancel', {
 })
 ```
 
-- [ ] **Step 2: Run frontend test and verify RED**
+- [x] **Step 2: Run frontend test and verify RED**
 
 Run:
 
 ```bash
-pnpm --filter @delivery/web test -- src/views/OrderTrackingView.test.ts
+pnpm --dir apps/web exec vitest run src/views/OrderTrackingView.test.ts
 ```
 
 Expected: FAIL because the component currently calls the endpoint with only `{ method: 'POST' }`.
 
-- [ ] **Step 3: Write RED terminal PIX and active fail-closed tests**
+- [x] **Step 3: Write RED terminal PIX and active fail-closed tests**
 
 In `apps/api/test/mercadopago.test.ts`, add this helper after `officialPixOrder`:
 
@@ -117,17 +117,17 @@ it.each(['qr_code', 'qr_code_base64'] as const)(
 
 If TypeScript rejects deleting a required inferred property, declare `paymentMethod` as `Record<string, unknown>`; do not weaken production types.
 
-- [ ] **Step 4: Run provider test and verify RED**
+- [x] **Step 4: Run provider test and verify RED**
 
 Run:
 
 ```bash
-pnpm --filter @delivery/api test -- mercadopago.test.ts
+pnpm --dir apps/api exec vitest run test/mercadopago.test.ts
 ```
 
 Expected: terminal PIX cases FAIL with `PROVIDER_RESPONSE_INVALID`; active missing-QR cases PASS as characterization of the fail-closed contract.
 
-- [ ] **Step 5: Implement explicit JSON cancellation request**
+- [x] **Step 5: Implement explicit JSON cancellation request**
 
 In `apps/web/src/views/OrderTrackingView.vue`, replace only the direct cancel request with:
 
@@ -140,7 +140,7 @@ await api(`/orders/${order.value.id}/cancel`, {
 
 Do not change `api.ts` or `security-baseline.ts`.
 
-- [ ] **Step 6: Document wrapper header behavior**
+- [x] **Step 6: Document wrapper header behavior**
 
 Add to `apps/web/src/lib/api.test.ts`:
 
@@ -151,7 +151,7 @@ it('marks an explicit empty JSON mutation body as application/json', async () =>
 
   await api('/orders/order-1/cancel', { method: 'POST', body: JSON.stringify({}) })
 
-  const [, init] = fetchMock.mock.calls[0]! as [string, RequestInit]
+  const [, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit]
   expect(new Headers(init.headers).get('Content-Type')).toBe('application/json')
   expect(init.credentials).toBe('include')
 })
@@ -159,7 +159,7 @@ it('marks an explicit empty JSON mutation body as application/json', async () =>
 
 This is a characterization test for existing wrapper behavior. The behavior-changing RED test is Step 2.
 
-- [ ] **Step 7: Implement status-aware PIX normalization**
+- [x] **Step 7: Implement status-aware PIX normalization**
 
 In `apps/api/src/payments/mercadopago.ts`, add beside the other module constants:
 
@@ -201,18 +201,18 @@ transactionStatusDetail: optionalString(transaction.status_detail),
 
 Do not alter status validation, transition logic, or operation evaluation.
 
-- [ ] **Step 8: Run focused GREEN tests**
+- [x] **Step 8: Run focused GREEN tests**
 
 Run:
 
 ```bash
-pnpm --filter @delivery/web test -- src/views/OrderTrackingView.test.ts src/lib/api.test.ts
-pnpm --filter @delivery/api test -- mercadopago.test.ts payment-operation.service.test.ts
+pnpm --dir apps/web exec vitest run src/views/OrderTrackingView.test.ts src/lib/api.test.ts
+pnpm --dir apps/api exec vitest run test/mercadopago.test.ts test/payment-operation.service.test.ts
 ```
 
 Expected: PASS. Existing operation coverage must still show canceled snapshot result code `CANCELLED` and approved cancellation escalation to full refund.
 
-- [ ] **Step 9: Run package and repository gates**
+- [x] **Step 9: Run package and repository gates**
 
 Run:
 
@@ -228,7 +228,7 @@ git diff --check
 
 Expected: every command exits `0`; no secret or provider-body output appears.
 
-- [ ] **Step 10: Review exact scope and commit**
+- [x] **Step 10: Review exact scope and commit**
 
 Run:
 
@@ -241,7 +241,7 @@ git diff -- apps/web/src/views/OrderTrackingView.test.ts \
   apps/api/src/payments/mercadopago.ts
 ```
 
-Expected: only the five planned implementation files are changed; ignored/local env files and provider identifiers are absent.
+Expected: only the five planned implementation files and this corrected plan are changed; ignored/local env files and provider identifiers are absent.
 
 Commit:
 
@@ -250,7 +250,8 @@ git add apps/web/src/views/OrderTrackingView.test.ts \
   apps/web/src/views/OrderTrackingView.vue \
   apps/web/src/lib/api.test.ts \
   apps/api/test/mercadopago.test.ts \
-  apps/api/src/payments/mercadopago.ts
+  apps/api/src/payments/mercadopago.ts \
+  docs/superpowers/plans/2026-07-16-cancellation-request-terminal-pix-corrective-implementation.md
 git commit -m "fix(payments): settle terminal PIX cancellation"
 ```
 

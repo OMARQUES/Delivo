@@ -24,6 +24,14 @@ const MAX_RETRY_AFTER_SECONDS = 6 * 60 * 60
 const MUTATION_RECOVERY_KINDS = new Set<ProviderFailureKind>([
   'MUTATION_REQUIRES_READ', 'RESOURCE_LOCKED', 'ORDER_NOT_FOUND', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE', 'TRANSIENT_UNCERTAIN',
 ])
+const TERMINAL_PIX_STATUSES = new Set([
+  'processed', 'accredited', 'failed', 'rejected',
+  'canceled', 'cancelled', 'expired', 'refunded',
+])
+
+function isTerminalPixStatus(...statuses: Array<string | null>): boolean {
+  return statuses.some((status) => status !== null && TERMINAL_PIX_STATUSES.has(status.toLowerCase()))
+}
 
 function failureKind(status: number, intent: RequestIntent): ProviderFailureKind {
   if (status === 401 || status === 403) return 'CREDENTIAL_OR_CONFIG'
@@ -136,15 +144,18 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     const totalAmountCents = amount(order.total_amount)
     const refundedRaw = transaction.refunded_amount ?? order.refunded_amount ?? '0.00'
     const integrationData = asObject(order.integration_data)
-    const pix = method === 'PIX'
+    const orderStatus = requiredString(order.status)
+    const transactionStatus = optionalString(transaction.status)
+    const terminalPix = method === 'PIX' && isTerminalPixStatus(orderStatus, transactionStatus)
+    const pix = method === 'PIX' && !terminalPix
       ? { qrCode: requiredString(paymentMethod.qr_code), qrCodeBase64: requiredString(paymentMethod.qr_code_base64), ticketUrl: optionalString(paymentMethod.ticket_url), expiresAt: dateOrNull(transaction.date_of_expiration ?? order.date_of_expiration) }
       : null
     return {
       providerOrderId: orderId,
       providerTransactionId: transactionId,
-      orderStatus: requiredString(order.status),
+      orderStatus,
       orderStatusDetail: requiredString(order.status_detail),
-      transactionStatus: optionalString(transaction.status),
+      transactionStatus,
       transactionStatusDetail: optionalString(transaction.status_detail),
       externalReference: requiredString(order.external_reference),
       totalAmountCents,

@@ -45,6 +45,18 @@ function officialPixOrder(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function pixWithoutQr(status: string, statusDetail: string) {
+  return officialPixOrder({
+    status,
+    status_detail: statusDetail,
+    transactions: { payments: [{
+      id: 'PAY_TEST_PIX', amount: '64.00', refunded_amount: status === 'refunded' ? '64.00' : '0.00',
+      status, status_detail: statusDetail,
+      payment_method: { id: 'pix', type: 'bank_transfer' },
+    }] },
+  })
+}
+
 function officialCardOrder(overrides: Record<string, unknown> = {}) {
   return officialPixOrder({
     id: 'ORD_TEST_CARD', country_code: 'BR', status: 'processed', status_detail: 'accredited',
@@ -104,10 +116,10 @@ describe('MercadoPagoOrdersProvider', () => {
   })
 
   it('maps PIX QR data and card token request without leaking token', async () => {
-    const fetchMock = vi.fn(async () => response(snapshot(), 201))
+    const fetchMock = vi.fn(async () => response(officialPixOrder(), 201))
     vi.stubGlobal('fetch', fetchMock)
     const pix = await provider.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local', idempotencyKey: 'pix-key', method: 'PIX', expiresAt: new Date('2026-07-15T12:15:00Z') })
-    expect(pix.pix).toMatchObject({ qrCode: 'copy-paste', qrCodeBase64: 'base64' })
+    expect(pix.pix).toMatchObject({ qrCode: 'sanitized-copy-paste', qrCodeBase64: 'sanitized-base64' })
 
     fetchMock.mockResolvedValueOnce(response(snapshot({ transactions: { payments: [{ id: 'tx-card', status: 'processed', status_detail: 'accredited', amount: '64.00', payment_method: { id: 'visa', type: 'credit_card' } }] } }), 201))
     const card = await provider.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local', idempotencyKey: 'card-key', method: 'CARD', cardToken: 'card-token-secret', cardPaymentMethodId: 'visa', installments: 1 })
@@ -141,6 +153,44 @@ describe('MercadoPagoOrdersProvider', () => {
       },
     })
   })
+
+  it.each([
+    ['canceled', 'canceled_transaction'],
+    ['expired', 'expired'],
+    ['rejected', 'rejected'],
+    ['processed', 'accredited'],
+    ['refunded', 'refunded'],
+  ] as const)('normalizes terminal PIX %s without stale QR artifacts', async (status, detail) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(pixWithoutQr(status, detail))))
+
+    await expect(provider.getOrder('ORD_TEST_PIX')).resolves.toMatchObject({
+      orderStatus: status,
+      transactionStatus: status,
+      pix: null,
+    })
+  })
+
+  it.each(['qr_code', 'qr_code_base64'] as const)(
+    'rejects active PIX when %s is missing',
+    async (missing) => {
+      const paymentMethod: Record<string, unknown> = {
+        id: 'pix', type: 'bank_transfer',
+        qr_code: 'sanitized-copy-paste', qr_code_base64: 'sanitized-base64',
+      }
+      delete paymentMethod[missing]
+      vi.stubGlobal('fetch', vi.fn(async () => response(officialPixOrder({
+        transactions: { payments: [{
+          id: 'PAY_TEST_PIX', amount: '64.00', refunded_amount: '0.00',
+          status: 'action_required', status_detail: 'waiting_transfer',
+          payment_method: paymentMethod,
+        }] },
+      }))))
+
+      await expect(provider.getOrder('ORD_TEST_PIX')).rejects.toMatchObject({
+        kind: 'PROVIDER_RESPONSE_INVALID',
+      })
+    },
+  )
 
   it('defaults absent currency to BRL and preserves explicit currency', async () => {
     const fetchMock = vi.fn()
