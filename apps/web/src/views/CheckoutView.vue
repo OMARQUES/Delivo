@@ -32,7 +32,7 @@ const contactPhone = ref('')
 const contactWarning = ref('')
 const savingContact = ref(false)
 const contactPromptHandled = ref(false)
-const idempotencyKey = crypto.randomUUID()
+const idempotencyKey = ref(crypto.randomUUID())
 let destroyBrick: (() => void) | null = null
 
 const showNewAddress = ref(false)
@@ -55,7 +55,7 @@ function checkoutBody() {
       note: i.note || undefined,
       selections: i.selections,
     })),
-    idempotencyKey,
+    idempotencyKey: idempotencyKey.value,
   }
   if (paymentMethod.value === 'CARD_ONLINE') {
     return {
@@ -146,6 +146,12 @@ function hasRequiredPaymentDetails() {
   return true
 }
 
+function isDefinitivePaymentRejection(error: unknown): error is Error & { status: number; code: string } {
+  return error instanceof Error
+    && (error as Error & { status?: number }).status === 402
+    && (error as Error & { code?: string }).code === 'PAYMENT_REJECTED'
+}
+
 async function placeOrder() {
   if (!canSubmit.value || !hasRequiredPaymentDetails()) return
   submitting.value = true
@@ -160,6 +166,7 @@ async function placeOrder() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erro ao enviar pedido'
     if (paymentMethod.value === 'CARD_ONLINE') {
+      if (isDefinitivePaymentRejection(e)) idempotencyKey.value = crypto.randomUUID()
       cardData.value = null
       destroyCardBrick()
       await mountBrickIfReady()

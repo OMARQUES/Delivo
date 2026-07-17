@@ -60,7 +60,7 @@ export async function createOnlinePayment(db: Db, provider: PaymentProvider, inp
   paymentId: string
   payerEmail: string
   card?: { token: string; methodId: string }
-}): Promise<{ kind: 'PIX'; qrCode: string; qrCodeBase64: string; expiresAt: string } | { kind: 'APPROVED' | 'PENDING' }> {
+}): Promise<{ kind: 'PIX'; qrCode: string; qrCodeBase64: string | null; expiresAt: string } | { kind: 'APPROVED' | 'PENDING' }> {
   const [payment] = await db.select().from(payments).where(eq(payments.id, input.paymentId)).limit(1)
   if (!payment) throw new CheckoutError('PAYMENT_REVIEW_REQUIRED', 503)
   const accountId = await provider.getAccountId()
@@ -74,7 +74,7 @@ export async function createOnlinePayment(db: Db, provider: PaymentProvider, inp
       const [current] = await db.select().from(payments).where(eq(payments.id, payment.id)).limit(1)
       if (!current || current.reconciliationState === 'REVIEW_REQUIRED') throw new CheckoutError('PAYMENT_REVIEW_REQUIRED', 503)
       if (current.status === 'REJECTED' || current.status === 'CANCELLED' || current.status === 'EXPIRED') throw new CheckoutError('PAYMENT_REJECTED', 402)
-      return current.method === 'PIX' && current.qrCode && current.qrCodeBase64
+      return current.method === 'PIX' && current.qrCode
         ? { kind: 'PIX', qrCode: current.qrCode, qrCodeBase64: current.qrCodeBase64, expiresAt: (current.expiresAt ?? new Date()).toISOString() }
         : { kind: current.status === 'APPROVED' ? 'APPROVED' : 'PENDING' }
     }
@@ -120,11 +120,11 @@ async function checkoutResultFromStoredPayment(
   db: Db,
   paymentId: string,
   providerError?: PaymentProviderError,
-): Promise<{ kind: 'PIX'; qrCode: string; qrCodeBase64: string; expiresAt: string } | { kind: 'APPROVED' | 'PENDING' }> {
+): Promise<{ kind: 'PIX'; qrCode: string; qrCodeBase64: string | null; expiresAt: string } | { kind: 'APPROVED' | 'PENDING' }> {
   const [current] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1)
   if (!current || current.reconciliationState === 'REVIEW_REQUIRED') throw new CheckoutError('PAYMENT_REVIEW_REQUIRED', 503, providerError)
   if (current.status === 'REJECTED' || current.status === 'CANCELLED' || current.status === 'EXPIRED') throw new CheckoutError('PAYMENT_REJECTED', 402)
-  if (current.method === 'PIX' && current.qrCode && current.qrCodeBase64) {
+  if (current.method === 'PIX' && current.qrCode) {
     return { kind: 'PIX', qrCode: current.qrCode, qrCodeBase64: current.qrCodeBase64, expiresAt: (current.expiresAt ?? new Date()).toISOString() }
   }
   return { kind: current.status === 'APPROVED' ? 'APPROVED' : 'PENDING' }

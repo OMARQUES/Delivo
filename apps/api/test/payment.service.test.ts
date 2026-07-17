@@ -317,6 +317,25 @@ describe('applyProviderSnapshot', () => {
 })
 
 describe('Orders checkout orchestration', () => {
+  it.each([
+    ['REJECTED', 'HEALTHY', 'PAYMENT_REJECTED', 402],
+    ['CANCELLED', 'HEALTHY', 'PAYMENT_REJECTED', 402],
+    ['EXPIRED', 'HEALTHY', 'PAYMENT_REJECTED', 402],
+    ['PENDING', 'REVIEW_REQUIRED', 'PAYMENT_REVIEW_REQUIRED', 503],
+  ] as const)('preserves %s/%s on idempotent checkout replay', async (status, reconciliationState, code, httpStatus) => {
+    const { order, payment } = await makePayment()
+    await testDb.update(payments).set({ status, reconciliationState }).where(eq(payments.id, payment.id))
+    const provider = fakePaymentProvider()
+
+    await expect(createOrder(testDb, customerId, {
+      storeSlug: 'pizzaria', fulfillment: 'PICKUP', paymentMethod: 'CARD_ONLINE',
+      items: [{ productId, quantity: 1, selections: [] }], idempotencyKey: order.idempotencyKey,
+      cardToken: 'card-token-test', cardPaymentMethodId: 'visa', installments: 1,
+    }, {
+      provider, payerEmail: 'payer@test.local', applicationId: 'app-test', accountId: 'account-test', liveMode: false,
+    })).rejects.toMatchObject({ code, status: httpStatus })
+  })
+
   it('recovers create 402 through exact search and authoritative GET as a rejected card', async () => {
     const { order, payment } = await makeUncertainCard()
     const rejected = snapshot(order.id, order.totalCents, {

@@ -3,14 +3,19 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '../stores/auth'
 import { useCartStore } from '../stores/cart'
+import type { CardFormData } from '../lib/mp-brick'
 import CheckoutView from './CheckoutView.vue'
 
 const replace = vi.fn()
+const cardSubmit = vi.hoisted(() => ({ current: null as null | ((data: CardFormData) => Promise<void>) }))
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ replace }) }))
 vi.mock('../lib/mp-brick', () => ({
-  cardConfigured: () => false,
-  mountCardBrick: vi.fn(),
+  cardConfigured: () => true,
+  mountCardBrick: vi.fn(async (_container: string, _amount: number, onSubmit: (data: CardFormData) => Promise<void>) => {
+    cardSubmit.current = onSubmit
+    return vi.fn()
+  }),
 }))
 
 const customer = {
@@ -53,6 +58,12 @@ function apiMock(contactStatus = 200) {
   })
 }
 
+function orderBodies(fetchMock: ReturnType<typeof apiMock>) {
+  return fetchMock.mock.calls
+    .filter(([input, init]) => new URL(String(input)).pathname === '/orders' && init?.method === 'POST')
+    .map(([, init]) => JSON.parse(String(init?.body)) as { idempotencyKey: string })
+}
+
 async function mountCheckout(fetchMock: ReturnType<typeof apiMock>) {
   vi.stubGlobal('fetch', fetchMock)
   const auth = useAuthStore()
@@ -78,6 +89,7 @@ beforeEach(() => {
   localStorage.clear()
   replace.mockReset()
   vi.restoreAllMocks()
+  cardSubmit.current = null
 })
 
 describe('CheckoutView optional contact prompt', () => {
@@ -156,5 +168,66 @@ describe('CheckoutView optional contact prompt', () => {
     expect(wrapper.text()).toContain('Preencha os dados do cartão')
     expect(fetchMock.mock.calls.some(([input, init]) => new URL(String(input)).pathname === '/orders' && init?.method === 'POST')).toBe(false)
     expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('rotates card attempt key only after PAYMENT_REJECTED', async () => {
+    const fetchMock = apiMock()
+    const originalFetch = fetchMock.getMockImplementation()!
+    let orderCalls = 0
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/orders' && init?.method === 'POST') {
+        orderCalls += 1
+        if (orderCalls === 1) {
+          return new Response(JSON.stringify({ error: 'Pagamento recusado', code: 'PAYMENT_REJECTED' }), { status: 402 })
+        }
+        return new Response(JSON.stringify({ order: { id: 'order-2' }, payment: null }), { status: 201 })
+      }
+      return originalFetch(input, init)
+    })
+    const { wrapper, auth } = await mountCheckout(fetchMock)
+    auth.user!.phone = '44999998888'
+    ;(wrapper.vm as unknown as { paymentMethod: string }).paymentMethod = 'CARD_ONLINE'
+    await flushPromises()
+
+    await cardSubmit.current!({ token: 'token-1', payment_method_id: 'visa', installments: 1 })
+    await flushPromises()
+    await cardSubmit.current!({ token: 'token-2', payment_method_id: 'visa', installments: 1 })
+    await flushPromises()
+
+    const bodies = orderBodies(fetchMock)
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1]!.idempotencyKey).not.toBe(bodies[0]!.idempotencyKey)
+    expect(replace).toHaveBeenCalledWith('/pedido/order-2')
+    wrapper.unmount()
+  })
+
+  it('retains card attempt key after network failure and 503', async () => {
+    const fetchMock = apiMock()
+    const originalFetch = fetchMock.getMockImplementation()!
+    let orderCalls = 0
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/orders' && init?.method === 'POST') {
+        orderCalls += 1
+        if (orderCalls === 1) throw new TypeError('network unavailable')
+        return new Response(JSON.stringify({ error: 'Indisponível', code: 'PAYMENT_UNCERTAIN' }), { status: 503 })
+      }
+      return originalFetch(input, init)
+    })
+    const { wrapper, auth } = await mountCheckout(fetchMock)
+    auth.user!.phone = '44999998888'
+    ;(wrapper.vm as unknown as { paymentMethod: string }).paymentMethod = 'CARD_ONLINE'
+    await flushPromises()
+
+    await cardSubmit.current!({ token: 'token-1', payment_method_id: 'visa', installments: 1 })
+    await flushPromises()
+    await cardSubmit.current!({ token: 'token-2', payment_method_id: 'visa', installments: 1 })
+    await flushPromises()
+
+    const bodies = orderBodies(fetchMock)
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1]!.idempotencyKey).toBe(bodies[0]!.idempotencyKey)
+    wrapper.unmount()
   })
 })

@@ -159,17 +159,29 @@ async function findByIdempotency(db: Db, customerId: string, key: string) {
 export type CreateOrderResult = {
   order: typeof orders.$inferSelect
   /** presente só em PIX_ONLINE — dados pra tela de pagamento */
-  payment: { qrCode: string; qrCodeBase64: string; expiresAt: string } | null
+  payment: { qrCode: string; qrCodeBase64: string | null; expiresAt: string } | null
 }
 
 async function resultFromExisting(db: Db, order: typeof orders.$inferSelect): Promise<CreateOrderResult> {
-  if (order.status === 'AWAITING_PAYMENT') {
-    const p = await getOrderPayment(db, order.id)
-    if (p?.qrCode) {
-      return {
-        order,
-        payment: { qrCode: p.qrCode, qrCodeBase64: p.qrCodeBase64!, expiresAt: p.expiresAt!.toISOString() },
-      }
+  const payment = await getOrderPayment(db, order.id)
+  if (!payment) return { order, payment: null }
+  if (payment.status === 'REJECTED' || payment.status === 'CANCELLED' || payment.status === 'EXPIRED') {
+    throw new CheckoutError('PAYMENT_REJECTED', 402)
+  }
+  if (payment.reconciliationState === 'REVIEW_REQUIRED') {
+    throw new CheckoutError('PAYMENT_REVIEW_REQUIRED', 503)
+  }
+  if (payment.status === 'PENDING' && payment.providerOrderId === null) {
+    throw new CheckoutError('PAYMENT_UNCERTAIN', 503)
+  }
+  if (payment.method === 'PIX' && payment.qrCode) {
+    return {
+      order,
+      payment: {
+        qrCode: payment.qrCode,
+        qrCodeBase64: payment.qrCodeBase64,
+        expiresAt: (payment.expiresAt ?? new Date()).toISOString(),
+      },
     }
   }
   return { order, payment: null }

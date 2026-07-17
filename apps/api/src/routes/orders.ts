@@ -39,7 +39,12 @@ function rethrow(e: unknown, diagnosticContext?: ProviderDiagnosticContext): nev
   if (e instanceof OrderError || e instanceof PaymentError) throw new HTTPException(e.status, { message: e.message })
   if (e instanceof CheckoutError) {
     if (e.providerError && diagnosticContext) logPaymentProviderFailure(e.providerError, diagnosticContext)
-    throw new HTTPException(e.status, { message: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega' })
+    const message = e.code === 'PAYMENT_REJECTED'
+      ? 'Pagamento recusado — revise os dados ou tente outro cartão'
+      : 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega'
+    throw new HTTPException(e.status, {
+      res: Response.json({ error: message, code: e.code }, { status: e.status }),
+    })
   }
   if (e instanceof OrdersProviderError) {
     if (diagnosticContext) logPaymentProviderFailure(e, diagnosticContext)

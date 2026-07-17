@@ -250,6 +250,42 @@ describe('POST /orders/quote + POST /orders', () => {
     vi.restoreAllMocks()
   })
 
+  it('replayed rejected card attempt returns 402 code without second provider create', async () => {
+    const createOrder = vi.fn(async (i: Parameters<NonNullable<ReturnType<typeof mp.createPaymentProvider>>['createOrder']>[0]) => providerSnapshot({
+      providerOrderId: `mp-${i.orderId}`,
+      providerTransactionId: `tx-${i.orderId}`,
+      externalReference: i.orderId,
+      method: 'CARD',
+      paymentMethodId: 'visa',
+      orderStatus: 'rejected',
+      orderStatusDetail: 'rejected',
+      transactionStatus: 'rejected',
+      transactionStatusDetail: 'rejected',
+      pix: null,
+    }))
+    vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
+      getAccountId: async () => 'account-test',
+      createOrder,
+      getOrder: async () => providerSnapshot(), searchOrders: async () => [], cancelOrder: async () => providerSnapshot(), refundOrder: async () => providerSnapshot(), refundPartial: async () => providerSnapshot(),
+    })
+    const body = checkout({
+      paymentMethod: 'CARD_ONLINE',
+      cardToken: 'tok_rejected_replay',
+      cardPaymentMethodId: 'visa',
+      installments: 1,
+    })
+
+    const first = await req('/orders', { method: 'POST', body: JSON.stringify(body) })
+    const replay = await req('/orders', { method: 'POST', body: JSON.stringify(body) })
+
+    expect(first.status).toBe(402)
+    expect(replay.status).toBe(402)
+    expect(await first.json()).toMatchObject({ code: 'PAYMENT_REJECTED' })
+    expect(await replay.json()).toMatchObject({ code: 'PAYMENT_REJECTED' })
+    expect(createOrder).toHaveBeenCalledTimes(1)
+    vi.restoreAllMocks()
+  })
+
   it('CARD_ONLINE persists a 30-minute payment deadline', async () => {
     vi.spyOn(mp, 'createPaymentProvider').mockReturnValue({
       getAccountId: async () => 'account-test',
@@ -302,8 +338,9 @@ describe('POST /orders/quote + POST /orders', () => {
       }, customerToken)
 
       expect(res.status).toBe(402)
-      expect((await res.json()) as { error: string }).toEqual({
-        error: 'Pagamento indisponível no momento — tente novamente ou use pagamento na entrega',
+      expect((await res.json()) as { error: string; code: string }).toEqual({
+        error: 'Pagamento recusado — revise os dados ou tente outro cartão',
+        code: 'PAYMENT_REJECTED',
       })
       const [payment] = await testDb.select().from(payments).where(eq(payments.orderId, attemptedOrderId))
       expect(payment).toMatchObject({
