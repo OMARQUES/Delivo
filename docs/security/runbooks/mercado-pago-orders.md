@@ -17,6 +17,21 @@ Confirmar token novo, escopo correto, conta/application esperados e modo sandbox
 
 ## Verificação local
 
+Abra quatro terminais na raiz do repositório:
+
+```bash
+pnpm dev:api
+pnpm dev:web
+pnpm dev:driver
+pnpm dev:cron
+```
+
+O primeiro terminal deve indicar `Ready on http://localhost:8787`. O runner deve
+mostrar `local_cron=STARTED` e, a cada 10 segundos, `local_cron=TRIGGERED`.
+`API_UNAVAILABLE` significa que a API ainda não está pronta; `HTTP_ERROR` indica
+resposta HTTP não-2xx. Nenhum desses estados imprime corpo de resposta ou dado
+financeiro.
+
 ```bash
 pnpm --filter @delivery/api test -- mercadopago.test.ts payment-reconciliation.test.ts payment-operation.service.test.ts webhooks.routes.test.ts
 pnpm --filter @delivery/api exec tsc --noEmit

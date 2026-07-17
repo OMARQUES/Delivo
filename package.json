@@ -9,6 +9,7 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
     "dev:api": "pnpm --filter @delivery/api dev",
+    "dev:cron": "pnpm --filter @delivery/api dev:cron",
     "dev:web": "pnpm --filter @delivery/web dev",
     "dev:driver": "pnpm --filter @delivery/driver dev",
     "build": "pnpm -r build",

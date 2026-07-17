@@ -37,7 +37,7 @@
 - Produces: every `POST`, `PUT`, `PATCH`, or `DELETE` with `init.body == null` reaches `fetch` with `body: '{}'` and `Content-Type: application/json` unless the caller supplied a content type.
 - Preserves: safe bodyless methods, explicit `BodyInit`, caller headers, Access cookies, bearer token injection and one refresh retry.
 
-- [ ] **Step 1: Add the RED empty-mutation matrix to the web wrapper tests**
+- [x] **Step 1: Add the RED empty-mutation matrix to the web wrapper tests**
 
 In `apps/web/src/lib/api.test.ts`, import `setTokenProvider` with `api`:
 
@@ -119,7 +119,7 @@ it('replays the same normalized empty JSON after one refresh', async () => {
 
 The token text is a local test literal, not a real credential.
 
-- [ ] **Step 2: Add the complete RED contract to the driver wrapper tests**
+- [x] **Step 2: Add the complete RED contract to the driver wrapper tests**
 
 In `apps/driver/src/lib/api.test.ts`, import and reset the provider exactly as
 the web suite does:
@@ -199,7 +199,7 @@ it('replays the same normalized empty JSON after one refresh', async () => {
 })
 ```
 
-- [ ] **Step 3: Run both focused suites and verify RED**
+- [x] **Step 3: Run both focused suites and verify RED**
 
 Run:
 
@@ -210,7 +210,7 @@ pnpm --dir apps/driver exec vitest run src/lib/api.test.ts
 
 Expected: both suites fail the unsafe-method matrix because `init.body` is currently `undefined`; the explicit-body and GET characterization assertions pass.
 
-- [ ] **Step 4: Implement the normalization in the web wrapper**
+- [x] **Step 4: Implement the normalization in the web wrapper**
 
 In `apps/web/src/lib/api.ts`, add above `api()`:
 
@@ -245,7 +245,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
 
 Leave response parsing and refresh recursion unchanged. Passing original `init` to the recursive call intentionally derives the same normalized body again.
 
-- [ ] **Step 5: Implement the identical normalization in the driver wrapper**
+- [x] **Step 5: Implement the identical normalization in the driver wrapper**
 
 In `apps/driver/src/lib/api.ts`, add above `api()`:
 
@@ -282,7 +282,7 @@ Leave response parsing and refresh recursion unchanged. Do not create a shared
 package abstraction in this correction; the two existing frontend boundaries
 must remain structurally identical.
 
-- [ ] **Step 6: Run focused and frontend gates**
+- [x] **Step 6: Run focused and frontend gates**
 
 Run:
 
@@ -298,7 +298,7 @@ git diff --check
 
 Expected: all pass. Inspect the two implementations side by side and confirm the normalization logic is identical.
 
-- [ ] **Step 7: Review and commit the transport correction**
+- [x] **Step 7: Review and commit the transport correction**
 
 Review:
 
@@ -334,7 +334,7 @@ git commit -m "fix(frontend): normalize empty mutations"
 - Consumes: Wrangler's local-only `GET /__scheduled` route and the existing Worker `scheduled()` handler.
 - Preserves: the configured staging cron, reconciliation stages, retry eligibility, idempotency and provider-operation semantics.
 
-- [ ] **Step 1: Write RED tests for the local cron unit**
+- [x] **Step 1: Write RED tests for the local cron unit**
 
 Create `apps/api/test/local-cron.test.ts`:
 
@@ -407,7 +407,7 @@ describe('local cron runner', () => {
 })
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -417,7 +417,7 @@ pnpm --dir apps/api exec vitest run test/local-cron.test.ts
 
 Expected: FAIL because `../src/dev/local-cron` does not exist.
 
-- [ ] **Step 3: Implement the testable local cron unit**
+- [x] **Step 3: Implement the testable local cron unit**
 
 Create `apps/api/src/dev/local-cron.ts`:
 
@@ -484,7 +484,7 @@ export async function runLocalCronLoop(options: {
 The fetch boundary deliberately returns only a three-value status; no response
 body or thrown error crosses into logging.
 
-- [ ] **Step 4: Create the signal-aware CLI entry point**
+- [x] **Step 4: Create the signal-aware CLI entry point**
 
 Create `apps/api/scripts/local-cron.ts`:
 
@@ -506,7 +506,7 @@ console.log('local_cron=STOPPED')
 
 Do not add arguments or environment variables that allow a remote URL.
 
-- [ ] **Step 5: Add the two development scripts**
+- [x] **Step 5: Add the two development scripts**
 
 In `apps/api/package.json`, change:
 
@@ -529,7 +529,7 @@ In the root `package.json`, add beside the other `dev:*` scripts:
 
 Do not add `concurrently` or another dependency; the approved workflow uses four explicit terminals.
 
-- [ ] **Step 6: Run the cron unit and API gates**
+- [x] **Step 6: Run the cron unit and API gates**
 
 Run:
 
@@ -541,7 +541,7 @@ pnpm --filter @delivery/api test
 
 Expected: all pass without starting Wrangler, contacting Mercado Pago or changing the database.
 
-- [ ] **Step 7: Document the four-terminal workflow and sanitized diagnosis**
+- [x] **Step 7: Document the four-terminal workflow and sanitized diagnosis**
 
 In the `README.md` Dev block, list:
 
@@ -568,7 +568,7 @@ ser comprovada pela projeção do pedido e por payment-work-status.sql.
 
 Keep provider IDs and response bodies out of the runbook examples.
 
-- [ ] **Step 8: Run repository verification and manual non-financial smoke**
+- [x] **Step 8: Run repository verification and manual non-financial smoke**
 
 First run the complete automated gate:
 
@@ -593,7 +593,7 @@ Then start the four terminals. Without creating a payment, verify:
 
 Do not perform Mercado Pago mutations as part of the implementation gate.
 
-- [ ] **Step 9: Review and commit the local development correction**
+- [x] **Step 9: Review and commit the local development correction**
 
 Review:
 

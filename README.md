@@ -16,10 +16,15 @@ corepack enable && pnpm install
 cp apps/api/.dev.vars.example apps/api/.dev.vars  # contém JWT_SECRET local
 docker compose up -d postgres
 pnpm --filter @delivery/api db:migrate
-pnpm dev:api     # http://localhost:8787 (docs em /docs)
+pnpm dev:api     # http://localhost:8787 (docs em /docs; scheduled-test habilitado)
 pnpm dev:web     # http://localhost:5173
 pnpm dev:driver  # http://localhost:5174
+pnpm dev:cron    # dispara o scheduled event local a cada 10s
 ```
+
+Mantenha os quatro processos em terminais separados. `dev:cron` chama somente o
+endpoint loopback do Wrangler (`127.0.0.1:8787`), executa chamadas sequenciais e
+emite apenas `STARTED`, `TRIGGERED`, `HTTP_ERROR` ou `API_UNAVAILABLE`.
 
 ### Reset e seed de demonstração local
 
