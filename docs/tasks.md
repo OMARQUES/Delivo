@@ -97,6 +97,9 @@ The three cancellation tasks form one approved product program and should be
 designed and implemented together in one isolated worktree, while retaining
 separate review gates and commits.
 
+**Implementation plan:**
+[`2026-07-17-order-cancellation-deadlines-return-route-implementation.md`](superpowers/plans/2026-07-17-order-cancellation-deadlines-return-route-implementation.md)
+
 ---
 
 ## Active product program — cancellation, deadlines, and returns
