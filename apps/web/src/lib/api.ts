@@ -12,15 +12,25 @@ export function setTokenProvider(p: TokenProvider) {
 }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
+const EMPTY_JSON_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+function normalizedBody(init: RequestInit): BodyInit | null | undefined {
+  const method = (init.method ?? 'GET').toUpperCase()
+  return EMPTY_JSON_METHODS.has(method) && init.body == null
+    ? JSON.stringify({})
+    : init.body
+}
 
 export async function api<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
+  const requestBody = normalizedBody(init)
   const headers = new Headers(init.headers)
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (requestBody != null && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const access = tokenProvider?.getAccessToken()
   if (access) headers.set('Authorization', `Bearer ${access}`)
 
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
+    body: requestBody,
     credentials: 'include',
     headers,
   })
