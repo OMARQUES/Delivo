@@ -1,6 +1,6 @@
 # Mercado Pago Card Retry and PIX Sandbox Design
 
-**Status:** approved in conversation; awaiting written-spec review
+**Status:** approved
 
 **Date:** 2026-07-17
 
