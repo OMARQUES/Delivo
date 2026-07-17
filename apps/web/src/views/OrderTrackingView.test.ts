@@ -22,6 +22,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('OrderTrackingView online cancellation', () => {
+  it('explains automatic refund while canceled payment remains under analysis', async () => {
+    mocks.api.mockResolvedValueOnce({ ...baseOrder, status: 'CANCELLED', paymentResolution: 'PROCESSING' })
+    const wrapper = mount(OrderTrackingView, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('O pagamento ainda está em análise')
+    expect(wrapper.text()).toContain('o estorno será realizado automaticamente')
+    wrapper.unmount()
+  })
+
   it('shows card processing deadline and cancels directly from awaiting payment', async () => {
     mocks.api.mockResolvedValueOnce(baseOrder).mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({
       ...baseOrder,

@@ -37,10 +37,53 @@ function snapshot(paymentId: string, amount: number, patch: Partial<ProviderOrde
 }
 
 function provider(overrides: Partial<PaymentProvider> = {}): PaymentProvider {
-  return { createOrder: vi.fn(), getOrder: vi.fn(async () => snapshot('x', 1)), searchOrders: vi.fn(async () => []), cancelOrder: vi.fn(async () => snapshot('x', 1)), refundOrder: vi.fn(async () => snapshot('x', 1)), refundPartial: vi.fn(async () => snapshot('x', 1)), getAccountId: vi.fn(async () => 'account-test'), ...overrides } as PaymentProvider
+  return { createOrder: vi.fn(), getOrder: vi.fn(async () => snapshot('x', 1, { orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer', refundedAmountCents: 0 })), searchOrders: vi.fn(async () => []), cancelOrder: vi.fn(async () => snapshot('x', 1)), refundOrder: vi.fn(async () => snapshot('x', 1)), refundPartial: vi.fn(async () => snapshot('x', 1)), getAccountId: vi.fn(async () => 'account-test'), ...overrides } as PaymentProvider
 }
 
 describe('durable payment operations', () => {
+  it('polls processing cancellation without calling Cancel Order', async () => {
+    const row = await payment()
+    const now = new Date('2026-07-17T12:00:00.000Z')
+    const queued = await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'CANCEL', amountCents: null, businessKey: `cancel-processing:${row.id}`, idempotencyKey: `cancel-processing:${row.id}` }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const getOrder = vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'processing', orderStatusDetail: 'in_process', transactionStatus: 'processing', transactionStatusDetail: 'in_process', refundedAmountCents: 0 }))
+    const cancelOrder = vi.fn()
+    await processPaymentOperation(testDb, provider({ getOrder, cancelOrder }), operationId!, 'worker-a', now)
+    expect(getOrder).toHaveBeenCalledOnce()
+    expect(cancelOrder).not.toHaveBeenCalled()
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({ status: 'PENDING', failureClass: 'CANCEL_PENDING', leaseOwner: null, leasedUntil: null })
+  })
+
+  it('calls Cancel Order only after actionable read', async () => {
+    const row = await payment()
+    const now = new Date('2026-07-17T12:00:00.000Z')
+    const idempotencyKey = `cancel-actionable:${row.id}`
+    const queued = await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'CANCEL', amountCents: null, businessKey: idempotencyKey, idempotencyKey }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const actionable = snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer', refundedAmountCents: 0 })
+    const canceled = { ...actionable, orderStatus: 'canceled', orderStatusDetail: 'canceled', transactionStatus: 'canceled', transactionStatusDetail: 'canceled' }
+    const cancelOrder = vi.fn(async () => canceled)
+    await processPaymentOperation(testDb, provider({ getOrder: vi.fn(async () => actionable), cancelOrder }), operationId!, 'worker-a', now)
+    expect(cancelOrder).toHaveBeenCalledWith(row.providerOrderId, idempotencyKey)
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({ status: 'SUCCEEDED', resultCode: 'CANCELLED', failureClass: null })
+  })
+
+  it.each([
+    ['failed', 'rejected', 'failed', 'rejected', 0, 'NOT_CHARGED'],
+    ['canceled', 'canceled', 'canceled', 'canceled', 0, 'CANCELLED'],
+    ['expired', 'expired', 'expired', 'expired', 0, 'NOT_CHARGED'],
+    ['refunded', 'refunded', 'refunded', 'refunded', 6000, 'REFUNDED'],
+  ] as const)('settles terminal cancellation read %s without mutation', async (orderStatus, orderStatusDetail, transactionStatus, transactionStatusDetail, refundedAmountCents, resultCode) => {
+    const row = await payment()
+    const now = new Date('2026-07-17T12:00:00.000Z')
+    const queued = await enqueuePaymentOperation(testDb, { paymentId: row.id, type: 'CANCEL', amountCents: null, businessKey: `cancel-terminal:${orderStatus}:${row.id}`, idempotencyKey: `cancel-terminal:${orderStatus}:${row.id}` }, now)
+    const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
+    const cancelOrder = vi.fn()
+    await processPaymentOperation(testDb, provider({ getOrder: vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { providerTransactionId: row.providerTransactionId!, externalReference: row.orderId, orderStatus, orderStatusDetail, transactionStatus, transactionStatusDetail, refundedAmountCents })), cancelOrder }), operationId!, 'worker-a', now)
+    expect(cancelOrder).not.toHaveBeenCalled()
+    expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({ status: 'SUCCEEDED', resultCode })
+  })
+
   it('deduplicates enqueue and claims only once', async () => {
     const row = await payment()
     const now = new Date()
@@ -108,7 +151,7 @@ describe('durable payment operations', () => {
       }, now)
       const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
       const unavailable = vi.fn(async () => { throw new PaymentProviderError('MUTATION_REQUIRES_READ', 409) })
-      const getOrder = vi.fn(async () => { throw new PaymentProviderError('ORDER_NOT_FOUND', 404) })
+      const getOrder = vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer', refundedAmountCents: 0 }))
 
       await processPaymentOperation(testDb, provider({
         cancelOrder: unavailable,
@@ -141,7 +184,7 @@ describe('durable payment operations', () => {
 
     await processPaymentOperation(testDb, provider({
       cancelOrder: failure,
-      getOrder: vi.fn(async () => { throw new PaymentProviderError('ORDER_NOT_FOUND', 404) }),
+      getOrder: vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer', refundedAmountCents: 0 })),
     }), operationId!, 'worker-a', now)
 
     const [stored] = await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id))
@@ -240,14 +283,14 @@ describe('durable payment operations', () => {
       businessKey: `invalid:${row.id}`, idempotencyKey: `invalid:${row.id}`,
     }, now)
     const [operationId] = await claimDueOperations(testDb, now, 1, 'worker-a')
-    const getOrder = vi.fn()
+    const getOrder = vi.fn(async () => snapshot(row.providerOrderId!, row.expectedAmountCents, { orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer', refundedAmountCents: 0 }))
 
     await processPaymentOperation(testDb, provider({
       cancelOrder: vi.fn(async () => { throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID', 400) }),
       getOrder,
     }), operationId!, 'worker-a', now)
 
-    expect(getOrder).not.toHaveBeenCalled()
+    expect(getOrder).toHaveBeenCalledOnce()
     expect((await testDb.select().from(paymentOperations).where(eq(paymentOperations.id, queued.id)))[0]).toMatchObject({
       status: 'REVIEW_REQUIRED', failureClass: 'PROVIDER_RESPONSE_INVALID',
     })

@@ -23,6 +23,8 @@ export type Env = PlatformBindings & {
   MP_APPLICATION_ID?: string
   MP_ACCOUNT_ID?: string
   MP_LIVE_MODE?: 'true' | 'false'
+  /** Local sandbox only: official Mercado Pago automatic PIX approval fixture. */
+  MP_TEST_PIX_SCENARIO?: 'APRO'
   /** Sandbox: força o email do comprador de TESTE (MP recusa emails reais com credencial de teste). Vazio em produção. */
   MP_TEST_PAYER_EMAIL?: string
   /** URL pública da API (webhook). Vazio em dev sem tunnel. */

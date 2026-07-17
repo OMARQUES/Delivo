@@ -170,14 +170,12 @@ describe('MercadoPagoOrdersProvider', () => {
     })
   })
 
-  it.each(['qr_code', 'qr_code_base64'] as const)(
-    'rejects active PIX when %s is missing',
-    async (missing) => {
+  it('rejects active PIX when qr_code is missing', async () => {
       const paymentMethod: Record<string, unknown> = {
         id: 'pix', type: 'bank_transfer',
         qr_code: 'sanitized-copy-paste', qr_code_base64: 'sanitized-base64',
       }
-      delete paymentMethod[missing]
+      delete paymentMethod.qr_code
       vi.stubGlobal('fetch', vi.fn(async () => response(officialPixOrder({
         transactions: { payments: [{
           id: 'PAY_TEST_PIX', amount: '64.00', refunded_amount: '0.00',
@@ -189,8 +187,35 @@ describe('MercadoPagoOrdersProvider', () => {
       await expect(provider.getOrder('ORD_TEST_PIX')).rejects.toMatchObject({
         kind: 'PROVIDER_RESPONSE_INVALID',
       })
-    },
-  )
+    })
+
+  it('accepts active PIX when qr_code_base64 is missing or empty', async () => {
+    for (const qrCodeBase64 of [undefined, '']) {
+      vi.stubGlobal('fetch', vi.fn(async () => response(officialPixOrder({
+        transactions: { payments: [{
+          id: 'PAY_TEST_PIX', amount: '64.00', refunded_amount: '0.00', status: 'action_required', status_detail: 'waiting_transfer',
+          payment_method: { id: 'pix', type: 'bank_transfer', qr_code: 'sanitized-copy-paste', qr_code_base64: qrCodeBase64 },
+        }] },
+      }))))
+      await expect(provider.getOrder('ORD_TEST_PIX')).resolves.toMatchObject({ pix: { qrCode: 'sanitized-copy-paste', qrCodeBase64: null } })
+    }
+  })
+
+  it('uses official PIX APRO payer only when configured', async () => {
+    const fetchMock = vi.fn(async () => response(officialPixOrder()))
+    vi.stubGlobal('fetch', fetchMock)
+    const apro = new MercadoPagoOrdersProvider(token, { applicationId: 'app-test', accountId: 'account-test', liveMode: false, testPixScenario: 'APRO' })
+    const result = await apro.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'ignored@test.local', idempotencyKey: 'pix-apro-key', method: 'PIX', expiresAt: new Date('2026-07-17T12:30:00Z') })
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)).payer).toEqual({ email: 'test_user_br@testuser.com', first_name: 'APRO' })
+    expect(result.pix).toMatchObject({ qrCode: 'sanitized-copy-paste', qrCodeBase64: 'sanitized-base64' })
+  })
+
+  it('keeps normal PIX payer when scenario is empty', async () => {
+    const fetchMock = vi.fn(async () => response(officialPixOrder()))
+    vi.stubGlobal('fetch', fetchMock)
+    await provider.createOrder({ orderId: 'order-1', amountCents: 6400, payerEmail: 'payer@test.local', idempotencyKey: 'pix-normal-key', method: 'PIX', expiresAt: new Date('2026-07-17T12:30:00Z') })
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)).payer).toEqual({ email: 'payer@test.local' })
+  })
 
   it('defaults absent currency to BRL and preserves explicit currency', async () => {
     const fetchMock = vi.fn()
@@ -498,5 +523,9 @@ describe('MercadoPagoOrdersProvider', () => {
     expect(createPaymentProvider(env)).toBeInstanceOf(MercadoPagoOrdersProvider)
     expect(createPaymentProvider({ ...env, MP_ACCOUNT_ID: undefined })).toBeNull()
     expect(createPaymentProvider({ ...env, MP_LIVE_MODE: 'wat' } as unknown as Env)).toBeNull()
+    expect(createPaymentProvider({ ...env, APP_ENV: 'local', MP_TEST_PIX_SCENARIO: 'APRO' } as unknown as Env)).toBeInstanceOf(MercadoPagoOrdersProvider)
+    expect(createPaymentProvider({ ...env, APP_ENV: 'local', MP_TEST_PIX_SCENARIO: 'UNKNOWN' } as unknown as Env)).toBeNull()
+    expect(createPaymentProvider({ ...env, APP_ENV: 'local', MP_TEST_PIX_SCENARIO: 'APRO', MP_LIVE_MODE: 'true' } as unknown as Env)).toBeNull()
+    expect(createPaymentProvider({ ...env, APP_ENV: 'staging', MP_TEST_PIX_SCENARIO: 'APRO' } as unknown as Env)).toBeNull()
   })
 })

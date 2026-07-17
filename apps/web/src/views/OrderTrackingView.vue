@@ -146,7 +146,7 @@ async function resolveAmendment(action: 'approve' | 'reject') {
       >WhatsApp da loja</a>
 
       <section v-if="order.status === 'CANCELLED'" class="rounded border border-red-300 bg-red-50 p-3">
-        <p v-if="order.paymentResolution === 'PROCESSING'">Pedido cancelado — confirmação financeira em processamento.</p>
+        <p v-if="order.paymentResolution === 'PROCESSING'">Pedido cancelado. O pagamento ainda está em análise. Se for aprovado, o estorno será realizado automaticamente.</p>
         <p v-else-if="order.paymentResolution === 'NOT_CHARGED'">Pedido cancelado — nenhuma cobrança foi concluída.</p>
         <p v-else-if="order.paymentResolution === 'REFUNDED'">Pedido cancelado — pagamento estornado.</p>
         <p v-else-if="order.paymentResolution === 'REVIEW_REQUIRED'">Pedido cancelado — confirmação financeira em análise.</p>

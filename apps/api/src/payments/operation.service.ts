@@ -23,6 +23,10 @@ function retryable(error: unknown): error is PaymentProviderError {
   return error instanceof PaymentProviderError && OPERATION_RETRYABLE_KINDS.has(error.kind)
 }
 
+function canCancelProviderOrder(snapshot: Awaited<ReturnType<PaymentProvider['getOrder']>>): boolean {
+  return snapshot.orderStatus.toLowerCase() === 'action_required'
+}
+
 type OperationOutcome =
   | { kind: 'SUCCEEDED'; resultCode: PaymentOperationResultCode }
   | { kind: 'ESCALATE_TO_REFUND' }
@@ -101,16 +105,24 @@ export async function processPaymentOperation(db: Db, provider: PaymentProvider,
 
   try {
     let snapshot
-    if (operation.type === 'CANCEL') snapshot = await provider.cancelOrder(payment.providerOrderId, operation.idempotencyKey)
-    else if (operation.type === 'REFUND_FULL') snapshot = await provider.refundOrder(payment.providerOrderId, operation.idempotencyKey)
+    if (operation.type === 'CANCEL') {
+      const current = await provider.getOrder(payment.providerOrderId)
+      if (!canCancelProviderOrder(current)) {
+        await settleSnapshot(db, operation, current, now)
+        return
+      }
+      snapshot = await provider.cancelOrder(payment.providerOrderId, operation.idempotencyKey)
+    } else if (operation.type === 'REFUND_FULL') snapshot = await provider.refundOrder(payment.providerOrderId, operation.idempotencyKey)
     else snapshot = await provider.refundPartial(payment.providerOrderId, payment.providerTransactionId ?? '', operation.amountCents!, operation.idempotencyKey)
     await settleSnapshot(db, operation, snapshot, now)
   } catch (error) {
     if (retryable(error)) {
       try {
         const current = await provider.getOrder(payment.providerOrderId)
-        await settleSnapshot(db, operation, current, now)
-        return
+        if (current.orderStatus.toLowerCase() !== 'action_required') {
+          await settleSnapshot(db, operation, current, now)
+          return
+        }
       } catch { /* retry below */ }
       const disposition = retryDisposition(now, operation.attemptCount, Math.random() * 0.25, error.retryAfterSeconds)
       if (disposition.kind === 'REVIEW_REQUIRED') return markReview(db, operationId, 'RETRY_EXHAUSTED', now)

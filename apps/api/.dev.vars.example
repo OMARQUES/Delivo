@@ -23,4 +23,6 @@ MP_ACCOUNT_ID=
 MP_LIVE_MODE=false
 # Sandbox: email do comprador de TESTE (credencial de teste recusa emails reais). Vazio em producao.
 MP_TEST_PAYER_EMAIL=
+# Vazio = PIX pendente normal; APRO = fixture oficial de aprovação automática, somente local sandbox.
+MP_TEST_PIX_SCENARIO=
 PUBLIC_API_URL=

@@ -14,7 +14,7 @@ import {
 const ORDERS_BASE = 'https://api.mercadopago.com/v1/orders'
 const USER_URL = 'https://api.mercadolibre.com/users/me'
 
-type ProviderConfig = { applicationId: string; accountId: string; liveMode: boolean }
+type ProviderConfig = { applicationId: string; accountId: string; liveMode: boolean; testPixScenario?: 'APRO' | null }
 type Json = Record<string, unknown>
 type RequestIntent = 'READ' | 'CREATE' | 'MUTATION'
 type ResponseMode = 'JSON' | 'IGNORE'
@@ -148,7 +148,7 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     const transactionStatus = optionalString(transaction.status)
     const terminalPix = method === 'PIX' && isTerminalPixStatus(orderStatus, transactionStatus)
     const pix = method === 'PIX' && !terminalPix
-      ? { qrCode: requiredString(paymentMethod.qr_code), qrCodeBase64: requiredString(paymentMethod.qr_code_base64), ticketUrl: optionalString(paymentMethod.ticket_url), expiresAt: dateOrNull(transaction.date_of_expiration ?? order.date_of_expiration) }
+      ? { qrCode: requiredString(paymentMethod.qr_code), qrCodeBase64: optionalString(paymentMethod.qr_code_base64), ticketUrl: optionalString(paymentMethod.ticket_url), expiresAt: dateOrNull(transaction.date_of_expiration ?? order.date_of_expiration) }
       : null
     return {
       providerOrderId: orderId,
@@ -179,9 +179,12 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
     const payment = input.method === 'PIX'
       ? { amount: amountText, payment_method: { id: 'pix', type: 'bank_transfer' }, expiration_time: ONLINE_PAYMENT_EXPIRATION_DURATION }
       : { amount: amountText, payment_method: { id: input.cardPaymentMethodId, type: 'credit_card', token: input.cardToken, installments: 1 } }
+    const payer = input.method === 'PIX' && this.config.testPixScenario === 'APRO'
+      ? { email: 'test_user_br@testuser.com', first_name: 'APRO' }
+      : { email: input.payerEmail }
     const raw = await this.request<Json>(ORDERS_BASE, {
       method: 'POST',
-      body: JSON.stringify({ type: 'online', processing_mode: 'automatic', external_reference: input.orderId, total_amount: amountText, payer: { email: input.payerEmail }, transactions: { payments: [payment] } }),
+      body: JSON.stringify({ type: 'online', processing_mode: 'automatic', external_reference: input.orderId, total_amount: amountText, payer, transactions: { payments: [payment] } }),
     }, { intent: 'CREATE', idempotencyKey: input.idempotencyKey })
     if (!raw) throw new PaymentProviderError('PROVIDER_RESPONSE_INVALID')
     return this.normalize(raw)
@@ -270,7 +273,21 @@ export class MercadoPagoOrdersProvider implements PaymentProvider {
   }
 }
 
+function resolveTestPixScenario(env: Env): 'APRO' | null {
+  const value = env.MP_TEST_PIX_SCENARIO?.trim()
+  if (!value) return null
+  if (value !== 'APRO' || env.APP_ENV !== 'local' || env.MP_LIVE_MODE !== 'false') {
+    throw new PaymentProviderError('CREDENTIAL_OR_CONFIG')
+  }
+  return 'APRO'
+}
+
 export function createPaymentProvider(env: Env): PaymentProvider | null {
   if (!env.MP_ACCESS_TOKEN || !env.MP_APPLICATION_ID || !env.MP_ACCOUNT_ID || (env.MP_LIVE_MODE !== 'true' && env.MP_LIVE_MODE !== 'false')) return null
-  return new MercadoPagoOrdersProvider(env.MP_ACCESS_TOKEN, { applicationId: env.MP_APPLICATION_ID, accountId: env.MP_ACCOUNT_ID, liveMode: env.MP_LIVE_MODE === 'true' })
+  try {
+    return new MercadoPagoOrdersProvider(env.MP_ACCESS_TOKEN, { applicationId: env.MP_APPLICATION_ID, accountId: env.MP_ACCOUNT_ID, liveMode: env.MP_LIVE_MODE === 'true', testPixScenario: resolveTestPixScenario(env) })
+  } catch (error) {
+    if (error instanceof PaymentProviderError && error.kind === 'CREDENTIAL_OR_CONFIG') return null
+    throw error
+  }
 }

@@ -32,7 +32,7 @@ export type ProviderOrderSnapshot = {
   transactionCount: number
   pix: {
     qrCode: string
-    qrCodeBase64: string
+    qrCodeBase64: string | null
     ticketUrl: string | null
     expiresAt: Date | null
   } | null

@@ -83,6 +83,7 @@ Inbox e pagamentos usam `retryDisposition` com máximo de 8 tentativas; a oitava
 - Create PIX incerto de pedido `CANCELLED`: busca exata permitida; zero resultados nunca recriam Order/cobrança.
 - Pagamento `AWAITING_PAYMENT` vencido (PIX ou cartão): reconciliação cancela comercialmente pedido e cria intenção canônica `cancel:{paymentId}:ORDER_CANCELLED` quando há Order no provider. Sem `providerOrderId`, não há mutação externa.
 - Cancelamento manual e expiração usam mesma intenção canônica; operação durable executa `CANCEL`, confirma por `GET Order`, e escala para `REFUND_FULL` se houver aprovação tardia.
+- Cada tick `CANCEL` faz `GET Order` antes; `Cancel Order` só ocorre com `action_required`. Estados `processing/in_process` seguem polling read-only até estado terminal ou oitava tentativa.
 - Após commit `CANCELLED`, nenhum snapshot, webhook, create recovery ou cron pode reabrir/liberar pedido.
 
 Não registrar email, token, QR, provider ID, idempotency key ou corpo de erro. Summaries de cron carregam somente contagens.
@@ -113,6 +114,15 @@ psql "$DATABASE_URL" \
 ```
 
 Nunca registrar corpo do provider, payload PIX, email, token, credencial ou identificador integral na evidência.
+
+## Cenários PIX locais
+
+- `MP_TEST_PIX_SCENARIO=` mantém o QR PIX pendente normal para expiração e cancelamento.
+- `MP_TEST_PIX_SCENARIO=APRO` usa a fixture oficial de aprovação automática do Mercado Pago.
+- `APRO` é permitido somente com `APP_ENV=local` e `MP_LIVE_MODE=false`; staging, produção, live mode e qualquer outro valor falham fechados antes de I/O externo.
+- Reinicie `pnpm dev:api` após alternar o valor.
+- A resposta inicial pode conter somente o código copia-e-cola; imagem base64 vazia não invalida o PIX.
+- Confirme aprovação pela tela do pedido, liberação única para a loja e projeção sanitizada. Não registre QR, email, token ou identificador integral.
 
 ## HTTP outcome recovery
 

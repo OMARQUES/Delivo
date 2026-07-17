@@ -157,6 +157,7 @@ async function createIsolationFixture(now: Date): Promise<IsolationFixture> {
     getOrder: vi.fn(async (providerOrderId: string) => {
       if (providerOrderId === inboxResourceId) return inboxUnknownSnapshot
       if (providerOrderId === recoveredOrderId) return recoveredCreateSnapshot
+      if (providerOrderId === operationPayment.providerOrderId) return snapshot(operationPayment, { orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer' })
       if (providerOrderId === snapshotPayment.providerOrderId) return snapshot(snapshotPayment)
       if (providerOrderId === reviewPayment.providerOrderId) return snapshot(reviewPayment)
       throw new Error('unexpected getOrder target')
@@ -271,7 +272,7 @@ describe('payment reconciliation', () => {
       leases: {},
       dependencies: {},
       inbox: { getAccountId: 1, getOrder: 1 },
-      operations: { cancelOrder: 1 },
+      operations: { getOrder: 1, cancelOrder: 1 },
       creates: { getOrder: 1, searchOrders: 1 },
       snapshots: { getOrder: 1 },
       expirations: {},
@@ -564,7 +565,11 @@ describe('payment reconciliation', () => {
       externalReference: 'missing-order',
     })
     const sharedProvider = provider({
-      getOrder: vi.fn(async (providerOrderId: string) => providerOrderId === 'inbox-overlap-resource' ? inboxSnapshot : snapshot(snapshotPayment)),
+      getOrder: vi.fn(async (providerOrderId: string) => providerOrderId === 'inbox-overlap-resource'
+        ? inboxSnapshot
+        : providerOrderId === operationPayment.providerOrderId
+          ? snapshot(operationPayment, { orderStatus: 'action_required', orderStatusDetail: 'waiting_transfer', transactionStatus: 'action_required', transactionStatusDetail: 'waiting_transfer' })
+          : snapshot(snapshotPayment)),
       cancelOrder: vi.fn(async () => operationSnapshot),
     }, snapshotPayment)
 
