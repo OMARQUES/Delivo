@@ -21,6 +21,19 @@ pnpm dev:web     # http://localhost:5173
 pnpm dev:driver  # http://localhost:5174
 ```
 
+### Reset e seed de demonstração local
+
+`db:migrate` não apaga dados. Para recriar o banco demo local, execute o reset
+destrutivo com confirmação explícita e depois aplique o seed:
+
+```bash
+DEMO_RESET_CONFIRM=RESET_LOCAL_DEMO pnpm --filter @delivery/api db:reset:demo
+pnpm --filter @delivery/api db:seed:demo
+```
+
+O reset só aceita `APP_ENV=local` (ou ausência de `APP_ENV`) e preserva o schema
+Drizzle. O seed mantém as lojas demo abertas todos os dias, 00:00–23:59.
+
 ### Bootstrap seguro do primeiro ADMIN
 
 Configure `DATABASE_URL`, `APP_ENV`, `ADMIN_EMAIL`, `ADMIN_NAME`, `AUTH_CODE_SECRET`,

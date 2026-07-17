@@ -1,5 +1,11 @@
 import type { UserRole } from './schema'
 
+export const DEMO_OPENING_HOURS = Array.from({ length: 7 }, (_, dow) => ({
+  dow,
+  open: '00:00',
+  close: '23:59',
+}))
+
 export type DemoAccount = {
   key: string
   role: UserRole

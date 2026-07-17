@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:reset:demo": "tsx src/db/demo-reset-cli.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:seed:demo": "tsx src/db/demo-seed.ts",
     "cf-typegen": "wrangler types worker-configuration.d.ts --env staging --env-interface CloudflareBindings --strict-vars=false --include-runtime=false"
